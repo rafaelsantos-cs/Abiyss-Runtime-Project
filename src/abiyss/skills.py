@@ -61,10 +61,7 @@ class SkillManifest:
             raise SecurityError("invalid skill version")
         if not isinstance(entrypoint, list) or not 1 <= len(entrypoint) <= MAX_ARGS:
             raise SecurityError("invalid skill entrypoint")
-        if any(
-            not isinstance(item, str) or not item or "\x00" in item or len(item.encode("utf-8")) > MAX_ARG_BYTES
-            for item in entrypoint
-        ):
+        if any(not isinstance(item, str) or not item or "\x00" in item or len(item.encode("utf-8")) > MAX_ARG_BYTES for item in entrypoint):
             raise SecurityError("invalid skill entrypoint token")
         if not isinstance(files, dict) or len(files) > MAX_FILES:
             raise SecurityError("invalid skill file map")
@@ -75,12 +72,8 @@ class SkillManifest:
         for relative, digest in files.items():
             path_obj = Path(relative)
             if (
-                not isinstance(relative, str)
-                or not relative
-                or path_obj.is_absolute()
-                or ".." in path_obj.parts
-                or not isinstance(digest, str)
-                or len(digest) != 64
+                not isinstance(relative, str) or not relative or path_obj.is_absolute() or ".." in path_obj.parts
+                or not isinstance(digest, str) or len(digest) != 64
                 or any(character not in "0123456789abcdef" for character in digest)
             ):
                 raise SecurityError(f"invalid skill file hash entry: {relative!r}")
@@ -153,8 +146,7 @@ class SkillLoader:
         self._check_entrypoint(directory, manifest)
         expected_files = set(manifest.files)
         actual_files = {
-            str(path.relative_to(directory))
-            for path in directory.rglob("*")
+            str(path.relative_to(directory)) for path in directory.rglob("*")
             if path.is_file() and not path.is_symlink() and path.name != "skill.json"
         }
         if actual_files != expected_files:
@@ -204,15 +196,9 @@ class SkillLoader:
         argv = list(manifest.entrypoint) + list(args)
         try:
             process = subprocess.Popen(
-                argv,
-                cwd=directory,
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                close_fds=True,
-                start_new_session=True,
-                preexec_fn=child_setup if os.name == "posix" else None,
+                argv, cwd=directory, env=environment, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True,
+                start_new_session=True, preexec_fn=child_setup if os.name == "posix" else None,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise ToolDenied(f"skill launch failed: {exc}") from exc
