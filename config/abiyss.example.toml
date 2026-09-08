@@ -1,0 +1,15 @@
+[runtime]
+root = "~/.local/share/abiyss"
+max_rounds = 8
+
+[gemini]
+model = "gemini-3.8-flash"
+
+[security]
+allow_exec = false
+allow_root_exec = false
+command_allowlist = [
+  "/usr/bin/printf",
+  "/usr/bin/uname",
+  "/usr/bin/id",
+]
