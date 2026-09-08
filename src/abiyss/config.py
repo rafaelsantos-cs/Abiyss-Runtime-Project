@@ -12,6 +12,7 @@ from .errors import ValidationError
 class Config:
     root: Path
     model: str = "gemini-3.8-flash"
+    thinking_level: str = "medium"
     allow_exec: bool = False
     allow_root_exec: bool = False
     command_allowlist: tuple[str, ...] = ()
@@ -41,6 +42,11 @@ class Config:
         model_raw = gemini.get("model", os.getenv("ABIYSS_GEMINI_MODEL", "gemini-3.8-flash"))
         if not isinstance(model_raw, str) or not model_raw.strip() or len(model_raw.encode("utf-8")) > 256:
             raise ValidationError("gemini.model must be a bounded non-empty string")
+        model = model_raw
+        thinking_raw = gemini.get("thinking_level", "medium")
+        if not isinstance(thinking_raw, str) or thinking_raw not in {"low", "medium", "high"}:
+            raise ValidationError("gemini.thinking_level must be low, medium or high")
+        thinking_level = thinking_raw
         allowlist_raw = security.get("command_allowlist", [])
         if not isinstance(allowlist_raw, list) or len(allowlist_raw) > 64:
             raise ValidationError("command_allowlist must be a list of at most 64 entries")
@@ -56,19 +62,21 @@ class Config:
         max_rounds_raw = runtime.get("max_rounds", 8)
         if not isinstance(max_rounds_raw, int) or isinstance(max_rounds_raw, bool):
             raise ValidationError("max_rounds must be an integer")
+        max_rounds = max_rounds_raw
         allow_exec = security.get("allow_exec", False)
         allow_root_exec = security.get("allow_root_exec", False)
         if not isinstance(allow_exec, bool) or not isinstance(allow_root_exec, bool):
             raise ValidationError("security execution flags must be booleans")
-        if not 1 <= max_rounds_raw <= 64:
+        if not 1 <= max_rounds <= 64:
             raise ValidationError("max_rounds must be between 1 and 64")
         if allow_root_exec and not allow_exec:
             raise ValidationError("allow_root_exec requires allow_exec=true")
         return cls(
             root=root,
-            model=model_raw,
+            model=model,
+            thinking_level=thinking_level,
             allow_exec=allow_exec,
             allow_root_exec=allow_root_exec,
             command_allowlist=allowlist,
-            max_rounds=max_rounds_raw,
+            max_rounds=max_rounds,
         )
