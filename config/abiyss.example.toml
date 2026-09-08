@@ -4,12 +4,13 @@ max_rounds = 8
 
 [gemini]
 model = "gemini-3.8-flash"
+thinking_level = "medium"
 
 [security]
 allow_exec = false
 allow_root_exec = false
+# Only used when allow_exec=true. Prefer a tiny explicit allowlist.
 command_allowlist = [
-  "/usr/bin/printf",
   "/usr/bin/uname",
   "/usr/bin/id",
 ]
