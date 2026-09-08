@@ -65,6 +65,7 @@ def validate_envelope(envelope: Any) -> Query:
     expected = hashlib.sha256(canonical(body)).hexdigest()
     if not hmac.compare_digest(digest, expected):
         raise ValidationError("QuPs hash mismatch")
+    _validate_json_tree(body)
     return Query.from_snapshot(body["query"])
 
 
@@ -106,7 +107,17 @@ class QuPsStore:
         except OSError as exc:
             raise PersistenceError(f"cannot open QuPs: {path}: {exc}") from exc
         try:
-            return os.read(fd, MAX_QUPS_BYTES + 1)
+            chunks: list[bytes] = []
+            total = 0
+            while total <= MAX_QUPS_BYTES:
+                chunk = os.read(fd, min(64 * 1024, MAX_QUPS_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > MAX_QUPS_BYTES:
+                    break
+            return b"".join(chunks)
         finally:
             os.close(fd)
 
@@ -119,4 +130,9 @@ class QuPsStore:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise PersistenceError("invalid QuPs JSON") from exc
-        return validate_envelope(envelope)
+        try:
+            return validate_envelope(envelope)
+        except ValidationError:
+            raise
+        except Exception as exc:
+            raise PersistenceError(f"invalid QuPs envelope: {exc}") from exc
