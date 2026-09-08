@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime.qq.resolve_recovery(args.query_id, args.action)
             return 0
         if args.command == "prompt":
-            runtime.provider = GoogleGeminiProvider(model=config.model)
+            runtime.provider = GoogleGeminiProvider(model=config.model, thinking_level=config.thinking_level)
             turn = runtime.execute_agent_cycle(args.text, max_rounds=config.max_rounds)
             print(turn.output_text)
             return 0
