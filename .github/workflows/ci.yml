@@ -2,7 +2,7 @@ name: ABIYSS CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, warpigs-hardening]
   pull_request:
 
 jobs:
