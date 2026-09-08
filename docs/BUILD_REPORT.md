@@ -13,7 +13,7 @@ This release is a deliberate reconstruction from the recovered ABIYSS context. H
 
 ## Validation completed in the development workspace
 
-- **67 tests passed** with `PYTHONPATH=src python -m pytest -q`.
+- **68 tests passed** with `PYTHONPATH=src python -m pytest -q`.
 - `python -m compileall -q src`: passed.
 - Wheel build with local build tooling and no dependency download: passed.
 - Clean virtual-environment installation of the generated wheel: passed.
@@ -23,7 +23,7 @@ This release is a deliberate reconstruction from the recovered ABIYSS context. H
 - Generated wheel SHA-256: `0f5314c6bbfce89f830a995ccb2891b103c0002e2a6decf46f39fc0d3651c542`.
 - Gemini live API: **not** exercised in this environment because external API access and credentials are not assumed.
 
-The GitHub repository also contains a critical regression/security suite and GitHub Actions configuration. Because connector-authored pushes may not automatically trigger Actions in every GitHub configuration, local clean-environment validation remains the authoritative build result for this reconstruction until a live CI run is observed.
+The GitHub repository contains a critical regression/security suite and GitHub Actions configuration. Connector-authored pushes may not automatically trigger Actions in every GitHub configuration, so the local clean-environment result above is the authoritative reconstruction validation unless a live CI run is observed.
 
 ## Architecture under test
 
@@ -51,7 +51,7 @@ The GitHub repository also contains a critical regression/security suite and Git
                                 v
                            Linux system
 
-Squery results -> Sleep -> Memory / recap -> repetition evidence -> Skill Emergence
+Squery observations -> Sleep -> immutable recap -> Memory -> repetition evidence -> Skill Emergence
 ```
 
 Model output is never itself an authorization decision. Every executable model function call becomes an Aquery, is durably admitted into QuPs, and passes through QQ before the corresponding tool plane can run.
@@ -100,19 +100,19 @@ These mechanisms are **guardrails, not a hostile-code sandbox**. Production exec
 
 The adapter targets the current Interactions API shape. The model emits `function_call` steps; ABIYSS executes the requested local tool and submits `function_result` using the function-call ID and `previous_interaction_id`.
 
-`gemini-3.8-flash` is the v0.1 default. Thinking is explicit and defaults to `medium`. Structured output is used for Sleep Key Alignment and is validated again locally.
+`gemini-3.8-flash` is the v0.1 default. Thinking is explicit and defaults to `medium`. Structured output is used for Sleep Key Alignment and is validated again locally. Auxiliary alignment requests are stateless with `store=false`.
 
-The Interactions API is stateful by default when `store=true`. That means provider-side interaction retention is part of the data boundary for the normal agent loop. Sleep alignment, which does not need conversational state, is treated separately and should use stateless execution in production deployments.
+The Interactions API is stateful by default when `store=true`. That means provider-side interaction retention is part of the data boundary for the normal agent loop.
 
-## External references reviewed
+## External references reviewed on 2026-09-08
 
 - Google Gemini Interactions API overview and migration documentation.
 - Google Gemini function-calling documentation.
-- Google Gemini 3.8 Flash model documentation.
-- Google Gemini thinking configuration documentation.
+- Google Gemini 3.8 Flash model and thinking documentation.
+- PyPI metadata for `google-genai` 2.22.0.
 - Python `subprocess` documentation concerning `preexec_fn` and threaded applications.
-- Linux kernel `openat2(2)` documentation for future path-resolution hardening.
-- SQLite WAL documentation for writer/reader concurrency semantics.
+- Linux `openat2(2)` documentation for future path-resolution hardening.
+- SQLite WAL documentation for reader/writer concurrency semantics.
 
 ## Known limitations
 
@@ -120,5 +120,5 @@ The Interactions API is stateful by default when `store=true`. That means provid
 2. `preexec_fn` remains a residual risk in a multithreaded Python process because Python documents possible deadlocks. The current code keeps the hook deliberately small, but this is not a final isolation boundary.
 3. Path safety is partly user-space. A future privileged filesystem tool should use kernel-enforced resolution constraints such as `openat2`.
 4. SQLite remains a single-writer database despite WAL.
-5. Provider-side stateful Gemini interactions introduce retention/privacy considerations and should be made configurable in a future hardening pass.
+5. Provider-side stateful Gemini interactions introduce retention/privacy considerations.
 6. Arbitrary filesystem mutation, package-manager control and unrestricted shell access are intentionally outside v0.1.
