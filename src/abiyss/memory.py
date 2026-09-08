@@ -190,4 +190,3 @@ class MemoryStore:
         limit = max(1, min(1000, int(limit)))
         with self._lock:
             return list(self.db.execute("SELECT * FROM recaps ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall())
-EOF
