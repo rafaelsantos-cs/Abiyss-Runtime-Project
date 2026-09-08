@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import AuditLog
-from .errors import ProviderError, QueueInvariantError, ValidationError
+from .errors import ProviderError, QueueInvariantError, RecoveryRequired, ValidationError
 from .gemini import ModelProvider, ModelTurn
 from .memory import MemoryStore
 from .models import Query, QueryState, QueryType
@@ -21,7 +21,15 @@ from .tools import AST, SST, ToolRegistry, build_default_registry
 class AbiyssRuntime:
     """Top-level ABIYSS runtime coordinating model, QQ, tools, memory and Sleep."""
 
-    def __init__(self, root: Path, *, provider: ModelProvider | None = None, allow_exec: bool = False, allow_root_exec: bool = False, command_allowlist: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        provider: ModelProvider | None = None,
+        allow_exec: bool = False,
+        allow_root_exec: bool = False,
+        command_allowlist: tuple[str, ...] = (),
+    ) -> None:
         self.root = ensure_base_dir_safe(Path(root)).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
         ensure_base_dir_safe(self.root)
@@ -36,7 +44,11 @@ class AbiyssRuntime:
         )
         self.ast = AST(self.tools)
         self.sst = SST(self.tools)
-        self.sleep = SleepManager(memory=self.memory, audit=self.audit, obsidian_dir=self.root / "obsidian")
+        self.sleep = SleepManager(
+            memory=self.memory,
+            audit=self.audit,
+            obsidian_dir=self.root / "obsidian",
+        )
         self.qq = QueryQueue(
             store=self.qups,
             audit=self.audit,
@@ -50,7 +62,7 @@ class AbiyssRuntime:
         self._closed = False
         self._lock = threading.RLock()
 
-    def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]) -> Any:
+    def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]):
         return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
 
     def submit_query(self, query: Query) -> Query:
@@ -74,7 +86,8 @@ class AbiyssRuntime:
                 tool_call_id=call.id,
             )
             try:
-                query = self.submit_query(query)
+                submitted = self.submit_query(query)
+                query = submitted if submitted.id != query.id else query
             except Exception as exc:
                 self.qq.record_failed(query, str(exc))
             queries.append(query)
@@ -88,7 +101,11 @@ class AbiyssRuntime:
             raise ValueError("prompt must be non-empty text")
         if self.provider is None:
             raise ProviderError("no model provider configured")
-        turn = self.provider.turn(text, self.tools.specs_for(QueryType.AQUERY), self.last_interaction_id)
+        turn = self.provider.turn(
+            text,
+            self.tools.specs_for(QueryType.AQUERY),
+            self.last_interaction_id,
+        )
         self.ingest_model_turn(turn)
         return turn
 
@@ -105,7 +122,11 @@ class AbiyssRuntime:
             payload = query.checkpoint.result or {}
             status = query.state.value
             if query.state == QueryState.RECOVERY_REQUIRED:
-                payload = {"status": "recovery_required", "error": query.checkpoint.error, "step_index": query.checkpoint.step_index}
+                payload = {
+                    "status": "recovery_required",
+                    "error": query.checkpoint.error,
+                    "step_index": query.checkpoint.step_index,
+                }
             elif query.state == QueryState.FAILED:
                 payload = {**payload, "status": "failed", "error": query.checkpoint.error}
             model_result = {**payload, "status": status}
@@ -114,12 +135,19 @@ class AbiyssRuntime:
                 model_result = {"status": status, "error": "tool result omitted because it exceeds model result limit"}
                 if query.checkpoint.error:
                     model_result["error"] = query.checkpoint.error[:4096]
-            results.append({
-                "type": "function_result",
-                "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
-                "call_id": query.tool_call_id,
-                "result": [{"type": "text", "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False)}],
-            })
+            results.append(
+                {
+                    "type": "function_result",
+                    "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
+                    "call_id": query.tool_call_id,
+                    "result": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
+                        }
+                    ],
+                }
+            )
         return results
 
     def _wait_for_model_queries(self, interaction_id: str, max_steps: int) -> None:
@@ -135,7 +163,13 @@ class AbiyssRuntime:
                 time.sleep(0.005)
         raise QueueInvariantError("model Query set exceeded execution step budget")
 
-    def execute_agent_cycle(self, text: str, *, max_rounds: int = 8, max_steps_per_round: int = 1000) -> ModelTurn:
+    def execute_agent_cycle(
+        self,
+        text: str,
+        *,
+        max_rounds: int = 8,
+        max_steps_per_round: int = 1000,
+    ) -> ModelTurn:
         if self.provider is None:
             raise ProviderError("no model provider configured")
         if not 1 <= max_rounds <= 64:
@@ -157,8 +191,6 @@ class AbiyssRuntime:
         raise QueueInvariantError("agent cycle exceeded max_rounds")
 
     def memory_event(self, content: str, source_id: str, *, sensitive: bool = False) -> int:
-        if self._closed:
-            raise RuntimeError("ABIYSS runtime is closed")
         return self.memory.add_memory(self.memory.daily_key(), content, source_id, sensitive=sensitive)
 
     def tick_sleep(self, now: float | None = None) -> str | None:
