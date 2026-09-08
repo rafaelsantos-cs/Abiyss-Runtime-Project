@@ -1,0 +1,8 @@
+ABIYSS v0.1.0 artifact checksums
+
+Generated: 2026-09-08
+
+4ef3eeaa3fab1d4b653690bf9ec1fb2096eba141939234304bfec7e6f1259fde  dist/abiyss-0.1.0-py3-none-any.whl
+3d2e9a30a39558e11554455c6cc107ed423bf9f8017195b9f2e071aa8597e5d2  Abiyss-v0.1.0-source.zip
+
+The wheel and source ZIP above were generated and tested in the reconstruction workspace. This file records their content hashes; the binary artifacts themselves are not stored in the Git repository.
