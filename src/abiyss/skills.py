@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import resource
 import signal
 import subprocess
 import threading
@@ -21,9 +22,8 @@ MAX_ARG_BYTES = 4096
 MAX_NAME_BYTES = 128
 _SYSTEM_EXEC_PREFIXES = (Path("/bin"), Path("/usr/bin"), Path("/usr/local/bin"))
 _FORBIDDEN_LAUNCHERS = {
-    "env", "bash", "sh", "dash", "zsh", "fish",
-    "python", "python3", "python3.11", "python3.12", "python3.13", "python3.14",
-    "node", "nodejs", "ruby", "perl", "php", "lua", "luajit", "java", "tclsh", "awk",
+    "env", "bash", "sh", "dash", "zsh", "fish", "python", "python3", "python3.11", "python3.12",
+    "python3.13", "python3.14", "node", "nodejs", "ruby", "perl", "php", "lua", "luajit", "java", "tclsh", "awk",
 }
 
 
@@ -51,17 +51,14 @@ class SkillManifest:
             raise SecurityError("invalid skill manifest JSON") from exc
         if not isinstance(obj, dict):
             raise SecurityError("skill manifest must be an object")
-        name = obj.get("name")
-        version = obj.get("version")
-        entrypoint = obj.get("entrypoint")
-        files = obj.get("files", {})
+        name, version, entrypoint, files = obj.get("name"), obj.get("version"), obj.get("entrypoint"), obj.get("files", {})
         if not isinstance(name, str) or not 1 <= len(name.encode()) <= MAX_NAME_BYTES:
             raise SecurityError("invalid skill name")
         if not isinstance(version, str) or not 1 <= len(version.encode()) <= 128:
             raise SecurityError("invalid skill version")
         if not isinstance(entrypoint, list) or not 1 <= len(entrypoint) <= MAX_ARGS:
             raise SecurityError("invalid skill entrypoint")
-        if any(not isinstance(item, str) or not item or "\x00" in item or len(item.encode("utf-8")) > MAX_ARG_BYTES for item in entrypoint):
+        if any(not isinstance(item, str) or not item or "\x00" in item or len(item.encode()) > MAX_ARG_BYTES for item in entrypoint):
             raise SecurityError("invalid skill entrypoint token")
         if not isinstance(files, dict) or len(files) > MAX_FILES:
             raise SecurityError("invalid skill file map")
@@ -71,11 +68,9 @@ class SkillManifest:
         normalized: dict[str, str] = {}
         for relative, digest in files.items():
             path_obj = Path(relative)
-            if (
-                not isinstance(relative, str) or not relative or path_obj.is_absolute() or ".." in path_obj.parts
-                or not isinstance(digest, str) or len(digest) != 64
-                or any(character not in "0123456789abcdef" for character in digest)
-            ):
+            if (not isinstance(relative, str) or not relative or path_obj.is_absolute() or ".." in path_obj.parts
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(character not in "0123456789abcdef" for character in digest)):
                 raise SecurityError(f"invalid skill file hash entry: {relative!r}")
             normalized[relative] = digest
         try:
@@ -145,10 +140,7 @@ class SkillLoader:
         directory = self._inside(directory)
         self._check_entrypoint(directory, manifest)
         expected_files = set(manifest.files)
-        actual_files = {
-            str(path.relative_to(directory)) for path in directory.rglob("*")
-            if path.is_file() and not path.is_symlink() and path.name != "skill.json"
-        }
+        actual_files = {str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file() and not path.is_symlink() and path.name != "skill.json"}
         if actual_files != expected_files:
             missing = sorted(expected_files - actual_files)
             unexpected = sorted(actual_files - expected_files)
@@ -185,21 +177,18 @@ class SkillLoader:
         def child_setup() -> None:
             if not set_no_new_privs():
                 raise RuntimeError("could not establish no_new_privs")
-            resource_module = __import__("resource")
             cpu_limit = max(1, int(manifest.timeout_seconds) + 1)
-            resource_module.setrlimit(resource_module.RLIMIT_CPU, (cpu_limit, cpu_limit))
-            resource_module.setrlimit(resource_module.RLIMIT_FSIZE, (manifest.max_output_bytes, manifest.max_output_bytes))
-            resource_module.setrlimit(resource_module.RLIMIT_NOFILE, (128, 128))
-            resource_module.setrlimit(resource_module.RLIMIT_CORE, (0, 0))
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+            resource.setrlimit(resource.RLIMIT_FSIZE, (manifest.max_output_bytes, manifest.max_output_bytes))
+            resource.setrlimit(resource.RLIMIT_NOFILE, (128, 128))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
         environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "LC_ALL": "C", "HOME": str(directory)}
         argv = list(manifest.entrypoint) + list(args)
         try:
-            process = subprocess.Popen(
-                argv, cwd=directory, env=environment, stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, close_fds=True,
-                start_new_session=True, preexec_fn=child_setup if os.name == "posix" else None,
-            )
+            process = subprocess.Popen(argv, cwd=directory, env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, close_fds=True, start_new_session=True,
+                                       preexec_fn=child_setup if os.name == "posix" else None)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ToolDenied(f"skill launch failed: {exc}") from exc
 
@@ -270,12 +259,8 @@ class SkillLoader:
                     process.stdout.close()
                 except OSError:
                     pass
-        return {
-            "status": "error" if exceeded or process.returncode else "ok",
-            "returncode": process.returncode,
-            "output": output.decode("utf-8", errors="replace"),
-            "error": "output limit exceeded" if exceeded else None,
-        }
+        return {"status": "error" if exceeded or process.returncode else "ok", "returncode": process.returncode,
+                "output": output.decode("utf-8", errors="replace"), "error": "output limit exceeded" if exceeded else None}
 
 
 @dataclass(frozen=True, slots=True)
