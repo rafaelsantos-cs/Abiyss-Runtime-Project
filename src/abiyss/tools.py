@@ -42,18 +42,9 @@ class PythonTool(Tool):
 class ProcessTool(Tool):
     """Bounded process execution. This is a guardrail, not a hostile-code sandbox."""
 
-    def __init__(
-        self,
-        spec: ToolSpec,
-        *,
-        base_dir: Path,
-        allow_root: bool = False,
-        command_allowlist: tuple[str, ...] = (),
-        timeout_seconds: float = 20,
-        max_output_bytes: int = 64 * 1024,
-        max_args: int = 32,
-        max_open_files: int = 128,
-    ) -> None:
+    def __init__(self, spec: ToolSpec, *, base_dir: Path, allow_root: bool = False,
+                 command_allowlist: tuple[str, ...] = (), timeout_seconds: float = 20,
+                 max_output_bytes: int = 64 * 1024, max_args: int = 32, max_open_files: int = 128) -> None:
         super().__init__(spec)
         self.base_dir = ensure_base_dir_safe(Path(base_dir)).absolute()
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -87,17 +78,21 @@ class ProcessTool(Tool):
             raise ToolDenied("invalid environment object")
         env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "LC_ALL": "C", "HOME": str(cwd)}
         for key, value in provided.items():
-            if (
-                not isinstance(key, str) or not isinstance(value, str) or not key
-                or len(key) > 64 or len(value.encode("utf-8")) > 4096
-                or "\x00" in key or "\x00" in value
-            ):
+            if (not isinstance(key, str) or not isinstance(value, str) or not key or len(key) > 64
+                    or len(value.encode("utf-8")) > 4096 or "\x00" in key or "\x00" in value):
                 raise ToolDenied("invalid environment field")
             upper = key.upper()
             if upper in _DANGEROUS_ENV or upper.startswith("LD_") or upper.startswith("DYLD_"):
                 raise ToolDenied(f"dangerous environment variable: {key}")
             env[key] = value
         return env
+
+    @staticmethod
+    def _kill_group(pgid: int) -> None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         argv = args.get("argv")
@@ -124,17 +119,10 @@ class ProcessTool(Tool):
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
         try:
-            process = subprocess.Popen(
-                argv,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                close_fds=True,
-                start_new_session=True,
-                preexec_fn=child_setup if os.name == "posix" else None,
-            )
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, close_fds=True, start_new_session=True,
+                                       preexec_fn=child_setup if os.name == "posix" else None)
+            pgid = os.getpgid(process.pid)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ToolDenied(f"process launch failed: {exc}") from exc
 
@@ -155,6 +143,9 @@ class ProcessTool(Tool):
                         output.extend(chunk[:remaining])
                     if len(chunk) > max(remaining, 0):
                         exceeded = True
+                        stop.set()
+                        self._kill_group(pgid)
+                        break
                     if stop.is_set():
                         break
             except OSError:
@@ -163,26 +154,28 @@ class ProcessTool(Tool):
         thread = threading.Thread(target=reader, name="abiyss-tool-output", daemon=True)
         thread.start()
         try:
-            process.wait(timeout=self.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            stop.set()
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            process.wait(timeout=2)
-            thread.join(timeout=2)
-            return ToolResult("timeout", output.decode("utf-8", errors="replace"), "tool timeout")
-        finally:
-            thread.join(timeout=2)
-            if process.stdout is not None:
-                try:
-                    process.stdout.close()
-                except OSError:
-                    pass
+                process.wait(timeout=self.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                stop.set()
+                self._kill_group(pgid)
+                process.wait(timeout=2)
+                thread.join(timeout=2)
+                return ToolResult("timeout", output.decode("utf-8", errors="replace"), "tool timeout")
+            finally:
+                # The parent can exit while a descendant survives. The process
+                # group is the execution unit, so clean it even after normal exit.
+                stop.set()
+                self._kill_group(pgid)
+                thread.join(timeout=2)
+                if process.stdout is not None:
+                    try:
+                        process.stdout.close()
+                    except OSError:
+                        pass
+        except subprocess.TimeoutExpired as exc:
+            self._kill_group(pgid)
+            raise ToolDenied("process group did not terminate after kill") from exc
         error = "tool output exceeded configured capture limit" if exceeded else (None if process.returncode == 0 else f"exit={process.returncode}")
         return ToolResult("ok" if process.returncode == 0 and not exceeded else "error", output.decode("utf-8", errors="replace"), error)
 
@@ -254,26 +247,16 @@ def _process_list(limit: int) -> dict[str, Any]:
 
 def build_default_registry(*, base_dir: Path, allow_exec: bool = False, allow_root_exec: bool = False, command_allowlist: tuple[str, ...] = ()) -> ToolRegistry:
     registry = ToolRegistry()
-    registry.register(PythonTool(
-        ToolSpec("system.info", "Observe OS identity and ABIYSS process metadata.", QueryType.AQUERY,
-                  {"type": "object", "properties": {}, "additionalProperties": False}),
-        lambda _: {"platform": os.uname().sysname, "release": os.uname().release, "machine": os.uname().machine, "uid": os.geteuid(), "pid": os.getpid()},
-    ))
-    registry.register(PythonTool(
-        ToolSpec("process.list", "Bounded local process observation.", QueryType.SQUERY,
-                  {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 128}}, "additionalProperties": False}),
-        lambda args: _process_list(args.get("limit", 32)),
-    ))
+    registry.register(PythonTool(ToolSpec("system.info", "Observe OS identity and ABIYSS process metadata.", QueryType.AQUERY,
+                                           {"type": "object", "properties": {}, "additionalProperties": False}),
+                                 lambda _: {"platform": os.uname().sysname, "release": os.uname().release, "machine": os.uname().machine, "uid": os.geteuid(), "pid": os.getpid()}))
+    registry.register(PythonTool(ToolSpec("process.list", "Bounded local process observation.", QueryType.SQUERY,
+                                           {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 128}}, "additionalProperties": False}),
+                                 lambda args: _process_list(args.get("limit", 32))))
     if allow_exec:
         allowlist = tuple(command_allowlist) or ("/usr/bin/printf", "/usr/bin/id", "/usr/bin/uname")
-        registry.register(ProcessTool(
-            ToolSpec("system.exec", "Execute one explicitly allowlisted absolute executable without a shell.", QueryType.AQUERY,
-                     {"type": "object", "properties": {
-                         "argv": {"type": "array", "items": {"type": "string", "maxLength": 4096}, "minItems": 1, "maxItems": 32},
-                         "cwd": {"type": "string", "maxLength": 4096},
-                         "env": {"type": "object", "maxProperties": 16}},
-                      "required": ["argv"], "additionalProperties": False},
-                     privileged=True, reversible=False, allow_memory_persistence=False),
-            base_dir=base_dir, allow_root=allow_root_exec, command_allowlist=allowlist,
-        ))
+        registry.register(ProcessTool(ToolSpec("system.exec", "Execute one explicitly allowlisted absolute executable without a shell.", QueryType.AQUERY,
+                                               {"type": "object", "properties": {"argv": {"type": "array", "items": {"type": "string", "maxLength": 4096}, "minItems": 1, "maxItems": 32}, "cwd": {"type": "string", "maxLength": 4096}, "env": {"type": "object", "maxProperties": 16}},
+                                                "required": ["argv"], "additionalProperties": False}, privileged=True, reversible=False, allow_memory_persistence=False),
+                                         base_dir=base_dir, allow_root=allow_root_exec, command_allowlist=allowlist))
     return registry
