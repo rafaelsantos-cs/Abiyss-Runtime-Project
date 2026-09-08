@@ -80,6 +80,11 @@ class Query:
         if self.created_at <= 0 or self.updated_at <= 0:
             raise ValidationError("invalid query timestamp")
         self.updated_at = max(self.updated_at, self.created_at)
+        for label, value, limit in (("parent interaction id", self.parent_interaction_id, 256), ("tool call id", self.tool_call_id, 256)):
+            if value is not None and (not isinstance(value, str) or not value or len(value.encode("utf-8")) > limit or "\x00" in value):
+                raise ValidationError(f"invalid {label}")
+        if not isinstance(self.source, str) or not 1 <= len(self.source.encode("utf-8")) <= 128:
+            raise ValidationError("invalid query source")
         self.checkpoint.state = self.state
         self._validate_checkpoint()
 
@@ -111,6 +116,8 @@ class Query:
             raise ValidationError("invalid checkpoint step index")
         if not isinstance(self.checkpoint.attempt, int) or self.checkpoint.attempt < 0:
             raise ValidationError("invalid checkpoint attempt")
+        if self.checkpoint.tool_name is not None and not isinstance(self.checkpoint.tool_name, str):
+            raise ValidationError("invalid checkpoint tool name")
 
     def transition(
         self,
@@ -162,22 +169,48 @@ class Query:
     def from_snapshot(cls, data: dict[str, Any]) -> "Query":
         if not isinstance(data, dict):
             raise ValidationError("query snapshot must be an object")
-        checkpoint_data = dict(data.get("checkpoint") or {})
-        checkpoint_data["state"] = QueryState(checkpoint_data.get("state", data.get("state", "queued")))
-        return cls(
-            id=str(data["id"]),
-            type=QueryType(data["type"]),
-            priority=int(data["priority"]),
-            payload=dict(data["payload"]),
-            created_at=float(data.get("created_at", time.time())),
-            updated_at=float(data.get("updated_at", time.time())),
-            state=QueryState(data.get("state", "queued")),
-            checkpoint=Checkpoint(**checkpoint_data),
-            parent_interaction_id=data.get("parent_interaction_id"),
-            tool_call_id=data.get("tool_call_id"),
-            source=str(data.get("source", "runtime")),
-            attempts=int(data.get("attempts", 0)),
-        )
+        required = {"id", "type", "priority", "payload", "state", "checkpoint"}
+        if not required.issubset(data):
+            raise ValidationError("query snapshot missing required fields")
+        if not isinstance(data["id"], str) or not isinstance(data["type"], str) or not isinstance(data["state"], str):
+            raise ValidationError("invalid query snapshot scalar field")
+        if not isinstance(data["priority"], int) or isinstance(data["priority"], bool):
+            raise ValidationError("invalid query priority")
+        if not isinstance(data["payload"], dict):
+            raise ValidationError("query payload must be an object")
+        checkpoint_raw = data["checkpoint"]
+        if not isinstance(checkpoint_raw, dict):
+            raise ValidationError("checkpoint must be an object")
+        checkpoint_data = dict(checkpoint_raw)
+        checkpoint_data["state"] = checkpoint_data.get("state", data["state"])
+        try:
+            checkpoint_data["state"] = QueryState(checkpoint_data["state"])
+            state = QueryState(data["state"])
+        except ValueError as exc:
+            raise ValidationError("invalid query state") from exc
+        for key in ("created_at", "updated_at"):
+            if key in data and (not isinstance(data[key], (int, float)) or isinstance(data[key], bool)):
+                raise ValidationError(f"invalid {key}")
+        attempts = data.get("attempts", 0)
+        if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 0:
+            raise ValidationError("invalid query attempts")
+        try:
+            return cls(
+                id=data["id"],
+                type=QueryType(data["type"]),
+                priority=data["priority"],
+                payload=data["payload"],
+                created_at=float(data.get("created_at", time.time())),
+                updated_at=float(data.get("updated_at", time.time())),
+                state=state,
+                checkpoint=Checkpoint(**checkpoint_data),
+                parent_interaction_id=data.get("parent_interaction_id"),
+                tool_call_id=data.get("tool_call_id"),
+                source=str(data.get("source", "runtime")),
+                attempts=attempts,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError(f"invalid query snapshot: {exc}") from exc
 
 
 @dataclass(slots=True)
