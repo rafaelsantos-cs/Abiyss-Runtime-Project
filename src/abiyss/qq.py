@@ -3,16 +3,26 @@ from __future__ import annotations
 import heapq
 import threading
 import time
+from dataclasses import dataclass
 from typing import Callable
 
 from .audit import AuditLog
 from .errors import PersistenceError, QueueInvariantError, ToolDenied
-from .models import Query, QueryState, QueryType, ToolResult
+from .models import Checkpoint, Query, QueryState, QueryType, ToolResult
 from .qups import QuPsStore
 
 
+@dataclass(frozen=True, slots=True)
+class ExecutionOutcome:
+    query_id: str
+    state: QueryState
+    step_index: int | None
+    tool_result: ToolResult | None
+    recovery_required: bool = False
+
+
 class QueryQueue:
-    """One logical execution lane. Aqueries outrank Squeries; preemption is boundary-only."""
+    """Single logical execution lane with Aquery priority and boundary-only Squery preemption."""
 
     def __init__(
         self,
@@ -33,6 +43,7 @@ class QueryQueue:
         self._heap: list[tuple[int, int, int, str]] = []
         self._sequence = 0
         self._queries: dict[str, Query] = {}
+        self._external_calls: dict[tuple[str, str], str] = {}
         self._active: str | None = None
         self._preempt = threading.Event()
 
@@ -41,11 +52,7 @@ class QueryQueue:
         with self._lock:
             return self._active
 
-    @staticmethod
-    def _class_key(query: Query) -> int:
-        return 0 if query.type == QueryType.AQUERY else 1
-
-    def _steps(self, query: Query) -> list[dict[str, object]]:
+    def _steps(self, query: Query) -> list[dict]:
         value = query.payload.get("steps")
         if value is None:
             name = query.payload.get("tool_name")
@@ -57,7 +64,7 @@ class QueryQueue:
             return [{"tool_name": name, "arguments": args}]
         if not isinstance(value, list) or not 1 <= len(value) <= 256:
             raise QueueInvariantError("invalid Query step count")
-        steps: list[dict[str, object]] = []
+        steps: list[dict] = []
         for index, step in enumerate(value):
             if not isinstance(step, dict):
                 raise QueueInvariantError(f"step {index} is not an object")
@@ -70,24 +77,52 @@ class QueryQueue:
             steps.append({"tool_name": name, "arguments": args})
         return steps
 
-    def submit(self, query: Query) -> None:
+    def _validate(self, query: Query) -> None:
+        self._steps(query)
+
+    def submit(self, query: Query) -> Query:
         with self._lock:
             if query.id in self._queries:
-                raise QueueInvariantError("duplicate Query id")
-            if len(self._queries) >= self.max_queries:
-                raise QueueInvariantError("queue capacity reached")
-            self._steps(query)
+                raise QueueInvariantError("duplicate query id")
+            if query.parent_interaction_id and query.tool_call_id:
+                key = (query.parent_interaction_id, query.tool_call_id)
+                existing_id = self._external_calls.get(key)
+                if existing_id is not None:
+                    return self._queries[existing_id]
+            active_count = sum(item.state in {QueryState.QUEUED, QueryState.RUNNING, QueryState.PAUSED, QueryState.RECOVERY_REQUIRED} for item in self._queries.values())
+            if active_count >= self.max_queries:
+                raise QueueInvariantError("active Query capacity reached")
+            self._validate(query)
             try:
                 self.store.save(query)
             except Exception as exc:
-                raise PersistenceError("cannot durably persist queued Query") from exc
+                raise PersistenceError("cannot persist QUEUED Query before admission") from exc
             self._queries[query.id] = query
+            if query.parent_interaction_id and query.tool_call_id:
+                self._external_calls[(query.parent_interaction_id, query.tool_call_id)] = query.id
             self._sequence += 1
             heapq.heappush(self._heap, (self._class_key(query), -query.priority, self._sequence, query.id))
             active = self._queries.get(self._active) if self._active else None
             if query.type == QueryType.AQUERY and active and active.type == QueryType.SQUERY:
                 self._preempt.set()
-            self.audit.append("query.enqueued", query_id=query.id, query_type=query.type.value, priority=query.priority)
+            self.audit.append(
+                "query.enqueued",
+                query_id=query.id,
+                query_type=query.type.value,
+                priority=query.priority,
+            )
+            return query
+
+    def find_external_call(self, interaction_id: str, call_id: str) -> Query | None:
+        if not interaction_id or not call_id:
+            return None
+        with self._lock:
+            query_id = self._external_calls.get((interaction_id, call_id))
+            return self._queries.get(query_id) if query_id else None
+
+    @staticmethod
+    def _class_key(query: Query) -> int:
+        return 0 if query.type == QueryType.AQUERY else 1
 
     def record_failed(self, query: Query, error: str) -> None:
         with self._lock:
@@ -109,7 +144,8 @@ class QueryQueue:
     def _persist_running(self, query: Query) -> bool:
         query.attempts += 1
         query.checkpoint.attempt = query.attempts
-        started = time.time()
+        query.checkpoint.execution_started_at = time.time()
+        started = query.checkpoint.execution_started_at
         try:
             query.transition(QueryState.RUNNING, execution_started_at=started)
             self.store.save(query)
@@ -124,7 +160,10 @@ class QueryQueue:
     def _step_index(self, query: Query) -> int:
         if not isinstance(query.checkpoint.result, dict):
             return query.checkpoint.step_index
-        return int(query.checkpoint.result.get("next_step", query.checkpoint.step_index))
+        value = query.checkpoint.result.get("next_step", query.checkpoint.step_index)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise QueueInvariantError("durable checkpoint next_step is not an integer")
+        return value
 
     def _requeue(self, query: Query) -> None:
         self._sequence += 1
@@ -219,8 +258,15 @@ class QueryQueue:
                     if preempted:
                         if not self._save_after_side_effect(query, QueryState.PAUSED, result=checkpoint_result, tool_name=name):
                             return query
-                        query.transition(QueryState.QUEUED, result=checkpoint_result, tool_name=name)
-                        self.store.save(query)
+                        try:
+                            query.transition(QueryState.QUEUED, result=checkpoint_result, tool_name=name)
+                            self.store.save(query)
+                        except Exception as exc:
+                            query.state = QueryState.PAUSED
+                            query.checkpoint.state = QueryState.PAUSED
+                            query.checkpoint.error = f"resume persistence failed: {exc}"[:4096]
+                            self.audit.append("query.resume_persist_failed", query_id=query.id, error=str(exc))
+                            return query
                     else:
                         if not self._save_after_side_effect(query, QueryState.QUEUED, result=checkpoint_result, tool_name=name):
                             return query
@@ -251,6 +297,7 @@ class QueryQueue:
         with self._lock:
             self._heap.clear()
             self._queries.clear()
+            self._external_calls.clear()
             self._sequence = 0
             for path in sorted(self.store.query_dir.glob("*.qups")):
                 try:
@@ -274,13 +321,40 @@ class QueryQueue:
                     query.checkpoint.state = QueryState.QUEUED
                     self._sequence += 1
                     heapq.heappush(self._heap, (self._class_key(query), -query.priority, self._sequence, query.id))
+
+                if query.parent_interaction_id and query.tool_call_id:
+                    key = (query.parent_interaction_id, query.tool_call_id)
+                    existing = self._external_calls.get(key)
+                    if existing is not None and existing != query.id:
+                        query.state = QueryState.RECOVERY_REQUIRED
+                        query.checkpoint.state = QueryState.RECOVERY_REQUIRED
+                        query.checkpoint.error = "duplicate durable model tool_call identity; automatic execution disabled"
+                        try:
+                            self.store.save(query)
+                        except Exception as exc:
+                            self.audit.append(
+                                "queue.restore_duplicate_external_persist_failed",
+                                query_id=query.id,
+                                error=str(exc),
+                            )
+                        self.audit.append(
+                            "queue.restore_duplicate_external",
+                            query_id=query.id,
+                            duplicate_of=existing,
+                            interaction_id=query.parent_interaction_id,
+                            tool_call_id=query.tool_call_id,
+                        )
+                    else:
+                        self._external_calls[key] = query.id
+
                 self._queries[query.id] = query
 
     def resolve_recovery(self, query_id: str, action: str) -> None:
         with self._lock:
-            if query_id not in self._queries:
-                raise QueueInvariantError(f"unknown Query: {query_id}")
-            query = self._queries[query_id]
+            try:
+                query = self._queries[query_id]
+            except KeyError as exc:
+                raise QueueInvariantError(f"unknown Query: {query_id}") from exc
             if query.state != QueryState.RECOVERY_REQUIRED:
                 raise QueueInvariantError("Query is not awaiting recovery")
             if action == "cancel":
@@ -294,7 +368,11 @@ class QueryQueue:
                 query.checkpoint.error = "explicit recovery requeue; external side effect may duplicate"
                 self.store.save(query)
                 self._requeue(query)
-                self.audit.append("query.recovery_requeued", query_id=query.id, warning="side effect may have already happened")
+                self.audit.append(
+                    "query.recovery_requeued",
+                    query_id=query.id,
+                    warning="external side effect may have already happened",
+                )
                 return
             raise QueueInvariantError("recovery action must be cancel or requeue")
 
