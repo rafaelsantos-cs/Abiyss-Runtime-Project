@@ -4,90 +4,121 @@
 
 - Version: `0.1.0`
 - Project: ABIYSS Runtime Project
-- Scope: Linux-oriented runtime foundation
-- War Pigs: intentionally excluded from this runtime release
+- Scope: Linux-oriented agent runtime foundation
+- War Pigs: intentionally excluded from the v0.1 runtime package
 
-## Current validation
+## Reconstruction status
 
-The source-tree test suite currently reports:
+This release is a deliberate reconstruction from the recovered ABIYSS context. Historic details that could not be recovered were not silently invented. The runtime architecture is therefore documented as a current v0.1 contract rather than as a claim that every old implementation detail has been recovered verbatim.
 
-- **44 passed**
-- Python `compileall`: passed
-- wheel build with local build backend (`pip wheel --no-build-isolation --no-deps`): passed in the development environment
-- Gemini live API: not exercised in the build environment because network/API credentials are not assumed
+## Validation completed in the development workspace
 
-The test suite covers normal behavior, persistence recovery, concurrency/preemption boundaries, schema validation, provider parsing, memory idempotence, Sleep recap semantics, guarded process execution, SkillLE validation and security regressions.
+- **67 tests passed** with `PYTHONPATH=src python -m pytest -q`.
+- `python -m compileall -q src`: passed.
+- Wheel build with local build tooling and no dependency download: passed.
+- Clean virtual-environment installation of the generated wheel: passed.
+- Clean-environment `python -m abiyss doctor`: passed.
+- Clean-environment `python -m abiyss status`: passed.
+- Clean-environment `pip check`: passed with no broken requirements.
+- Generated wheel SHA-256: `0f5314c6bbfce89f830a995ccb2891b103c0002e2a6decf46f39fc0d3651c542`.
+- Gemini live API: **not** exercised in this environment because external API access and credentials are not assumed.
+
+The GitHub repository also contains a critical regression/security suite and GitHub Actions configuration. Because connector-authored pushes may not automatically trigger Actions in every GitHub configuration, local clean-environment validation remains the authoritative build result for this reconstruction until a live CI run is observed.
 
 ## Architecture under test
 
 ```text
-Gemini
-  |
-  | model proposal / function_call
-  v
-Aquery
-  |
-  v
-QuPs  -- durable representation
-  |
-  v
-QQ   -- single logical execution lane
-  |\
-  | \__ Squery / Sleep work
-  |
-  +----> AST ----> action tools ----> Linux
-  |
-  +----> SST ----> silent tools ----> observation/maintenance
+                         Gemini / Model
+                               |
+                     function_call / turn
+                               v
+                            Query
+                         /          \
+                   Aquery          Squery
+                      |                |
+                      +-------> QuPs <+
+                                |
+                                v
+                               QQ
+                     single logical execution lane
+                       |                 |
+                      AST               SST
+                       |                 |
+                 action tools      silent tools
+                       |                 |
+                       +--------+--------+
+                                |
+                                v
+                           Linux system
+
+Squery results -> Sleep -> Memory / recap -> repetition evidence -> Skill Emergence
 ```
 
-Aquery has scheduling precedence over Squery. Squery preemption is cooperative and happens only between tool steps. An already-running tool is never described as interrupted.
+Model output is never itself an authorization decision. Every executable model function call becomes an Aquery, is durably admitted into QuPs, and passes through QQ before the corresponding tool plane can run.
 
-## Recovery invariant
+## QQ invariants
 
-The runtime follows a conservative side-effect rule:
+1. Aquery class precedes Squery class.
+2. Higher numeric priority wins within the same query class.
+3. Equal class and priority preserve FIFO admission order.
+4. QQ has one logical execution lane.
+5. Aquery arrival while an Squery is executing sets a cooperative preemption request.
+6. The currently running tool is allowed to finish; no false claim of mid-tool interruption is made.
+7. A multi-step Squery resumes from the durably recorded next step.
+8. Running-state persistence happens before a side effect.
+9. A post-side-effect persistence failure causes `recovery_required` and forbids automatic replay.
+10. Duplicate `(interaction_id, tool_call_id)` identities are not executed twice.
 
-1. persist `queued` before admission;
-2. persist `running` before starting a side effect;
-3. execute the side effect;
-4. persist its result/checkpoint;
-5. if that final persistence fails, mark the Query `recovery_required` in memory and leave the last durable state at `running`;
-6. after restart, durable `running` work is **never replayed automatically**.
+## QuPs invariants
 
-The reason is simple: the runtime cannot prove that an external side effect did not happen.
+QuPs is a versioned durable envelope containing the full Query snapshot and a SHA-256 digest of its canonical JSON body. Writes are atomic. Reads reject malformed JSON, non-finite numbers, over-size payloads, unsafe query IDs and non-regular/symlinked objects.
 
-## Security validation
+The hash is an integrity check, not authentication. An attacker who can rewrite the entire envelope can also recompute the digest; authorization therefore remains a separate responsibility.
 
-Covered controls include:
+## Memory and Sleep
 
-- bounded Query payloads and steps;
-- strict JSON-like tool schemas;
-- exact Query state transitions;
-- QuPs SHA-256 integrity and atomic replacement;
-- `O_NOFOLLOW` reads where available;
-- runtime-root symlink rejection;
-- absolute executable allowlisting;
-- no shell execution;
-- controlled child environment;
-- dangerous loader/interpreter environment rejection;
-- bounded stdout with process-group termination;
-- wall-clock/CPU/file-descriptor/file-size limits;
-- `PR_SET_NO_NEW_PRIVS` for child execution where supported;
-- root execution disabled unless explicitly enabled;
-- SkillLE manifest and file-set verification;
-- root-owned/private checks for explicitly privileged skills;
-- audit-log secret redaction;
-- sensitive memory exclusion.
+Memory uses SQLite with WAL, `synchronous=FULL`, foreign keys and a bounded API. Daily and contextual keys are idempotent. Memories carry source IDs and a sensitivity flag.
 
-## Gemini verification
+Sleep separates quick consolidation from periodic review:
 
-The adapter follows the current Interactions API shape: model-generated `function_call` steps are inspected by the application, the application executes the function, and a matching `function_result` is sent using the call ID and `previous_interaction_id`. Google documents `google-genai` 2.3.0+ for Interactions API support and currently lists `gemini-3.8-flash` as a stable GA model with function calling and structured outputs.
+- tick: 300 seconds;
+- review: 1800 seconds.
 
-See `docs/GEMINI.md` for links to the official references reviewed on 2026-09-08.
+Recaps are immutable by source-set/content fingerprint. Historical observations may contribute to repetition evidence without being reintroduced as fresh consolidation work.
+
+## Tool and Skill security
+
+The v0.1 default registry is intentionally narrow. `system.info` is an Aquery observation tool; `process.list` is an Squery observation tool; arbitrary process execution is disabled unless explicitly enabled.
+
+When process execution is enabled, the implementation requires absolute executable allowlisting, rejects shell/interpreter launchers, does not invoke a shell, builds a controlled environment, limits arguments/output/file descriptors and time, starts a dedicated process group, and uses `PR_SET_NO_NEW_PRIVS` on Linux child setup where available.
+
+SkillLE validates manifests, hashes, paths, file sets, entrypoints and resource bounds before execution. Root execution requires explicit policy and a privileged skill tree must be root-owned and non-group/world-writable.
+
+These mechanisms are **guardrails, not a hostile-code sandbox**. Production execution of generated or untrusted code should move behind an OS-level helper with dedicated identity, cgroups/systemd resource controls, seccomp and kernel-assisted path resolution.
+
+## Gemini integration
+
+The adapter targets the current Interactions API shape. The model emits `function_call` steps; ABIYSS executes the requested local tool and submits `function_result` using the function-call ID and `previous_interaction_id`.
+
+`gemini-3.8-flash` is the v0.1 default. Thinking is explicit and defaults to `medium`. Structured output is used for Sleep Key Alignment and is validated again locally.
+
+The Interactions API is stateful by default when `store=true`. That means provider-side interaction retention is part of the data boundary for the normal agent loop. Sleep alignment, which does not need conversational state, is treated separately and should use stateless execution in production deployments.
+
+## External references reviewed
+
+- Google Gemini Interactions API overview and migration documentation.
+- Google Gemini function-calling documentation.
+- Google Gemini 3.8 Flash model documentation.
+- Google Gemini thinking configuration documentation.
+- Python `subprocess` documentation concerning `preexec_fn` and threaded applications.
+- Linux kernel `openat2(2)` documentation for future path-resolution hardening.
+- SQLite WAL documentation for writer/reader concurrency semantics.
 
 ## Known limitations
 
-1. Python subprocess guardrails are not a complete hostile-code sandbox. The Python standard library warns that `preexec_fn` can deadlock in multithreaded applications. ABIYSS therefore treats this as a known engineering limitation and future work should move resource setup to an OS-level helper/service boundary.
-2. `openat2()`-style kernel path-resolution constraints are not yet used by the Python implementation. Future broad filesystem tools should prefer kernel-assisted resolution restrictions over user-space path checks alone.
-3. SQLite WAL improves read/write overlap but still permits only one writer at a time. High-volume memory storage will eventually require stronger workload isolation or a different persistence tier.
-4. Stateful Gemini Interactions are stored by the provider unless configured otherwise. A production deployment should make the privacy/retention choice explicit.
-5. The default tool registry intentionally does not expose arbitrary filesystem mutation or package-manager control.
+1. No live Gemini request was executed during this build.
+2. `preexec_fn` remains a residual risk in a multithreaded Python process because Python documents possible deadlocks. The current code keeps the hook deliberately small, but this is not a final isolation boundary.
+3. Path safety is partly user-space. A future privileged filesystem tool should use kernel-enforced resolution constraints such as `openat2`.
+4. SQLite remains a single-writer database despite WAL.
+5. Provider-side stateful Gemini interactions introduce retention/privacy considerations and should be made configurable in a future hardening pass.
+6. Arbitrary filesystem mutation, package-manager control and unrestricted shell access are intentionally outside v0.1.
