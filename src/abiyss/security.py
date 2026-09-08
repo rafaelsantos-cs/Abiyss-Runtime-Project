@@ -69,7 +69,9 @@ def set_no_new_privs() -> bool:
     libc = ctypes.CDLL(None, use_errno=True)
     libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
     libc.prctl.restype = ctypes.c_int
-    return libc.prctl(38, 1, 0, 0, 0) == 0
+    if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+        return False
+    return True
 
 
 def ensure_trusted_executable(path: Path) -> None:
