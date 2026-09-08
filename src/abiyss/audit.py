@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .atomic import atomic_write_bytes
 from .security import redact
 
 
@@ -38,3 +39,6 @@ class AuditLog:
             finally:
                 if fd >= 0:
                     os.close(fd)
+
+    def write_marker(self, marker: str) -> None:
+        atomic_write_bytes(self.path.with_suffix(self.path.suffix + ".marker"), marker.encode("utf-8"))
