@@ -23,8 +23,19 @@ class ModelTurn:
 
 
 class ModelProvider(Protocol):
-    def turn(self, input_data: Any, tools: list, previous_interaction_id: str | None = None) -> ModelTurn: ...
-    def send_results(self, previous_interaction_id: str, results: list[dict[str, Any]], tools: list) -> ModelTurn: ...
+    def turn(
+        self,
+        input_data: Any,
+        tools: list,
+        previous_interaction_id: str | None = None,
+    ) -> ModelTurn: ...
+
+    def send_results(
+        self,
+        previous_interaction_id: str,
+        results: list[dict[str, Any]],
+        tools: list,
+    ) -> ModelTurn: ...
 
 
 class DeterministicProvider:
@@ -39,10 +50,11 @@ class DeterministicProvider:
         response = self.planner(input_data, tools, previous_interaction_id)
         if not isinstance(response, dict):
             raise ProviderError("deterministic provider returned non-object")
-        calls: list[ModelFunctionCall] = []
         raw_calls = response.get("function_calls", [])
         if not isinstance(raw_calls, list) or len(raw_calls) > 64:
             raise ProviderError("deterministic provider returned too many function calls")
+        calls: list[ModelFunctionCall] = []
+        seen: set[str] = set()
         for call in raw_calls:
             if not isinstance(call, dict):
                 raise ProviderError("deterministic function call must be object")
@@ -51,8 +63,11 @@ class DeterministicProvider:
             arguments = call.get("arguments", {})
             if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
                 raise ProviderError("deterministic function call missing id or name")
+            if call_id in seen:
+                raise ProviderError(f"duplicate deterministic function call id: {call_id}")
             if not isinstance(arguments, dict):
                 raise ProviderError("deterministic function arguments must be object")
+            seen.add(call_id)
             calls.append(ModelFunctionCall(call_id, name, arguments))
         interaction_id = response.get("interaction_id", previous_interaction_id or "offline")
         output_text = response.get("output_text", "")
@@ -63,13 +78,22 @@ class DeterministicProvider:
         return ModelTurn(interaction_id, calls, output_text)
 
     def send_results(self, previous_interaction_id: str, results: list[dict[str, Any]], tools: list) -> ModelTurn:
+        if not isinstance(previous_interaction_id, str) or not previous_interaction_id:
+            raise ProviderError("invalid previous interaction id")
         return self.turn(results, tools, previous_interaction_id)
 
 
 class GoogleGeminiProvider:
     """Manual tool-loop adapter for Google's Gemini Interactions API."""
 
-    def __init__(self, *, model: str = "gemini-3.8-flash", api_key: str | None = None, system_instruction: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        model: str = "gemini-3.8-flash",
+        api_key: str | None = None,
+        system_instruction: str | None = None,
+        thinking_level: str = "medium",
+    ) -> None:
         try:
             from google import genai
         except ImportError as exc:
@@ -80,7 +104,10 @@ class GoogleGeminiProvider:
             raise ProviderError(f"Gemini client initialization failed: {exc}") from exc
         if not isinstance(model, str) or not model.strip() or len(model.encode("utf-8")) > 256:
             raise ProviderError("invalid Gemini model name")
+        if thinking_level not in {"low", "medium", "high"}:
+            raise ProviderError("thinking_level must be low, medium or high")
         self.model = model
+        self.thinking_level = thinking_level
         self.system_instruction = system_instruction or (
             "You are the cognitive layer of ABIYSS. You never execute tools yourself. "
             "Request the narrowest available function for an operating-system action. "
@@ -131,6 +158,7 @@ class GoogleGeminiProvider:
             "input": input_data,
             "tools": self._declarations(tools),
             "system_instruction": self.system_instruction,
+            "generation_config": {"thinking_level": self.thinking_level},
         }
         if previous_interaction_id:
             kwargs["previous_interaction_id"] = previous_interaction_id
@@ -176,6 +204,7 @@ class GoogleGeminiProvider:
                 input=input_data,
                 response_format={"type": "text", "mime_type": "application/json", "schema": schema},
                 system_instruction=self.system_instruction,
+                generation_config={"thinking_level": self.thinking_level},
             )
             raw = getattr(interaction, "output_text", "") or ""
             if not isinstance(raw, str):
