@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=75", "wheel>=0.45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "abiyss"
+version = "0.1.0"
+description = "ABIYSS runtime for deterministic Query scheduling, guarded Linux tools, memory and optional Gemini integration."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Rafael Alves"}]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = []
+
+[project.optional-dependencies]
+gemini = ["google-genai>=2.3.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "build>=1.2"]
+
+[project.scripts]
+abiyss = "abiyss.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
