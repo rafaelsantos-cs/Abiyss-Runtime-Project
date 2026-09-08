@@ -70,3 +70,16 @@ def set_no_new_privs() -> bool:
     libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
     libc.prctl.restype = ctypes.c_int
     return libc.prctl(38, 1, 0, 0, 0) == 0
+
+
+def ensure_trusted_executable(path: Path) -> None:
+    """When running privileged, reject user-writable executables from trusted lists."""
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise SecurityError(f"cannot stat executable {path}: {exc}") from exc
+    if os.geteuid() == 0:
+        if stat.st_uid != 0:
+            raise SecurityError(f"privileged executable must be root-owned: {path}")
+        if stat.st_mode & 0o022:
+            raise SecurityError(f"privileged executable is group/world writable: {path}")
