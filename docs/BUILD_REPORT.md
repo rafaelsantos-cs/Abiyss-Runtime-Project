@@ -13,14 +13,16 @@ This release is a deliberate reconstruction from the recovered ABIYSS context. H
 
 ## Validation completed in the development workspace
 
-- **68 tests passed** with `PYTHONPATH=src python -m pytest -q`.
+- **68 tests passed** with `PYTHONPATH=src python -m pytest -q` after the final Gemini/privacy hardening.
 - `python -m compileall -q src`: passed.
-- Wheel build with local build tooling and no dependency download: passed.
-- Clean virtual-environment installation of the generated wheel: passed.
+- Wheel built from the final source tree with local build tooling and no dependency download: passed.
+- Clean virtual-environment installation of the final wheel: passed.
 - Clean-environment `python -m abiyss doctor`: passed.
 - Clean-environment `python -m abiyss status`: passed.
 - Clean-environment `pip check`: passed with no broken requirements.
-- Generated wheel SHA-256: `0f5314c6bbfce89f830a995ccb2891b103c0002e2a6decf46f39fc0d3651c542`.
+- Final wheel SHA-256: `4ef3eeaa3fab1d4b653690bf9ec1fb2096eba141939234304bfec7e6f1259fde`.
+- Final source ZIP SHA-256: `3d2e9a30a39558e11554455c6cc107ed423bf9f8017195b9f2e071aa8597e5d2`.
+- Final source ZIP contains 42 project files and excludes Python bytecode/build caches.
 - Gemini live API: **not** exercised in this environment because external API access and credentials are not assumed.
 
 The GitHub repository contains a critical regression/security suite and GitHub Actions configuration. Connector-authored pushes may not automatically trigger Actions in every GitHub configuration, so the local clean-environment result above is the authoritative reconstruction validation unless a live CI run is observed.
@@ -92,7 +94,7 @@ The v0.1 default registry is intentionally narrow. `system.info` is an Aquery ob
 
 When process execution is enabled, the implementation requires absolute executable allowlisting, rejects shell/interpreter launchers, does not invoke a shell, builds a controlled environment, limits arguments/output/file descriptors and time, starts a dedicated process group, and uses `PR_SET_NO_NEW_PRIVS` on Linux child setup where available.
 
-SkillLE validates manifests, hashes, paths, file sets, entrypoints and resource bounds before execution. Root execution requires explicit policy and a privileged skill tree must be root-owned and non-group/world-writable.
+SkillLE validates manifests, hashes, paths, file sets, entrypoints and resource bounds. Root execution requires explicit policy and a privileged skill tree must be root-owned and non-group/world-writable.
 
 These mechanisms are **guardrails, not a hostile-code sandbox**. Production execution of generated or untrusted code should move behind an OS-level helper with dedicated identity, cgroups/systemd resource controls, seccomp and kernel-assisted path resolution.
 
