@@ -205,6 +205,7 @@ class GoogleGeminiProvider:
                 response_format={"type": "text", "mime_type": "application/json", "schema": schema},
                 system_instruction=self.system_instruction,
                 generation_config={"thinking_level": self.thinking_level},
+                store=False,
             )
             raw = getattr(interaction, "output_text", "") or ""
             if not isinstance(raw, str):
