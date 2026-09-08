@@ -22,7 +22,19 @@ class AuditLog:
         record = {"ts": time.time(), "event": event, **redact(fields)}
         line = json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
         with self._lock:
-            with self.path.open("ab") as handle:
-                handle.write(line.encode("utf-8"))
-                handle.flush()
-                os.fsync(handle.fileno())
+            if self.path.is_symlink():
+                raise OSError(f"audit log path is a symlink: {self.path}")
+            fd = os.open(
+                self.path,
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                with os.fdopen(fd, "ab", closefd=True) as handle:
+                    fd = -1
+                    handle.write(line.encode("utf-8"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                if fd >= 0:
+                    os.close(fd)
