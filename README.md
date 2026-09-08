@@ -39,11 +39,12 @@ This release establishes the durable runtime foundation:
 - SQLite-backed Memory with daily/contextual keys, provenance and sensitive-memory filtering;
 - Sleep tick/review and immutable recap semantics;
 - optional Gemini Interactions API adapter with manual function-call execution;
-- SkillLE artifact validation/execution and Skill Emergence candidate detection.
+- SkillLE artifact validation/execution and Skill Emergence candidate detection;
+- CLI/diagnostics and reproducible local build metadata.
 
 The **War Pigs** adversarial attack harness is deliberately not part of this v0.1 runtime package. It belongs in a separate test/research layer.
 
-## Install
+## Installation
 
 ```bash
 python -m pip install .
@@ -51,10 +52,11 @@ python -m pip install '.[dev]'
 python -m pip install '.[gemini]'
 ```
 
-For an offline source checkout where build isolation cannot reach PyPI:
+For an offline source checkout where package-index access is unavailable:
 
 ```bash
-PYTHONPATH=src pytest -q
+PYTHONPATH=src python -m pytest -q
+python -m compileall -q src
 ```
 
 ## CLI
@@ -64,6 +66,7 @@ abiyss doctor
 abiyss status
 abiyss prompt 'inspect the machine'
 abiyss recover <query-id> cancel
+python -m abiyss doctor
 ```
 
 Execution-capable tools are disabled by default. This is intentional.
@@ -78,4 +81,21 @@ After the side effect begins, a later persistence failure means the runtime cann
 
 The process executor and SkillLE are **guardrails, not a hostile-code sandbox**. Root execution is an explicit opt-in. When genuinely untrusted generated code is introduced, the execution boundary should move to the OS using dedicated identities, cgroups/systemd limits, seccomp and kernel-assisted filesystem resolution.
 
-See `docs/` for the architecture, contracts, security model, Gemini integration notes and build record.
+## Gemini boundary
+
+The current default is `gemini-3.8-flash` with explicit `thinking_level="medium"`. Gemini function calls become Aqueries; ABIYSS executes them through QQ and returns `function_result` using the original call ID and `previous_interaction_id`. Auxiliary structured alignment requests are stateless.
+
+Provider-side stateful Interactions have their own retention/data-storage semantics. See `docs/GEMINI.md` before production deployment.
+
+## Documentation
+
+- `docs/ARCHITECTURE.md`: architecture and state machine;
+- `docs/CONTRACTS.md`: module contracts and invariants;
+- `docs/SECURITY.md`: threat model, controls and residual risks;
+- `docs/GEMINI.md`: current Gemini API integration;
+- `docs/STUDY_NOTES.md`: engineering rationale and research notes;
+- `docs/BUILD_REPORT.md`: build and validation record.
+
+## Validation snapshot
+
+The reconstruction workspace currently passes **68 tests** and a clean virtual-environment wheel installation with `pip check`. The live Gemini API was not exercised in the reconstruction environment, so network transport remains an explicit deployment validation step.
