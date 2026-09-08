@@ -8,7 +8,7 @@ from typing import Callable
 
 from .audit import AuditLog
 from .errors import PersistenceError, QueueInvariantError, ToolDenied
-from .models import Checkpoint, Query, QueryState, QueryType, ToolResult
+from .models import Query, QueryState, QueryType, ToolResult
 from .qups import QuPsStore
 
 
@@ -52,7 +52,7 @@ class QueryQueue:
         with self._lock:
             return self._active
 
-    def _steps(self, query: Query) -> list[dict]:
+    def _steps(self, query: Query) -> list[dict[str, object]]:
         value = query.payload.get("steps")
         if value is None:
             name = query.payload.get("tool_name")
@@ -64,7 +64,7 @@ class QueryQueue:
             return [{"tool_name": name, "arguments": args}]
         if not isinstance(value, list) or not 1 <= len(value) <= 256:
             raise QueueInvariantError("invalid Query step count")
-        steps: list[dict] = []
+        steps: list[dict[str, object]] = []
         for index, step in enumerate(value):
             if not isinstance(step, dict):
                 raise QueueInvariantError(f"step {index} is not an object")
@@ -89,7 +89,10 @@ class QueryQueue:
                 existing_id = self._external_calls.get(key)
                 if existing_id is not None:
                     return self._queries[existing_id]
-            active_count = sum(item.state in {QueryState.QUEUED, QueryState.RUNNING, QueryState.PAUSED, QueryState.RECOVERY_REQUIRED} for item in self._queries.values())
+            active_count = sum(
+                item.state in {QueryState.QUEUED, QueryState.RUNNING, QueryState.PAUSED, QueryState.RECOVERY_REQUIRED}
+                for item in self._queries.values()
+            )
             if active_count >= self.max_queries:
                 raise QueueInvariantError("active Query capacity reached")
             self._validate(query)
@@ -145,9 +148,8 @@ class QueryQueue:
         query.attempts += 1
         query.checkpoint.attempt = query.attempts
         query.checkpoint.execution_started_at = time.time()
-        started = query.checkpoint.execution_started_at
         try:
-            query.transition(QueryState.RUNNING, execution_started_at=started)
+            query.transition(QueryState.RUNNING, execution_started_at=query.checkpoint.execution_started_at)
             self.store.save(query)
             return True
         except Exception as exc:
@@ -169,11 +171,11 @@ class QueryQueue:
         self._sequence += 1
         heapq.heappush(self._heap, (self._class_key(query), -query.priority, self._sequence, query.id))
 
-    def _save_after_side_effect(self, query: Query, state: QueryState, *, result: dict, tool_name: str) -> bool:
+    def _safe_save_after_side_effect(self, query: Query, terminal_state: QueryState, *, result: dict, tool_name: str) -> bool:
         query.checkpoint.result = result
-        query.checkpoint.step_index = int(result["next_step"])
+        query.checkpoint.step_index = result["next_step"]
         try:
-            query.transition(state, result=result, tool_name=tool_name)
+            query.transition(terminal_state, result=result, tool_name=tool_name)
             self.store.save(query)
             return True
         except Exception as exc:
@@ -192,6 +194,7 @@ class QueryQueue:
                 query = self._queries[query_id]
                 self._active = query_id
                 self._preempt.clear()
+
             try:
                 if not self._persist_running(query):
                     with self._lock:
@@ -211,7 +214,7 @@ class QueryQueue:
                     return query
 
                 index = self._step_index(query)
-                if not 0 <= index < len(steps):
+                if index < 0 or index >= len(steps):
                     query.state = QueryState.RECOVERY_REQUIRED
                     query.checkpoint.state = QueryState.RECOVERY_REQUIRED
                     query.checkpoint.error = "invalid durable checkpoint step index"
@@ -222,9 +225,8 @@ class QueryQueue:
                     return query
 
                 step = steps[index]
-                name = str(step["tool_name"])
+                name = step["tool_name"]
                 args = step["arguments"]
-                assert isinstance(args, dict)
                 query.checkpoint.tool_name = name
                 query.checkpoint.tool_call_id = query.tool_call_id
 
@@ -240,15 +242,13 @@ class QueryQueue:
                     result = ToolResult("error", error=f"{type(exc).__name__}: {exc}")
 
                 checkpoint_result = result.as_dict()
-                checkpoint_result.update({
-                    "step_index": index,
-                    "next_step": index + 1,
-                    "tool_name": name,
-                    "recorded_at": time.time(),
-                })
+                checkpoint_result["step_index"] = index
+                checkpoint_result["next_step"] = index + 1
+                checkpoint_result["tool_name"] = name
+                checkpoint_result["recorded_at"] = time.time()
 
                 if result.status != "ok":
-                    if self._save_after_side_effect(query, QueryState.FAILED, result=checkpoint_result, tool_name=name):
+                    if self._safe_save_after_side_effect(query, QueryState.FAILED, result=checkpoint_result, tool_name=name):
                         self.audit.append("query.step_failed", query_id=query.id, step=index, status=result.status)
                     return query
 
@@ -256,7 +256,7 @@ class QueryQueue:
                 preempted = query.type == QueryType.SQUERY and self._preempt.is_set() and next_index < len(steps)
                 if next_index < len(steps):
                     if preempted:
-                        if not self._save_after_side_effect(query, QueryState.PAUSED, result=checkpoint_result, tool_name=name):
+                        if not self._safe_save_after_side_effect(query, QueryState.PAUSED, result=checkpoint_result, tool_name=name):
                             return query
                         try:
                             query.transition(QueryState.QUEUED, result=checkpoint_result, tool_name=name)
@@ -264,18 +264,26 @@ class QueryQueue:
                         except Exception as exc:
                             query.state = QueryState.PAUSED
                             query.checkpoint.state = QueryState.PAUSED
-                            query.checkpoint.error = f"resume persistence failed: {exc}"[:4096]
-                            self.audit.append("query.resume_persist_failed", query_id=query.id, error=str(exc))
+                            query.checkpoint.error = f"resume persistence failed; durable state remains paused: {exc}"[:4096]
+                            self.audit.append("query.resume_persistence_failed", query_id=query.id, error=str(exc), step=index)
                             return query
+                        with self._lock:
+                            self._requeue(query)
                     else:
-                        if not self._save_after_side_effect(query, QueryState.QUEUED, result=checkpoint_result, tool_name=name):
+                        if not self._safe_save_after_side_effect(query, QueryState.QUEUED, result=checkpoint_result, tool_name=name):
                             return query
-                    with self._lock:
-                        self._requeue(query)
+                        with self._lock:
+                            self._requeue(query)
                 else:
-                    if not self._save_after_side_effect(query, QueryState.COMPLETED, result=checkpoint_result, tool_name=name):
+                    if not self._safe_save_after_side_effect(query, QueryState.COMPLETED, result=checkpoint_result, tool_name=name):
                         return query
-                self.audit.append("query.step_completed", query_id=query.id, step=index, status=query.state.value, preempted=preempted)
+                self.audit.append(
+                    "query.step_completed",
+                    query_id=query.id,
+                    step=index,
+                    status=query.state.value,
+                    preempted=preempted,
+                )
                 return query
             finally:
                 with self._lock:
@@ -321,7 +329,6 @@ class QueryQueue:
                     query.checkpoint.state = QueryState.QUEUED
                     self._sequence += 1
                     heapq.heappush(self._heap, (self._class_key(query), -query.priority, self._sequence, query.id))
-
                 if query.parent_interaction_id and query.tool_call_id:
                     key = (query.parent_interaction_id, query.tool_call_id)
                     existing = self._external_calls.get(key)
@@ -346,7 +353,6 @@ class QueryQueue:
                         )
                     else:
                         self._external_calls[key] = query.id
-
                 self._queries[query.id] = query
 
     def resolve_recovery(self, query_id: str, action: str) -> None:
@@ -368,17 +374,16 @@ class QueryQueue:
                 query.checkpoint.error = "explicit recovery requeue; external side effect may duplicate"
                 self.store.save(query)
                 self._requeue(query)
-                self.audit.append(
-                    "query.recovery_requeued",
-                    query_id=query.id,
-                    warning="external side effect may have already happened",
-                )
+                self.audit.append("query.recovery_requeued", query_id=query.id, warning="external side effect may have already happened")
                 return
             raise QueueInvariantError("recovery action must be cancel or requeue")
 
     def get(self, query_id: str) -> Query:
         with self._lock:
-            return self._queries[query_id]
+            try:
+                return self._queries[query_id]
+            except KeyError as exc:
+                raise QueueInvariantError(f"unknown Query: {query_id}") from exc
 
     def all_queries(self) -> list[Query]:
         with self._lock:
