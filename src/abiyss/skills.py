@@ -20,7 +20,11 @@ MAX_ARGS = 32
 MAX_ARG_BYTES = 4096
 MAX_NAME_BYTES = 128
 _SYSTEM_EXEC_PREFIXES = (Path("/bin"), Path("/usr/bin"), Path("/usr/local/bin"))
-_FORBIDDEN_LAUNCHERS = {"env", "bash", "sh", "dash", "zsh", "fish"}
+_FORBIDDEN_LAUNCHERS = {
+    "env", "bash", "sh", "dash", "zsh", "fish",
+    "python", "python3", "python3.11", "python3.12", "python3.13", "python3.14",
+    "node", "nodejs", "ruby", "perl", "php", "lua", "luajit", "java", "tclsh", "awk",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +124,7 @@ class SkillLoader:
                 raise SecurityError("absolute skill executable is unavailable or a symlink")
             ensure_trusted_executable(first)
             if not any(first.is_relative_to(prefix) for prefix in _SYSTEM_EXEC_PREFIXES):
-                raise SecurityError("absolute skill executable is outside trusted system prefixes")
+                raise SecurityError("absolute skill executable is outside the trusted system prefixes")
             if first.name in _FORBIDDEN_LAUNCHERS:
                 raise SecurityError("generic command launcher is not an allowed skill entrypoint")
         else:
@@ -131,9 +135,32 @@ class SkillLoader:
             if relative not in manifest.files:
                 raise SecurityError("relative skill entrypoint must be hashed in manifest")
 
+    def _ensure_privileged_tree(self, directory: Path) -> None:
+        if os.geteuid() != 0:
+            return
+        for candidate in [directory, *directory.rglob("*")]:
+            if candidate.is_symlink():
+                raise SecurityError(f"privileged skill tree contains symlink: {candidate}")
+            try:
+                stat = candidate.stat()
+            except OSError as exc:
+                raise SecurityError(f"cannot stat privileged skill path: {candidate}") from exc
+            if stat.st_uid != 0 or stat.st_mode & 0o022:
+                raise SecurityError(f"privileged skill path is not root-owned and private: {candidate}")
+
     def verify(self, directory: Path, manifest: SkillManifest) -> None:
         directory = self._inside(directory)
         self._check_entrypoint(directory, manifest)
+        expected_files = set(manifest.files)
+        actual_files = {
+            str(path.relative_to(directory))
+            for path in directory.rglob("*")
+            if path.is_file() and not path.is_symlink() and path.name != "skill.json"
+        }
+        if actual_files != expected_files:
+            missing = sorted(expected_files - actual_files)
+            unexpected = sorted(actual_files - expected_files)
+            raise SecurityError(f"skill file set mismatch; missing={missing[:8]}, unexpected={unexpected[:8]}")
         for relative, expected in manifest.files.items():
             path = self._inside(directory / relative)
             if not path.is_file() or path.is_symlink():
@@ -143,6 +170,8 @@ class SkillLoader:
                 raise SecurityError(f"skill hash mismatch: {relative}")
         if manifest.allow_root and not self.allow_root_skills:
             raise SecurityError("root skill execution disabled by policy")
+        if manifest.allow_root:
+            self._ensure_privileged_tree(directory)
 
     def load(self, name: str) -> tuple[Path, SkillManifest]:
         directory = self._inside(self.root / name)
