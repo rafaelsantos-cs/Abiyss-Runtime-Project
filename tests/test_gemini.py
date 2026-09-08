@@ -83,3 +83,26 @@ def test_deterministic_provider_roundtrip():
         }
     )
     assert provider.turn("input", []).output_text == "ok"
+
+
+def test_structured_alignment_request_is_stateless(monkeypatch):
+    class Interaction:
+        output_text = '{"groups":[["a"]]}'
+
+    class Client:
+        class interactions:
+            @staticmethod
+            def create(**kwargs):
+                assert kwargs["store"] is False
+                assert kwargs["generation_config"] == {"thinking_level": "medium"}
+                return Interaction()
+
+    google = types.ModuleType("google")
+    google_genai = types.ModuleType("google.genai")
+    google_genai.Client = lambda **_: Client()
+    google.genai = google_genai
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", google_genai)
+
+    value = GoogleGeminiProvider().structured("align", {"type": "object"})
+    assert value == {"groups": [["a"]]}
