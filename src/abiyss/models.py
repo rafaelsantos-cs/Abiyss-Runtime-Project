@@ -70,18 +70,29 @@ class Query:
         if not isinstance(self.payload, dict):
             raise ValidationError("query payload must be an object")
         try:
-            encoded = json.dumps(self.payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8")
+            encoded = json.dumps(
+                self.payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+                allow_nan=False,
+            ).encode("utf-8")
         except (TypeError, ValueError) as exc:
             raise ValidationError("query payload is not JSON-safe") from exc
         if len(encoded) > MAX_QUERY_PAYLOAD_BYTES:
             raise ValidationError("query payload too large")
-        if not math.isfinite(float(self.created_at)) or not math.isfinite(float(self.updated_at)):
-            raise ValidationError("invalid query timestamp")
-        if self.created_at <= 0 or self.updated_at <= 0:
-            raise ValidationError("invalid query timestamp")
+        if self.created_at <= 0 or not math.isfinite(self.created_at):
+            raise ValidationError("invalid created_at")
+        if self.updated_at <= 0 or not math.isfinite(self.updated_at):
+            raise ValidationError("invalid updated_at")
         self.updated_at = max(self.updated_at, self.created_at)
-        for label, value, limit in (("parent interaction id", self.parent_interaction_id, 256), ("tool call id", self.tool_call_id, 256)):
-            if value is not None and (not isinstance(value, str) or not value or len(value.encode("utf-8")) > limit or "\x00" in value):
+        for label, value, limit in (
+            ("parent interaction id", self.parent_interaction_id, 256),
+            ("tool call id", self.tool_call_id, 256),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value or len(value.encode("utf-8")) > limit or "\x00" in value
+            ):
                 raise ValidationError(f"invalid {label}")
         if not isinstance(self.source, str) or not 1 <= len(self.source.encode("utf-8")) <= 128:
             raise ValidationError("invalid query source")
@@ -112,12 +123,18 @@ class Query:
     def _validate_checkpoint(self) -> None:
         if self.checkpoint.schema_version != 1:
             raise ValidationError("unsupported checkpoint schema")
-        if not isinstance(self.checkpoint.step_index, int) or not 0 <= self.checkpoint.step_index <= MAX_QUERY_STEPS:
+        if not isinstance(self.checkpoint.step_index, int) or isinstance(self.checkpoint.step_index, bool) or not 0 <= self.checkpoint.step_index <= MAX_QUERY_STEPS:
             raise ValidationError("invalid checkpoint step index")
-        if not isinstance(self.checkpoint.attempt, int) or self.checkpoint.attempt < 0:
+        if not isinstance(self.checkpoint.attempt, int) or isinstance(self.checkpoint.attempt, bool) or self.checkpoint.attempt < 0:
             raise ValidationError("invalid checkpoint attempt")
-        if self.checkpoint.tool_name is not None and not isinstance(self.checkpoint.tool_name, str):
+        if self.checkpoint.tool_name is not None and (
+            not isinstance(self.checkpoint.tool_name, str) or not 1 <= len(self.checkpoint.tool_name.encode("utf-8")) <= 256
+        ):
             raise ValidationError("invalid checkpoint tool name")
+        if self.checkpoint.tool_call_id is not None and (
+            not isinstance(self.checkpoint.tool_call_id, str) or not 1 <= len(self.checkpoint.tool_call_id.encode("utf-8")) <= 256
+        ):
+            raise ValidationError("invalid checkpoint tool call id")
 
     def transition(
         self,
@@ -181,23 +198,42 @@ class Query:
         checkpoint_raw = data["checkpoint"]
         if not isinstance(checkpoint_raw, dict):
             raise ValidationError("checkpoint must be an object")
+        checkpoint_fields = {
+            "schema_version",
+            "step_index",
+            "state",
+            "tool_name",
+            "tool_call_id",
+            "attempt",
+            "result",
+            "error",
+            "execution_started_at",
+            "updated_at",
+        }
+        if not set(checkpoint_raw).issubset(checkpoint_fields):
+            raise ValidationError("checkpoint contains unknown fields")
         checkpoint_data = dict(checkpoint_raw)
         checkpoint_data["state"] = checkpoint_data.get("state", data["state"])
         try:
             checkpoint_data["state"] = QueryState(checkpoint_data["state"])
             state = QueryState(data["state"])
+            query_type = QueryType(data["type"])
         except ValueError as exc:
-            raise ValidationError("invalid query state") from exc
+            raise ValidationError("invalid query enum value") from exc
         for key in ("created_at", "updated_at"):
             if key in data and (not isinstance(data[key], (int, float)) or isinstance(data[key], bool)):
                 raise ValidationError(f"invalid {key}")
         attempts = data.get("attempts", 0)
         if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 0:
             raise ValidationError("invalid query attempts")
+        for optional in ("parent_interaction_id", "tool_call_id"):
+            value = data.get(optional)
+            if value is not None and not isinstance(value, str):
+                raise ValidationError(f"invalid {optional}")
         try:
             return cls(
                 id=data["id"],
-                type=QueryType(data["type"]),
+                type=query_type,
                 priority=data["priority"],
                 payload=data["payload"],
                 created_at=float(data.get("created_at", time.time())),
