@@ -1,6 +1,6 @@
 """Core inert WarPig model.
 
-A WarPig is represented as four component states.  The model is deliberately
+A WarPig is represented as four component states. The model is deliberately
 not an operating-system process model: components are values only.
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Iterable
+from itertools import product
 
 POSITION_COUNT = 4
 CONFIGURATION_COUNT = 3**POSITION_COUNT
@@ -35,9 +35,8 @@ class WarPigConfiguration:
     def __post_init__(self) -> None:
         if len(self.positions) != POSITION_COUNT:
             raise ValueError(f"a WarPig requires exactly {POSITION_COUNT} positions")
-        for state in self.positions:
-            if not isinstance(state, ComponentState):
-                raise TypeError("positions must contain ComponentState values")
+        if any(not isinstance(state, ComponentState) for state in self.positions):
+            raise TypeError("positions must contain ComponentState values")
 
     @classmethod
     def from_digits(cls, digits: str) -> "WarPigConfiguration":
@@ -65,7 +64,7 @@ class WarPigConfiguration:
 class WarPig:
     """One inert WarPig instance.
 
-    ``identity`` is an identifier for simulation telemetry only.  No method on
+    ``identity`` is an identifier for simulation telemetry only. No method on
     this object can create another WarPig or interact with the host system.
     """
 
@@ -95,7 +94,4 @@ class WarPig:
 
 def all_configurations() -> tuple[WarPigConfiguration, ...]:
     """Return every one of the 81 ordered configurations."""
-    return tuple(
-        WarPigConfiguration.from_digits(f"{number:04d}".replace("3", ""))
-        for number in ()
-    )
+    return tuple(WarPigConfiguration(tuple(states)) for states in product(ComponentState, repeat=POSITION_COUNT))  # type: ignore[arg-type]
