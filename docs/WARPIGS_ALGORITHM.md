@@ -50,7 +50,7 @@ Examples:
 0001 -> 1
 0010 -> 3
 0210 -> 21
-2012 -> 56
+2012 -> 59
 2222 -> 80
 ```
 
@@ -107,7 +107,7 @@ TERMINATED
 
 `TERMINATED` is absorbing.
 
-The C++ engine performs batch preflight before mutating lifecycle state. If one entity cannot accept an action, the whole batch is rejected and `tick` remains unchanged.
+The C++ engine performs batch preflight before mutating lifecycle state. If one entity cannot accept an action, the batch is rejected before any entity is changed.
 
 ## Engine contract
 
