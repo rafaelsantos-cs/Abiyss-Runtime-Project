@@ -57,7 +57,7 @@ WarPig -> cannot open network sockets
 WarPig -> cannot write arbitrary host files
 ```
 
-Population creation belongs exclusively to `PopulationSupervisor`.
+Population creation belongs exclusively to `PopulationSupervisor` or the native engine's bounded constructor. The WarPig object itself has no creation capability.
 
 ## 4. Population model
 
@@ -72,7 +72,7 @@ PopulationSupervisor(N)
        +-- WarPig #N
 ```
 
-The supervisor enforces a configured maximum. The current native engine hard-caps the absolute simulation population at 1,000,000 instances and defaults to 10,000 in the higher-level Python model.
+The native engine enforces an absolute simulation maximum of 1,000,000 instances. The higher-level Python reference model defaults to 10,000. These are test/resource limits, not propagation rules.
 
 A deterministic seed makes repeated experiments reproducible. The random generator affects component selection and telemetry identifiers, but does not alter lifecycle rules.
 
@@ -97,7 +97,7 @@ The native simulation engine applies a batch action by pre-validating the entire
 
 ## 6. Engine architecture
 
-The canonical execution implementation is C++20 with a narrow C ABI:
+The canonical execution implementation is C++20 with a narrow fixed-width C ABI:
 
 ```text
                  C++20 WarPigs Engine
@@ -110,17 +110,21 @@ The canonical execution implementation is C++20 with a narrow C ABI:
        configurations
 ```
 
+The ABI uses fixed-width integer discriminants rather than exposing C++ or compiler-specific enum layout. ABI versioning is explicit.
+
 The ABI intentionally exposes value-oriented operations only:
 
 - create/destroy simulator;
 - advance a validated lifecycle batch;
 - read tick/population size;
 - read one configuration;
+- decode a configuration code;
 - read one identity;
+- read per-instance component counts;
 - read lifecycle counts;
 - read the 81-bin configuration histogram.
 
-No ABI function performs process spawning, networking, filesystem mutation, or dynamic code loading.
+No ABI function performs process spawning, networking, filesystem mutation, dynamic code loading, or replication.
 
 ## 7. Polyglot boundaries
 
@@ -136,9 +140,9 @@ JS    -> optional Electron visualization layer
 C#    -> occasional tooling via C-compatible ABI
 ```
 
-The C ABI is the common interchange boundary. This avoids implementing five independent copies of the population algorithm.
+The C ABI is the common interchange boundary. This avoids implementing independent copies of the population algorithm.
 
-Rust must treat the foreign boundary as unsafe and wrap it with ownership and argument checks. Julia can call the same C ABI directly. Go uses cgo when a direct native bridge is useful. Electron remains a user-interface process, not part of the simulation trust boundary.
+Rust treats the foreign boundary as unsafe and wraps it with ownership and validation. Julia and Go consume the same exported C functions. C# uses P/Invoke against the same ABI. Electron is considered UI only and is not part of the simulation trust boundary.
 
 ## 8. Adversarial properties to test
 
@@ -154,6 +158,8 @@ The sterile WarPigs harness should attack the simulator rather than become a sec
 8. **Termination closure**: terminated entities cannot reactivate.
 9. **Histogram conservation**: all 81 bins sum exactly to population size.
 10. **Language parity**: bindings report the same canonical values as the C++ engine.
+11. **Source capability guard**: the sterile package contains no process/network/filesystem primitives.
+12. **Batch atomicity**: failed batch validation leaves tick and lifecycle state unchanged.
 
 ## 9. What is intentionally absent
 
@@ -171,12 +177,19 @@ Those behaviors may be represented as simulated events in future research scenar
 
 ## 10. Research basis
 
-The C++ engine uses an explicit seeded pseudo-random engine because reproducibility is a first-class testing property. `std::mt19937_64` is a standard library random engine with well-defined seeded state, which makes it appropriate for deterministic experiments. citeturn373024search1turn373024search3
+The native engine uses `std::mt19937_64` with an explicit seed because reproducibility is a first-class test property. The C++ standard library documents this engine as a 64-bit Mersenne Twister pseudo-random engine with deterministic state under a fixed seed.
 
-The polyglot design intentionally uses a C-compatible ABI instead of exposing language-specific object layouts. Rust documents that foreign interfaces are inherently unsafe and that `extern "C"` is the conventional interoperability boundary; Julia documents direct calls to C-exported functions through `@ccall`; Go provides cgo for C interoperability. citeturn373024search4turn125373search1turn125373search4
+The polyglot boundary uses a C ABI because Rust's current documentation explicitly treats foreign interfaces as unsafe contracts and recommends wrappers around foreign calls. Julia provides direct C-library calls through `@ccall`, and Go provides cgo for C interoperability. These mechanisms make one canonical native implementation practical without duplicating simulation semantics.
 
-For a future desktop UI, Electron's main/renderer/utility process model supports separating crash-prone or CPU-intensive work from the UI. The simulator itself should remain outside the renderer. citeturn125373search0
+References used during design:
+
+- cppreference, `std::mersenne_twister_engine`: https://en.cppreference.com/w/cpp/numeric/random/mersenne_twister_engine
+- Rust Reference, external blocks and ABIs: https://doc.rust-lang.org/reference/items/external-blocks.html
+- Rust Edition Guide, unsafe extern blocks: https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-extern.html
+- Julia manual, C Interface: https://docs.julialang.org/en/v1/base/c/
+- Go cgo overview: https://go.dev/wiki/cgo
+- Electron process model: https://www.electronjs.org/docs/latest/tutorial/process-model
 
 ## 11. Review conclusion
 
-The earlier Python implementation remains useful as a reference model and regression oracle. The native C++ engine is now the authoritative simulation implementation. Any future binding or visualization must be tested against the C++ oracle rather than defining independent semantics.
+The earlier Python implementation remains useful as a reference model and regression oracle. The native C++ engine is the authoritative simulation implementation. Any future binding or visualization must be tested against the C++ oracle rather than defining independent semantics.
