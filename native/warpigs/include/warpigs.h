@@ -12,6 +12,7 @@ typedef struct wp_engine wp_engine_t;
 
 /* Fixed-width ABI constants. Do not expose language-specific enum layouts. */
 #define WP_ABI_VERSION 1u
+#define WP_CONFIGURATION_COUNT 81u
 #define WP_MASKED 0u
 #define WP_ACTIVE 1u
 #define WP_STERILE_UTERUS 2u
@@ -35,6 +36,9 @@ typedef struct wp_engine wp_engine_t;
 
 uint32_t wp_engine_abi_version(void);
 uint32_t wp_engine_configuration_count(void);
+
+/* Decode the canonical base-3 state code (0..80) to four ternary digits. */
+uint32_t wp_configuration_code_text(uint8_t code, char *out, size_t capacity);
 
 uint32_t wp_engine_create(uint64_t population_size,
                           uint64_t max_population,
