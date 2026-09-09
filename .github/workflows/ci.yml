@@ -2,11 +2,11 @@ name: ABIYSS CI
 
 on:
   push:
-    branches: [main, warpigs-hardening, warpigs-sterile]
+    branches: [main, warpigs-hardening, warpigs-sterile, warpigs-definitive]
   pull_request:
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -28,3 +28,14 @@ jobs:
         run: python -m pytest -q --cov=abiyss --cov-report=term-missing
       - name: Build wheel
         run: python -m build --wheel --no-isolation
+
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++ engine
+        run: cmake -S native/warpigs -B build/warpigs -DCMAKE_BUILD_TYPE=Release
+      - name: Build C++ engine
+        run: cmake --build build/warpigs --parallel
+      - name: Run native tests
+        run: ctest --test-dir build/warpigs --output-on-failure
