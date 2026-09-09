@@ -218,6 +218,28 @@ std::uint32_t wp_engine_identity(const wp_engine_t *engine,
     return WP_OK;
 }
 
+std::uint32_t wp_engine_component_counts(const wp_engine_t *engine,
+                                         std::uint64_t index,
+                                         std::uint8_t *masked,
+                                         std::uint8_t *active,
+                                         std::uint8_t *sterile_uterus) {
+    if (engine == nullptr || masked == nullptr || active == nullptr || sterile_uterus == nullptr) {
+        return WP_ERR_NULL;
+    }
+    std::lock_guard<std::mutex> guard(engine->impl.mutex);
+    if (!valid_index(&engine->impl, index)) return WP_ERR_BOUNDS;
+
+    std::uint8_t counts[3] = {0, 0, 0};
+    for (const auto state : engine->impl.pigs[static_cast<std::size_t>(index)].configuration) {
+        if (state > WP_STERILE_UTERUS) return WP_ERR_INTERNAL;
+        ++counts[state];
+    }
+    *masked = counts[WP_MASKED];
+    *active = counts[WP_ACTIVE];
+    *sterile_uterus = counts[WP_STERILE_UTERUS];
+    return WP_OK;
+}
+
 std::uint32_t wp_engine_state_counts(const wp_engine_t *engine,
                                      std::uint64_t *created,
                                      std::uint64_t *ready,
