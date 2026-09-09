@@ -6,37 +6,17 @@
 use std::fmt;
 use std::ptr::NonNull;
 
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RawError {
-    Ok = 0,
-    Null = 1,
-    InvalidArgument = 2,
-    Limit = 3,
-    Bounds = 4,
-    State = 5,
-    Buffer = 6,
-    Internal = 255,
-}
+struct RawError(u32);
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RawAction {
-    Prepare = 0,
-    Start = 1,
-    Quarantine = 2,
-    Terminate = 3,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RawLifecycle {
-    Created = 0,
-    Ready = 1,
-    Running = 2,
-    Quarantined = 3,
-    Terminated = 4,
-}
+const OK: RawError = RawError(0);
+const ERR_INVALID_ARGUMENT: RawError = RawError(2);
+const ERR_LIMIT: RawError = RawError(3);
+const ERR_BOUNDS: RawError = RawError(4);
+const ERR_STATE: RawError = RawError(5);
+const ERR_BUFFER: RawError = RawError(6);
+const ERR_INTERNAL: RawError = RawError(255);
 
 #[repr(C)]
 struct RawEngine {
@@ -49,27 +29,29 @@ unsafe extern "C" {
         max_population: u64,
         seed: u64,
         out_engine: *mut *mut RawEngine,
-    ) -> RawError;
+    ) -> u32;
     fn wp_engine_destroy(engine: *mut RawEngine);
-    fn wp_engine_step(engine: *mut RawEngine, action: RawAction) -> RawError;
+    fn wp_engine_step(engine: *mut RawEngine, action: u32) -> u32;
     fn wp_engine_tick(engine: *const RawEngine) -> u64;
     fn wp_engine_population(engine: *const RawEngine) -> u64;
     fn wp_engine_configuration_code(
         engine: *const RawEngine,
         index: u64,
         out_code: *mut u8,
-    ) -> RawError;
+    ) -> u32;
     fn wp_engine_configuration_text(
         engine: *const RawEngine,
         index: u64,
         out: *mut u8,
         capacity: usize,
-    ) -> RawError;
+    ) -> u32;
     fn wp_engine_lifecycle(
         engine: *const RawEngine,
         index: u64,
-        out_state: *mut RawLifecycle,
-    ) -> RawError;
+        out_state: *mut u32,
+    ) -> u32;
+    fn wp_engine_abi_version() -> u32;
+    fn wp_engine_configuration_count() -> u32;
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -97,15 +79,16 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-fn map_error(error: RawError) -> Result<(), Error> {
-    match error {
-        RawError::Ok => Ok(()),
-        RawError::InvalidArgument => Err(Error::InvalidArgument),
-        RawError::Limit => Err(Error::Limit),
-        RawError::Bounds => Err(Error::Bounds),
-        RawError::State => Err(Error::State),
-        RawError::Buffer => Err(Error::Buffer),
-        RawError::Internal | RawError::Null => Err(Error::Internal),
+fn map_error(error: u32) -> Result<(), Error> {
+    match RawError(error) {
+        OK => Ok(()),
+        ERR_INVALID_ARGUMENT => Err(Error::InvalidArgument),
+        ERR_LIMIT => Err(Error::Limit),
+        ERR_BOUNDS => Err(Error::Bounds),
+        ERR_STATE => Err(Error::State),
+        ERR_BUFFER => Err(Error::Buffer),
+        ERR_INTERNAL | RawError(1) => Err(Error::Internal),
+        RawError(_) => Err(Error::Internal),
     }
 }
 
@@ -117,13 +100,13 @@ pub enum Action {
     Terminate,
 }
 
-impl From<Action> for RawAction {
-    fn from(action: Action) -> Self {
-        match action {
-            Action::Prepare => Self::Prepare,
-            Action::Start => Self::Start,
-            Action::Quarantine => Self::Quarantine,
-            Action::Terminate => Self::Terminate,
+impl Action {
+    fn raw(self) -> u32 {
+        match self {
+            Self::Prepare => 0,
+            Self::Start => 1,
+            Self::Quarantine => 2,
+            Self::Terminate => 3,
         }
     }
 }
@@ -137,17 +120,18 @@ pub enum Lifecycle {
     Terminated,
 }
 
-impl TryFrom<RawLifecycle> for Lifecycle {
+impl TryFrom<u32> for Lifecycle {
     type Error = Error;
 
-    fn try_from(state: RawLifecycle) -> Result<Self, Self::Error> {
-        Ok(match state {
-            RawLifecycle::Created => Self::Created,
-            RawLifecycle::Ready => Self::Ready,
-            RawLifecycle::Running => Self::Running,
-            RawLifecycle::Quarantined => Self::Quarantined,
-            RawLifecycle::Terminated => Self::Terminated,
-        })
+    fn try_from(state: u32) -> Result<Self, Self::Error> {
+        match state {
+            0 => Ok(Self::Created),
+            1 => Ok(Self::Ready),
+            2 => Ok(Self::Running),
+            3 => Ok(Self::Quarantined),
+            4 => Ok(Self::Terminated),
+            _ => Err(Error::Internal),
+        }
     }
 }
 
@@ -167,41 +151,46 @@ impl Engine {
         }
 
         let mut raw = std::ptr::null_mut();
-        // SAFETY: `out_engine` is a valid writable pointer to local storage.
-        // The C++ function initializes it on success and performs no Rust callbacks.
+        // SAFETY: out_engine points to local writable storage. On success the
+        // native side transfers one owned opaque handle to this wrapper.
         let error = unsafe { wp_engine_create(population_size, max_population, seed, &mut raw) };
         map_error(error)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
         Ok(Self { raw })
     }
 
+    pub fn abi_version() -> u32 {
+        // SAFETY: pure constant query with no pointers or mutation.
+        unsafe { wp_engine_abi_version() }
+    }
+
+    pub fn configuration_count() -> u32 {
+        // SAFETY: pure constant query with no pointers or mutation.
+        unsafe { wp_engine_configuration_count() }
+    }
+
     pub fn population(&self) -> u64 {
-        // SAFETY: self.raw is owned and remains valid for the lifetime of self.
+        // SAFETY: self owns a valid native handle for its lifetime.
         unsafe { wp_engine_population(self.raw.as_ptr()) }
     }
 
     pub fn tick(&self) -> u64 {
-        // SAFETY: self.raw is owned and remains valid for the lifetime of self.
+        // SAFETY: self owns a valid native handle for its lifetime.
         unsafe { wp_engine_tick(self.raw.as_ptr()) }
     }
 
     pub fn step(&mut self, action: Action) -> Result<(), Error> {
-        // SAFETY: self.raw is uniquely owned by this Engine, and action is a
-        // valid enum produced by the safe API.
-        let error = unsafe { wp_engine_step(self.raw.as_ptr(), action.into()) };
+        // SAFETY: raw is uniquely owned by this Engine and action is emitted
+        // only from the validated Rust enum.
+        let error = unsafe { wp_engine_step(self.raw.as_ptr(), action.raw()) };
         map_error(error)
     }
 
     pub fn configuration(&self, index: u64) -> Result<String, Error> {
         let mut buffer = [0u8; 5];
-        // SAFETY: buffer is exactly large enough for four ASCII digits plus NUL.
+        // SAFETY: caller-owned 5-byte buffer is valid for four ASCII digits + NUL.
         let error = unsafe {
-            wp_engine_configuration_text(
-                self.raw.as_ptr(),
-                index,
-                buffer.as_mut_ptr(),
-                buffer.len(),
-            )
+            wp_engine_configuration_text(self.raw.as_ptr(), index, buffer.as_mut_ptr(), buffer.len())
         };
         map_error(error)?;
         let text = std::str::from_utf8(&buffer[..4]).map_err(|_| Error::Internal)?;
@@ -210,17 +199,15 @@ impl Engine {
 
     pub fn configuration_code(&self, index: u64) -> Result<u8, Error> {
         let mut code = 0u8;
-        // SAFETY: output pointer is valid for one byte.
-        let error = unsafe {
-            wp_engine_configuration_code(self.raw.as_ptr(), index, &mut code)
-        };
+        // SAFETY: caller-owned output pointer is valid for one byte.
+        let error = unsafe { wp_engine_configuration_code(self.raw.as_ptr(), index, &mut code) };
         map_error(error)?;
         Ok(code)
     }
 
     pub fn lifecycle(&self, index: u64) -> Result<Lifecycle, Error> {
-        let mut raw = RawLifecycle::Created;
-        // SAFETY: output pointer is valid for the enum value.
+        let mut raw = 0u32;
+        // SAFETY: caller-owned output pointer is valid for one fixed-width value.
         let error = unsafe { wp_engine_lifecycle(self.raw.as_ptr(), index, &mut raw) };
         map_error(error)?;
         Lifecycle::try_from(raw)
@@ -229,7 +216,7 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        // SAFETY: raw is owned exclusively by self and is destroyed exactly once.
+        // SAFETY: raw is owned exclusively by self and released exactly once.
         unsafe { wp_engine_destroy(self.raw.as_ptr()) };
     }
 }
@@ -237,6 +224,12 @@ impl Drop for Engine {
 #[cfg(test)]
 mod tests {
     use super::{Action, Engine, Error, Lifecycle};
+
+    #[test]
+    fn abi_contract_is_explicit() {
+        assert_eq!(Engine::abi_version(), 1);
+        assert_eq!(Engine::configuration_count(), 81);
+    }
 
     #[test]
     fn deterministic_configuration() {
