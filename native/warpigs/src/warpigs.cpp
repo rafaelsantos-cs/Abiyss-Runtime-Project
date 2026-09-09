@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <vector>
@@ -134,7 +135,7 @@ std::uint32_t wp_engine_create(std::uint64_t population_size,
     if (population_size > max_population) return WP_ERR_LIMIT;
 
     try {
-        auto *engine = new wp_engine();
+        auto engine = std::make_unique<wp_engine>();
         engine->impl.max_population = max_population;
         std::mt19937_64 rng(seed);
         std::uniform_int_distribution<int> state_dist(0, 2);
@@ -149,7 +150,7 @@ std::uint32_t wp_engine_create(std::uint64_t population_size,
             engine->impl.pigs.push_back(std::move(pig));
         }
 
-        *out_engine = engine;
+        *out_engine = engine.release();
         return WP_OK;
     } catch (...) {
         return WP_ERR_INTERNAL;
