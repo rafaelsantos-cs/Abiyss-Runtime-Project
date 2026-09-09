@@ -79,8 +79,8 @@ jobs:
           go-version: '1.27'
       - name: Build native ABI
         run: |
-          cmake -S native/warpigs -B build/warpigs-go -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/warpigs-go --target warpigs_core_shared --parallel
+          cmake -S native/warpigs -B build/warpigs -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/warpigs --target warpigs_core_shared --parallel
       - name: Build Go C-ABI driver
         working-directory: bindings/go
         run: go build -v .
