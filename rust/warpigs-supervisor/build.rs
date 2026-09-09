@@ -27,6 +27,7 @@ fn main() {
     compile
         .arg("-std=c++20")
         .arg("-O2")
+        .arg("-pthread")
         .arg("-Wall")
         .arg("-Wextra")
         .arg("-Wpedantic")
@@ -50,4 +51,5 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=warpigs_core");
     println!("cargo:rustc-link-lib=dylib=stdc++");
+    println!("cargo:rustc-link-lib=dylib=pthread");
 }
