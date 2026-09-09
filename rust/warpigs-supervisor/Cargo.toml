@@ -1,0 +1,9 @@
+[package]
+name = "warpigs-supervisor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "warpigs_supervisor"
+path = "src/lib.rs"
