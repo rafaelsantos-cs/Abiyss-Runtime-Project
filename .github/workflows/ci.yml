@@ -40,6 +40,24 @@ jobs:
       - name: Run native tests
         run: ctest --test-dir build/warpigs --output-on-failure
 
+  native-sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ASan/UBSan build
+        run: >-
+          cmake -S native/warpigs -B build/warpigs-sanitize
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - name: Build sanitizer targets
+        run: cmake --build build/warpigs-sanitize --parallel
+      - name: Run sanitized tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build/warpigs-sanitize --output-on-failure
+
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -48,3 +66,24 @@ jobs:
       - name: Test Rust supervisor
         working-directory: rust/warpigs-supervisor
         run: cargo test --all-targets --locked
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Build Go C-ABI driver
+        working-directory: bindings/go
+        run: go build -v .
+
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build C# tooling
+        run: dotnet build bindings/csharp/WarPigs.csproj --configuration Release
