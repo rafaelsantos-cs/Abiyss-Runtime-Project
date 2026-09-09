@@ -5,6 +5,9 @@ on:
     branches: [main, warpigs-hardening, warpigs-sterile, warpigs-definitive]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   python:
     runs-on: ubuntu-latest
@@ -13,7 +16,7 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -23,7 +26,7 @@ jobs:
       - name: Install ABIYSS
         run: python -m pip install --no-deps .
       - name: Compile
-        run: python -m compileall -q src
+        run: python -m compileall -q src warpigs bindings/python
       - name: Test suite
         run: python -m pytest -q --cov=abiyss --cov-report=term-missing
       - name: Build wheel
@@ -32,7 +35,7 @@ jobs:
   native:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure C++ engine
         run: cmake -S native/warpigs -B build/warpigs -DCMAKE_BUILD_TYPE=Release
       - name: Build C++ engine
@@ -43,7 +46,7 @@ jobs:
   native-sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure ASan/UBSan build
         run: >-
           cmake -S native/warpigs -B build/warpigs-sanitize
@@ -61,7 +64,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Test Rust supervisor
         working-directory: rust/warpigs-supervisor
@@ -70,19 +73,44 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27'
+      - name: Build native ABI
+        run: |
+          cmake -S native/warpigs -B build/warpigs-go -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/warpigs-go --target warpigs_core_shared --parallel
       - name: Build Go C-ABI driver
         working-directory: bindings/go
         run: go build -v .
+        env:
+          CGO_ENABLED: '1'
+      - name: Execute Go smoke
+        working-directory: bindings/go
+        run: ./go
+
+  julia:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - name: Build native ABI
+        run: |
+          cmake -S native/warpigs -B build/warpigs-julia -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/warpigs-julia --target warpigs_core_shared --parallel
+      - name: Run Julia smoke
+        env:
+          WARPIGS_NATIVE_LIB: ${{ github.workspace }}/build/warpigs-julia/libwarpigs_core.so
+        run: julia bindings/julia/smoke.jl
 
   dotnet:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       - name: Build C# tooling
