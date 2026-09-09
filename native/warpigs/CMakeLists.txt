@@ -9,6 +9,8 @@ set(WARPIGS_WARNINGS
     -Wall -Wextra -Wpedantic -Wconversion -Wshadow
 )
 
+find_package(Threads REQUIRED)
+
 add_library(warpigs_core STATIC
     src/warpigs.cpp
 )
@@ -25,6 +27,7 @@ foreach(target warpigs_core warpigs_core_shared)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     target_compile_options(${target} PRIVATE ${WARPIGS_WARNINGS})
+    target_link_libraries(${target} PRIVATE Threads::Threads)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE -Werror=return-type)
     endif()
@@ -33,14 +36,14 @@ endforeach()
 add_executable(warpigs_native_tests
     ../../tests/native_warpigs.cpp
 )
-target_link_libraries(warpigs_native_tests PRIVATE warpigs_core)
+target_link_libraries(warpigs_native_tests PRIVATE warpigs_core Threads::Threads)
 target_include_directories(warpigs_native_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(warpigs_native_tests PRIVATE ${WARPIGS_WARNINGS})
 
 add_executable(warpigs_hostile_tests
     ../../tests/hostile_warpigs.cpp
 )
-target_link_libraries(warpigs_hostile_tests PRIVATE warpigs_core)
+target_link_libraries(warpigs_hostile_tests PRIVATE warpigs_core Threads::Threads)
 target_include_directories(warpigs_hostile_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_options(warpigs_hostile_tests PRIVATE ${WARPIGS_WARNINGS})
 
