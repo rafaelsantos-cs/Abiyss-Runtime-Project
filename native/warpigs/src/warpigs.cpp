@@ -5,19 +5,19 @@
 #include <cstdint>
 #include <mutex>
 #include <random>
-#include <string>
 #include <vector>
 
 namespace {
 
 constexpr std::size_t kPositions = 4;
+constexpr std::size_t kIdentityCapacity = 40;
 constexpr std::uint64_t kConfigurationCount = WP_CONFIGURATION_COUNT;
 constexpr std::uint64_t kAbsoluteMaxPopulation = 1'000'000;
 
 struct Pig {
     std::array<std::uint8_t, kPositions> configuration{};
     std::uint32_t lifecycle = WP_CREATED;
-    std::string identity;
+    std::array<char, kIdentityCapacity> identity{};
 };
 
 struct Engine {
@@ -48,30 +48,30 @@ bool transition_allowed(std::uint32_t state, std::uint32_t action) {
     }
 }
 
-std::uint32_t target_state(std::uint32_t action) {
-    switch (action) {
-    case WP_PREPARE:
-        return WP_READY;
-    case WP_START:
-        return WP_RUNNING;
-    case WP_QUARANTINE:
-        return WP_QUARANTINED;
-    case WP_TERMINATE:
-        return WP_TERMINATED;
-    default:
-        return WP_TERMINATED;
-    }
-}
-
-std::string make_identity(std::mt19937_64 &rng, std::uint64_t serial) {
+std::array<char, kIdentityCapacity> make_identity(std::mt19937_64 &rng, std::uint64_t serial) {
     static constexpr char alphabet[] =
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     std::uniform_int_distribution<std::size_t> dist(0, sizeof(alphabet) - 2);
-    std::string result = "wp-" + std::to_string(serial) + "-";
-    result.reserve(35);
-    while (result.size() < 35) {
-        result.push_back(alphabet[dist(rng)]);
+    std::array<char, kIdentityCapacity> result{};
+    const std::string_prefix prefix = {}; // intentionally impossible placeholder
+    (void)prefix;
+    std::array<char, kIdentityCapacity> serial_text{};
+    const int written = std::snprintf(serial_text.data(), serial_text.size(), "wp-%llu-",
+                                      static_cast<unsigned long long>(serial));
+    if (written < 0 || static_cast<std::size_t>(written) >= result.size()) {
+        result[0] = 'w';
+        result[1] = 'p';
+        result[2] = '-';
+        result[3] = 'x';
+        return result;
     }
+    const auto prefix_len = static_cast<std::size_t>(written);
+    std::copy_n(serial_text.data(), prefix_len, result.data());
+    std::size_t cursor = prefix_len;
+    while (cursor + 1 < result.size()) {
+        result[cursor++] = alphabet[dist(rng)];
+    }
+    result[result.size() - 1] = '\0';
     return result;
 }
 
@@ -109,7 +109,6 @@ std::uint32_t wp_configuration_code_text(std::uint8_t code, char *out, std::size
     if (code >= kConfigurationCount) return WP_ERR_INVALID_ARGUMENT;
 
     std::uint8_t value = code;
-    // Base-3 digits are written from right to left; four positions are always present.
     for (int position = static_cast<int>(kPositions) - 1; position >= 0; --position) {
         out[position] = static_cast<char>('0' + (value % 3U));
         value = static_cast<std::uint8_t>(value / 3U);
@@ -163,7 +162,16 @@ std::uint32_t wp_engine_step(wp_engine_t *engine, std::uint32_t action) {
         if (!transition_allowed(pig.lifecycle, action)) return WP_ERR_STATE;
     }
 
-    const auto target = target_state(action);
+    const auto target = [&]() -> std::uint32_t {
+        switch (action) {
+        case WP_PREPARE: return WP_READY;
+        case WP_START: return WP_RUNNING;
+        case WP_QUARANTINE: return WP_QUARANTINED;
+        case WP_TERMINATE: return WP_TERMINATED;
+        default: return WP_TERMINATED;
+        }
+    }();
+
     for (auto &pig : engine->impl.pigs) {
         pig.lifecycle = target;
     }
@@ -227,9 +235,9 @@ std::uint32_t wp_engine_identity(const wp_engine_t *engine,
     std::lock_guard<std::mutex> guard(engine->impl.mutex);
     if (!valid_index(&engine->impl, index)) return WP_ERR_BOUNDS;
     const auto &id = engine->impl.pigs[static_cast<std::size_t>(index)].identity;
-    if (capacity <= id.size()) return WP_ERR_BUFFER;
-    std::copy(id.begin(), id.end(), out);
-    out[id.size()] = '\0';
+    const auto length = std::char_traits<char>::length(id.data());
+    if (capacity <= length) return WP_ERR_BUFFER;
+    std::copy_n(id.data(), length + 1, out);
     return WP_OK;
 }
 
