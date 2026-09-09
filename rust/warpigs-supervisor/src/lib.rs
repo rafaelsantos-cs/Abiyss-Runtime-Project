@@ -6,18 +6,6 @@
 use std::fmt;
 use std::ptr::NonNull;
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RawError(u32);
-
-const OK: RawError = RawError(0);
-const ERR_INVALID_ARGUMENT: RawError = RawError(2);
-const ERR_LIMIT: RawError = RawError(3);
-const ERR_BOUNDS: RawError = RawError(4);
-const ERR_STATE: RawError = RawError(5);
-const ERR_BUFFER: RawError = RawError(6);
-const ERR_INTERNAL: RawError = RawError(255);
-
 #[repr(C)]
 struct RawEngine {
     _private: [u8; 0],
@@ -80,15 +68,15 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 fn map_error(error: u32) -> Result<(), Error> {
-    match RawError(error) {
-        OK => Ok(()),
-        ERR_INVALID_ARGUMENT => Err(Error::InvalidArgument),
-        ERR_LIMIT => Err(Error::Limit),
-        ERR_BOUNDS => Err(Error::Bounds),
-        ERR_STATE => Err(Error::State),
-        ERR_BUFFER => Err(Error::Buffer),
-        ERR_INTERNAL | RawError(1) => Err(Error::Internal),
-        RawError(_) => Err(Error::Internal),
+    match error {
+        0 => Ok(()),
+        2 => Err(Error::InvalidArgument),
+        3 => Err(Error::Limit),
+        4 => Err(Error::Bounds),
+        5 => Err(Error::State),
+        6 => Err(Error::Buffer),
+        1 | 255 => Err(Error::Internal),
+        _ => Err(Error::Internal),
     }
 }
 
@@ -151,8 +139,8 @@ impl Engine {
         }
 
         let mut raw = std::ptr::null_mut();
-        // SAFETY: out_engine points to local writable storage. On success the
-        // native side transfers one owned opaque handle to this wrapper.
+        // SAFETY: out_engine points to local writable storage. The native side
+        // initializes one opaque handle on success and performs no callbacks.
         let error = unsafe { wp_engine_create(population_size, max_population, seed, &mut raw) };
         map_error(error)?;
         let raw = NonNull::new(raw).ok_or(Error::Internal)?;
@@ -180,15 +168,15 @@ impl Engine {
     }
 
     pub fn step(&mut self, action: Action) -> Result<(), Error> {
-        // SAFETY: raw is uniquely owned by this Engine and action is emitted
-        // only from the validated Rust enum.
+        // SAFETY: raw is uniquely owned by this Engine and action comes from
+        // the validated Rust enum.
         let error = unsafe { wp_engine_step(self.raw.as_ptr(), action.raw()) };
         map_error(error)
     }
 
     pub fn configuration(&self, index: u64) -> Result<String, Error> {
         let mut buffer = [0u8; 5];
-        // SAFETY: caller-owned 5-byte buffer is valid for four ASCII digits + NUL.
+        // SAFETY: caller-owned 5-byte buffer is valid for four digits + NUL.
         let error = unsafe {
             wp_engine_configuration_text(self.raw.as_ptr(), index, buffer.as_mut_ptr(), buffer.len())
         };
@@ -207,7 +195,7 @@ impl Engine {
 
     pub fn lifecycle(&self, index: u64) -> Result<Lifecycle, Error> {
         let mut raw = 0u32;
-        // SAFETY: caller-owned output pointer is valid for one fixed-width value.
+        // SAFETY: caller-owned output pointer is valid for one value.
         let error = unsafe { wp_engine_lifecycle(self.raw.as_ptr(), index, &mut raw) };
         map_error(error)?;
         Lifecycle::try_from(raw)
