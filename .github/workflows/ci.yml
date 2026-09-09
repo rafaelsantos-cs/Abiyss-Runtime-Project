@@ -32,6 +32,23 @@ jobs:
       - name: Build wheel
         run: python -m build --wheel --no-isolation
 
+  python-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Build native ABI
+        run: |
+          cmake -S native/warpigs -B build/warpigs-python -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/warpigs-python --target warpigs_core_shared --parallel
+      - name: Run Python native smoke
+        working-directory: bindings/python
+        env:
+          WARPIGS_NATIVE_LIB: ${{ github.workspace }}/build/warpigs-python/libwarpigs_core.so
+        run: python smoke.py
+
   native:
     runs-on: ubuntu-latest
     steps:
