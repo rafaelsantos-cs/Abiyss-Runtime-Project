@@ -11,7 +11,7 @@
 namespace {
 
 constexpr std::size_t kPositions = 4;
-constexpr std::uint64_t kConfigurationCount = 81;
+constexpr std::uint64_t kConfigurationCount = WP_CONFIGURATION_COUNT;
 constexpr std::uint64_t kAbsoluteMaxPopulation = 1'000'000;
 
 struct Pig {
@@ -101,6 +101,21 @@ std::uint32_t wp_engine_abi_version(void) {
 
 std::uint32_t wp_engine_configuration_count(void) {
     return static_cast<std::uint32_t>(kConfigurationCount);
+}
+
+std::uint32_t wp_configuration_code_text(std::uint8_t code, char *out, std::size_t capacity) {
+    if (out == nullptr) return WP_ERR_NULL;
+    if (capacity < 5) return WP_ERR_BUFFER;
+    if (code >= kConfigurationCount) return WP_ERR_INVALID_ARGUMENT;
+
+    std::uint8_t value = code;
+    // Base-3 digits are written from right to left; four positions are always present.
+    for (int position = static_cast<int>(kPositions) - 1; position >= 0; --position) {
+        out[position] = static_cast<char>('0' + (value % 3U));
+        value = static_cast<std::uint8_t>(value / 3U);
+    }
+    out[4] = '\0';
+    return WP_OK;
 }
 
 std::uint32_t wp_engine_create(std::uint64_t population_size,
