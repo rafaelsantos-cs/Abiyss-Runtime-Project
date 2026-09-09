@@ -78,6 +78,23 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build/warpigs-sanitize --output-on-failure
 
+  native-thread-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure ThreadSanitizer build
+        run: >-
+          cmake -S native/warpigs -B build/warpigs-tsan
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=thread'
+      - name: Build TSan targets
+        run: cmake --build build/warpigs-tsan --parallel
+      - name: Run ThreadSanitizer tests
+        env:
+          TSAN_OPTIONS: halt_on_error=1:history_size=7
+        run: ctest --test-dir build/warpigs-tsan --output-on-failure
+
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -105,6 +122,8 @@ jobs:
           CGO_ENABLED: '1'
       - name: Execute Go smoke
         working-directory: bindings/go
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/warpigs
         run: ./go
 
   julia:
@@ -130,5 +149,13 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+      - name: Build native ABI
+        run: |
+          cmake -S native/warpigs -B build/warpigs-dotnet -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/warpigs-dotnet --target warpigs_core_shared --parallel
       - name: Build C# tooling
         run: dotnet build bindings/csharp/WarPigs.csproj --configuration Release
+      - name: Run C# smoke
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/build/warpigs-dotnet
+        run: dotnet run --project bindings/csharp/WarPigs.csproj --configuration Release --no-build
