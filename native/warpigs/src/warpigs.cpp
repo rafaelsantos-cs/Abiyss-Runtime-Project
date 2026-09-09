@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <mutex>
 #include <random>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -48,16 +50,24 @@ bool transition_allowed(std::uint32_t state, std::uint32_t action) {
     }
 }
 
+std::uint32_t target_state(std::uint32_t action) {
+    switch (action) {
+    case WP_PREPARE: return WP_READY;
+    case WP_START: return WP_RUNNING;
+    case WP_QUARANTINE: return WP_QUARANTINED;
+    case WP_TERMINATE: return WP_TERMINATED;
+    default: return WP_TERMINATED;
+    }
+}
+
 std::array<char, kIdentityCapacity> make_identity(std::mt19937_64 &rng, std::uint64_t serial) {
     static constexpr char alphabet[] =
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     std::uniform_int_distribution<std::size_t> dist(0, sizeof(alphabet) - 2);
     std::array<char, kIdentityCapacity> result{};
-    const std::string_prefix prefix = {}; // intentionally impossible placeholder
-    (void)prefix;
-    std::array<char, kIdentityCapacity> serial_text{};
-    const int written = std::snprintf(serial_text.data(), serial_text.size(), "wp-%llu-",
-                                      static_cast<unsigned long long>(serial));
+    const int written = std::snprintf(
+        result.data(), result.size(), "wp-%llu-",
+        static_cast<unsigned long long>(serial));
     if (written < 0 || static_cast<std::size_t>(written) >= result.size()) {
         result[0] = 'w';
         result[1] = 'p';
@@ -65,9 +75,7 @@ std::array<char, kIdentityCapacity> make_identity(std::mt19937_64 &rng, std::uin
         result[3] = 'x';
         return result;
     }
-    const auto prefix_len = static_cast<std::size_t>(written);
-    std::copy_n(serial_text.data(), prefix_len, result.data());
-    std::size_t cursor = prefix_len;
+    std::size_t cursor = static_cast<std::size_t>(written);
     while (cursor + 1 < result.size()) {
         result[cursor++] = alphabet[dist(rng)];
     }
@@ -162,16 +170,7 @@ std::uint32_t wp_engine_step(wp_engine_t *engine, std::uint32_t action) {
         if (!transition_allowed(pig.lifecycle, action)) return WP_ERR_STATE;
     }
 
-    const auto target = [&]() -> std::uint32_t {
-        switch (action) {
-        case WP_PREPARE: return WP_READY;
-        case WP_START: return WP_RUNNING;
-        case WP_QUARANTINE: return WP_QUARANTINED;
-        case WP_TERMINATE: return WP_TERMINATED;
-        default: return WP_TERMINATED;
-        }
-    }();
-
+    const auto target = target_state(action);
     for (auto &pig : engine->impl.pigs) {
         pig.lifecycle = target;
     }
