@@ -36,7 +36,6 @@ typedef struct wp_engine wp_engine_t;
 uint32_t wp_engine_abi_version(void);
 uint32_t wp_engine_configuration_count(void);
 
-/* Create a fully in-memory sterile simulator. No host resources are touched. */
 uint32_t wp_engine_create(uint64_t population_size,
                           uint64_t max_population,
                           uint64_t seed,
@@ -50,12 +49,10 @@ uint32_t wp_engine_step(wp_engine_t *engine, uint32_t action);
 uint64_t wp_engine_tick(const wp_engine_t *engine);
 uint64_t wp_engine_population(const wp_engine_t *engine);
 
-/* Return the base-3 configuration code (0..80) for one instance. */
 uint32_t wp_engine_configuration_code(const wp_engine_t *engine,
                                       uint64_t index,
                                       uint8_t *out_code);
 
-/* Return the four component states as ASCII digits: 0000..2222. */
 uint32_t wp_engine_configuration_text(const wp_engine_t *engine,
                                       uint64_t index,
                                       char *out,
@@ -65,13 +62,18 @@ uint32_t wp_engine_lifecycle(const wp_engine_t *engine,
                              uint64_t index,
                              uint32_t *out_state);
 
-/* Copy a stable simulation-only identifier into caller storage. */
 uint32_t wp_engine_identity(const wp_engine_t *engine,
                             uint64_t index,
                             char *out,
                             size_t capacity);
 
-/* Count lifecycle states. Output pointers may be NULL when a count is unused. */
+/* Count this instance's four component roles. */
+uint32_t wp_engine_component_counts(const wp_engine_t *engine,
+                                    uint64_t index,
+                                    uint8_t *masked,
+                                    uint8_t *active,
+                                    uint8_t *sterile_uterus);
+
 uint32_t wp_engine_state_counts(const wp_engine_t *engine,
                                 uint64_t *created,
                                 uint64_t *ready,
@@ -79,7 +81,6 @@ uint32_t wp_engine_state_counts(const wp_engine_t *engine,
                                 uint64_t *quarantined,
                                 uint64_t *terminated);
 
-/* Count configuration states. Caller supplies 81 slots. */
 uint32_t wp_engine_configuration_histogram(const wp_engine_t *engine,
                                            uint64_t *counts,
                                            size_t capacity);
