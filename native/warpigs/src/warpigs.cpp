@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <mutex>
 #include <random>
-#include <string_view>
 #include <vector>
 
 namespace {
@@ -234,7 +233,8 @@ std::uint32_t wp_engine_identity(const wp_engine_t *engine,
     std::lock_guard<std::mutex> guard(engine->impl.mutex);
     if (!valid_index(&engine->impl, index)) return WP_ERR_BOUNDS;
     const auto &id = engine->impl.pigs[static_cast<std::size_t>(index)].identity;
-    const auto length = std::char_traits<char>::length(id.data());
+    std::size_t length = 0;
+    while (length < id.size() && id[length] != '\0') ++length;
     if (capacity <= length) return WP_ERR_BUFFER;
     std::copy_n(id.data(), length + 1, out);
     return WP_OK;
