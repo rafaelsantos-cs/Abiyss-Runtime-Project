@@ -39,3 +39,12 @@ jobs:
         run: cmake --build build/warpigs --parallel
       - name: Run native tests
         run: ctest --test-dir build/warpigs --output-on-failure
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Rust supervisor
+        working-directory: rust/warpigs-supervisor
+        run: cargo test --all-targets --locked
