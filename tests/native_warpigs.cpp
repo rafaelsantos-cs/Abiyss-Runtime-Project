@@ -23,11 +23,12 @@ static void test_invalid_inputs() {
     assert(wp_engine_create(0, 100, 1, &engine) == WP_OK);
     assert(engine != nullptr);
     assert(wp_engine_population(engine) == 0);
-    assert(wp_engine_step(engine, static_cast<wp_action_t>(99)) == WP_ERR_INVALID_ARGUMENT);
+    assert(wp_engine_step(engine, 99U) == WP_ERR_INVALID_ARGUMENT);
     assert(wp_engine_configuration_code(engine, 0, nullptr) == WP_ERR_NULL);
     char tiny[4] = {};
     assert(wp_engine_configuration_text(engine, 0, tiny, sizeof(tiny)) == WP_ERR_BUFFER);
     assert(wp_engine_configuration_text(engine, 0, tiny, 5) == WP_ERR_BOUNDS);
+    assert(wp_engine_component_counts(engine, 0, nullptr, nullptr, nullptr) == WP_ERR_NULL);
     wp_engine_destroy(engine);
 
     assert(wp_engine_create(1001, 1000, 1, &engine) == WP_ERR_LIMIT);
@@ -41,6 +42,8 @@ int main() {
 
     // Canonical configuration space is exactly 3^4 = 81.
     assert(3U * 3U * 3U * 3U == 81U);
+    assert(wp_engine_configuration_count() == 81U);
+    assert(wp_engine_abi_version() == 1U);
 
     wp_engine_t *engine = nullptr;
     assert(wp_engine_create(1000, 10000, 0x12345678ULL, &engine) == WP_OK);
@@ -54,24 +57,24 @@ int main() {
     for (const auto count : histogram) total += count;
     assert(total == 1000);
 
-    // Configuration text and numeric encoding agree for sampled entities.
-    std::set<std::uint8_t> seen_codes;
-    std::set<std::string> identities;
+    // Every instance has exactly four components and every component is ternary.
     for (std::uint64_t i = 0; i < 100; ++i) {
         const auto text = configuration(engine, i);
         assert(text.size() == 4);
         assert(std::all_of(text.begin(), text.end(), [](char ch) { return ch >= '0' && ch <= '2'; }));
-        std::uint8_t code = 0;
-        assert(wp_engine_configuration_code(engine, i, &code) == WP_OK);
-        assert(code < 81);
-        seen_codes.insert(code);
+        std::uint8_t masked = 0, active = 0, uterus = 0;
+        assert(wp_engine_component_counts(engine, i, &masked, &active, &uterus) == WP_OK);
+        assert(static_cast<unsigned>(masked) + static_cast<unsigned>(active) + static_cast<unsigned>(uterus) == 4U);
+    }
 
+    // Identities must be unique within one population.
+    std::set<std::string> identities;
+    for (std::uint64_t i = 0; i < 100; ++i) {
         char id[64] = {};
         assert(wp_engine_identity(engine, i, id, sizeof(id)) == WP_OK);
         assert(std::strlen(id) > 0);
         identities.emplace(id);
     }
-    assert(!seen_codes.empty());
     assert(identities.size() == 100);
 
     // Batch state changes are all-or-nothing and preserve population.
@@ -98,6 +101,11 @@ int main() {
                 }
                 std::array<std::uint64_t, 81> bins{};
                 if (wp_engine_configuration_histogram(engine, bins.data(), bins.size()) != WP_OK) {
+                    reader_failed.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                std::uint8_t masked = 0, active = 0, uterus = 0;
+                if (wp_engine_component_counts(engine, round % 100, &masked, &active, &uterus) != WP_OK) {
                     reader_failed.store(true, std::memory_order_relaxed);
                     return;
                 }
