@@ -49,33 +49,72 @@ class SterileEngine:
         return self._lifecycles
 
     def advance(self, action: SimulationAction) -> tuple[SimulationEvent, ...]:
-        """Apply one identical simulated action to all instances.
+        """Apply one identical simulated action to all instances atomically.
 
-        No action can increase population. Invalid lifecycle transitions fail
-        before an event is emitted for that instance.
+        The engine pre-validates the transition for every lifecycle before
+        mutating any of them. Thus a bad batch cannot leave a partially
+        advanced population. No action can increase population.
         """
         if not isinstance(action, SimulationAction):
             raise TypeError("action must be a SimulationAction")
-        self._tick += 1
+
+        self._validate_batch(action)
+        next_tick = self._tick + 1
         events: list[SimulationEvent] = []
         for lifecycle in self._lifecycles:
-            if action is SimulationAction.PREPARE:
-                lifecycle.prepare()
-            elif action is SimulationAction.START:
-                lifecycle.start()
-            elif action is SimulationAction.QUARANTINE:
-                lifecycle.quarantine(reason=f"simulation tick {self._tick}")
-            elif action is SimulationAction.TERMINATE:
-                lifecycle.terminate(reason=f"simulation tick {self._tick}")
+            self._apply(lifecycle, action, next_tick)
             events.append(
                 SimulationEvent(
-                    tick=self._tick,
+                    tick=next_tick,
                     identity=lifecycle.pig.identity,
                     action=action,
                     state=lifecycle.state,
                 )
             )
+        self._tick = next_tick
         return tuple(events)
+
+    def _validate_batch(self, action: SimulationAction) -> None:
+        """Validate every transition without mutating lifecycle state."""
+        for lifecycle in self._lifecycles:
+            state = lifecycle.state
+            allowed = {
+                LifecycleState.CREATED: {
+                    SimulationAction.PREPARE,
+                },
+                LifecycleState.READY: {
+                    SimulationAction.START,
+                    SimulationAction.QUARANTINE,
+                    SimulationAction.TERMINATE,
+                },
+                LifecycleState.RUNNING: {
+                    SimulationAction.QUARANTINE,
+                    SimulationAction.TERMINATE,
+                },
+                LifecycleState.QUARANTINED: {
+                    SimulationAction.TERMINATE,
+                },
+                LifecycleState.TERMINATED: set(),
+            }[state]
+            if action not in allowed:
+                raise RuntimeError(
+                    f"batch action {action.value!r} is invalid for state {state.value!r}"
+                )
+
+    @staticmethod
+    def _apply(
+        lifecycle: WarPigLifecycle,
+        action: SimulationAction,
+        tick: int,
+    ) -> None:
+        if action is SimulationAction.PREPARE:
+            lifecycle.prepare()
+        elif action is SimulationAction.START:
+            lifecycle.start()
+        elif action is SimulationAction.QUARANTINE:
+            lifecycle.quarantine(reason=f"simulation tick {tick}")
+        elif action is SimulationAction.TERMINATE:
+            lifecycle.terminate(reason=f"simulation tick {tick}")
 
     def population(self) -> int:
         """Return the fixed simulated population size."""
