@@ -22,6 +22,8 @@ from .tools import AST, SST, PythonTool, ToolRegistry, build_default_registry
 class AbiyssRuntime:
     """Top-level ABIYSS runtime coordinating model, QQ, tools, memory and Sleep."""
 
+    _SYSTEM_PLANE_TOOLS = frozenset({"system.info", "process.list", "system.exec", "file.read", "system.process.list", "system.file.read"})
+
     def __init__(
         self,
         root: Path,
@@ -114,8 +116,22 @@ class AbiyssRuntime:
         self._closed = False
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _coerce_system_result(result: Any) -> ToolResult:
+        """Preserve system-plane operation status instead of labeling failures as success."""
+        if not isinstance(result, dict):
+            return ToolResult("ok", result)
+        status = result.get("status")
+        if status in {"ok", "error", "timeout", "denied", "recovery_required", "output_limit"}:
+            error = result.get("error")
+            normalized_status = "error" if status == "output_limit" else status
+            if error is None and status == "output_limit":
+                error = "tool output exceeded configured capture limit"
+            return ToolResult(normalized_status, result, str(error) if error is not None else None)
+        return ToolResult("ok", result)
+
     def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]) -> ToolResult:
-        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec", "file.read", "system.process.list", "system.file.read"}:
+        if self.system_plane is None or name not in self._SYSTEM_PLANE_TOOLS:
             return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
         try:
             if name == "system.info":
@@ -128,13 +144,11 @@ class AbiyssRuntime:
                 argv = args.get("argv")
                 if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
                     return ToolResult("denied", error="invalid argv")
-                return ToolResult(
-                    "ok",
-                    self.system_plane.call(
-                        "process.exec",
-                        {"executable": argv[0], "argv": argv[1:], "cwd": args.get("cwd", ".")},
-                    ).result,
-                )
+                result = self.system_plane.call(
+                    "process.exec",
+                    {"executable": argv[0], "argv": argv[1:], "cwd": args.get("cwd", ".")},
+                ).result
+                return self._coerce_system_result(result)
         except (SystemPlaneError, ValueError, TypeError) as exc:
             return ToolResult("error", error=str(exc))
         return ToolResult("error", error=f"unsupported system-plane tool: {name}")
