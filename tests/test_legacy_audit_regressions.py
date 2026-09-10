@@ -11,7 +11,7 @@ import pytest
 from abiyss.audit import AuditLog
 from abiyss.errors import PersistenceError, ValidationError
 from abiyss.memory import MemoryStore
-from abiyss.models import Query, QueryType, ToolResult, ToolSpec
+from abiyss.models import Query, QueryState, QueryType, ToolResult, ToolSpec
 from abiyss.qups import QuPsStore, canonical
 from abiyss.sleep import SleepConfig, SleepManager
 from abiyss.tools import ProcessTool
