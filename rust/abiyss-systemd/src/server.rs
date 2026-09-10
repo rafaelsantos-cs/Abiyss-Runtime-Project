@@ -7,6 +7,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
@@ -177,9 +178,22 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
     }
 }
 
-fn handle_connection(mut stream: UnixStream, config: ServerConfig) {
-    if !peer_uid(&stream).map(|uid| uid == config.allowed_uid).unwrap_or(false) {
-        let _ = write_response(&mut stream, &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"));
+fn handle_connection(mut stream: UnixStream, config: Arc<ServerConfig>) {
+    let peer_ok = peer_uid(&stream).map(|uid| uid == config.allowed_uid).unwrap_or(false);
+    if !peer_ok {
+        let _ = write_response(
+            &mut stream,
+            &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"),
+        );
+        return;
+    }
+
+    if let Err(error) = stream.set_read_timeout(Some(config.io_timeout)) {
+        eprintln!("abiyss-system: failed to set read timeout: {error}");
+        return;
+    }
+    if let Err(error) = stream.set_write_timeout(Some(config.io_timeout)) {
+        eprintln!("abiyss-system: failed to set write timeout: {error}");
         return;
     }
 
@@ -233,17 +247,63 @@ pub fn run(config: ServerConfig) -> Result<(), String> {
     fs::set_permissions(&config.socket_path, fs::Permissions::from_mode(0o600))
         .map_err(|e| format!("set socket permissions: {e}"))?;
 
+    let (sender, receiver) = mpsc::sync_channel::<UnixStream>(config.max_pending);
+    let receiver = Arc::new(Mutex::new(receiver));
+    let shared_config = Arc::new(config.clone());
+
+    for index in 0..config.max_workers {
+        let receiver = Arc::clone(&receiver);
+        let worker_config = Arc::clone(&shared_config);
+        thread::Builder::new()
+            .name(format!("abiyss-system-worker-{index}"))
+            .spawn(move || loop {
+                let stream = match receiver.lock().expect("worker queue mutex poisoned").recv() {
+                    Ok(stream) => stream,
+                    Err(_) => return,
+                };
+                handle_connection(stream, Arc::clone(&worker_config));
+            })
+            .map_err(|e| format!("spawn worker {index}: {e}"))?;
+    }
+
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let worker_config = config.clone();
-                thread::Builder::new()
-                    .name("abiyss-system-client".to_string())
-                    .spawn(move || handle_connection(stream, worker_config))
-                    .map_err(|e| format!("spawn client worker: {e}"))?;
+                if let Err(error) = stream.set_read_timeout(Some(config.io_timeout)) {
+                    eprintln!("abiyss-system: failed to set connection read timeout: {error}");
+                    continue;
+                }
+                if let Err(error) = stream.set_write_timeout(Some(config.io_timeout)) {
+                    eprintln!("abiyss-system: failed to set connection write timeout: {error}");
+                    continue;
+                }
+                match peer_uid(&stream) {
+                    Ok(uid) if uid == config.allowed_uid => {
+                        match sender.try_send(stream) {
+                            Ok(()) => {}
+                            Err(mpsc::TrySendError::Full(mut stream)) => {
+                                let _ = write_response(
+                                    &mut stream,
+                                    &Response::error("unknown".to_string(), "busy", "system-plane worker queue is full"),
+                                );
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => {
+                                return Err("system-plane worker pool disconnected".to_string());
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        let mut stream = stream;
+                        let _ = write_response(
+                            &mut stream,
+                            &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"),
+                        );
+                    }
+                    Err(_) => {}
+                }
             }
             Err(error) => {
-                eprintln!("abiyss-systemd: accept error: {error}");
+                eprintln!("abiyss-system: accept error: {error}");
             }
         }
     }
