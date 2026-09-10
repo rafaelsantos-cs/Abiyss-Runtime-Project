@@ -13,7 +13,7 @@ RUN_GID=$(id -g "$ABIYSS_SYSTEM_RUN_USER")
 RUNTIME_DIR="/run/user/$RUN_UID"
 install -d -m 0700 -o "$RUN_UID" -g "$RUN_GID" "$RUNTIME_DIR"
 
-exec chpst -u "$ABIYSS_SYSTEM_RUN_USER:$ABIYSS_SYSTEM_RUN_USER" \
+exec chpst -u "$RUN_UID:$RUN_GID" \
   env \
     ABIYSS_SYSTEM_SOCKET="$RUNTIME_DIR/abiyss-system.sock" \
     ABIYSS_SYSTEM_ROOT=/ \
