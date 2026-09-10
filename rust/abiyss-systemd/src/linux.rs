@@ -167,6 +167,7 @@ pub fn system_info() -> serde_json::Value {
 }
 
 pub fn execute_allowlisted(
+    system_root: &Path,
     executable: &Path,
     args: &[String],
     cwd: &Path,
@@ -190,16 +191,31 @@ pub fn execute_allowlisted(
     if !allowlist.iter().any(|allowed| allowed == executable) {
         return Err("executable is not allowlisted".to_string());
     }
-    let metadata = fs::metadata(executable).map_err(|e| format!("stat executable: {e}"))?;
-    if !metadata.is_file() {
-        return Err("executable is not a regular file".to_string());
+    let executable_meta = fs::symlink_metadata(executable).map_err(|e| format!("stat executable: {e}"))?;
+    if !executable_meta.file_type().is_file() || executable_meta.file_type().is_symlink() {
+        return Err("executable must be a regular non-symlink file".to_string());
     }
-    let cwd = fs::canonicalize(cwd).map_err(|e| format!("canonicalize cwd: {e}"))?;
+    if unsafe { libc::geteuid() } == 0
+        && (unsafe { libc::stat(executable.as_os_str().as_encoded_bytes().as_ptr() as *const i8, std::ptr::null_mut()) } != 0)
+    {
+        // Ownership is checked below with Rust metadata; this branch only prevents
+        // accidental assumptions that a privileged launcher is automatically trusted.
+    }
+
+    let canonical_root = fs::canonicalize(system_root).map_err(|e| format!("canonicalize system root: {e}"))?;
+    let canonical_cwd = fs::canonicalize(cwd).map_err(|e| format!("canonicalize cwd: {e}"))?;
+    if !canonical_cwd.starts_with(&canonical_root) {
+        return Err("cwd escapes system root".to_string());
+    }
+    let cwd_meta = fs::symlink_metadata(cwd).map_err(|e| format!("stat cwd: {e}"))?;
+    if cwd_meta.file_type().is_symlink() || !cwd_meta.is_dir() {
+        return Err("cwd must be a real directory".to_string());
+    }
 
     let mut command = Command::new(executable);
     command
         .args(args)
-        .current_dir(cwd)
+        .current_dir(canonical_cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
