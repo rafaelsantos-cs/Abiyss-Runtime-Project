@@ -13,6 +13,7 @@ from .errors import PersistenceError, SecurityError
 from .security import assert_not_symlink, ensure_base_dir_safe
 
 MAX_CONTEXT_BYTES = 16 * 1024
+MAX_CONTEXT_DEPTH = 32
 MAX_CONTENT_BYTES = 64 * 1024
 MAX_SOURCE_BYTES = 256
 MAX_SOURCES_PER_RECAP = 128
@@ -97,12 +98,29 @@ class MemoryStore:
             raise SecurityError(f"invalid {label}")
         return float(value)
 
+    @staticmethod
+    def _validate_context_depth(value: Any, *, max_depth: int = MAX_CONTEXT_DEPTH) -> None:
+        """Reject deeply nested JSON-like contexts before invoking recursive encoders."""
+        pending: list[tuple[Any, int]] = [(value, 0)]
+        while pending:
+            current, depth = pending.pop()
+            if depth > max_depth:
+                raise SecurityError("key context nesting too deep")
+            if isinstance(current, dict):
+                pending.extend((child, depth + 1) for child in current.values())
+            elif isinstance(current, list):
+                pending.extend((child, depth + 1) for child in current)
+            elif isinstance(current, tuple):
+                pending.extend((child, depth + 1) for child in current)
+
     def get_or_create_key(self, kind: str, name: str, context: dict[str, Any] | None = None) -> int:
         kind = self._text(kind, 64, "key kind")
         name = self._text(name, 256, "key name")
+        context = context or {}
+        self._validate_context_depth(context)
         try:
             context_json = json.dumps(
-                context or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+                context, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
             ).encode("utf-8")
         except (TypeError, ValueError, RecursionError) as exc:
             raise SecurityError("key context is not JSON-safe") from exc
