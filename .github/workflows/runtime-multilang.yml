@@ -92,7 +92,7 @@ jobs:
         env:
           PYTHONPATH: src
           ABIYSS_SYSTEM_BINARY: ${{ github.workspace }}/artifacts/abiyss-system
-        run: python -m pytest -q tests/system_plane_e2e.py
+        run: python -m pytest -q tests/system_plane_e2e.py tests/runtime_system_plane_e2e.py
 
   go:
     runs-on: ubuntu-latest
