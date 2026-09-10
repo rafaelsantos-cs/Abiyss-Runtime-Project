@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -95,11 +96,12 @@ class QuPsStore:
         atomic_write_bytes(self.path_for(query.id), data, mode=0o600)
 
     def _read_nofollow(self, path: Path) -> bytes:
+        """Read only regular files without blocking on attacker-controlled FIFOs."""
         try:
             assert_not_symlink(path)
         except SecurityError as exc:
             raise PersistenceError(str(exc)) from exc
-        flags = os.O_RDONLY | os.O_CLOEXEC
+        flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
@@ -107,6 +109,9 @@ class QuPsStore:
         except OSError as exc:
             raise PersistenceError(f"cannot open QuPs: {path}: {exc}") from exc
         try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise PersistenceError("QuPs path is not a regular file")
             chunks: list[bytes] = []
             total = 0
             while total <= MAX_QUPS_BYTES:
@@ -118,6 +123,8 @@ class QuPsStore:
                 if total > MAX_QUPS_BYTES:
                     break
             return b"".join(chunks)
+        except OSError as exc:
+            raise PersistenceError(f"cannot read QuPs: {path}: {exc}") from exc
         finally:
             os.close(fd)
 
