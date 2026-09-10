@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+# Install this directory under /etc/sv/abiyss-system and enable it with sv(8).
+# The service intentionally requires explicit paths and an authorized runtime UID.
+
+exec chpst -u root:root \
+  env \
+    ABIYSS_SYSTEM_SOCKET=/run/abiyss/abiyss-system.sock \
+    ABIYSS_SYSTEM_ROOT=/ \
+    ABIYSS_SYSTEM_ALLOWED_UID=1000 \
+    ABIYSS_SYSTEM_ALLOW_EXEC=0 \
+    /usr/local/libexec/abiyss-system
