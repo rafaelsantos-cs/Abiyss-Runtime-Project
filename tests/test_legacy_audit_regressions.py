@@ -16,6 +16,7 @@ from abiyss.qups import QuPsStore, canonical
 from abiyss.sleep import SleepConfig, SleepManager
 from abiyss.tools import ProcessTool
 from abiyss.schema import validate
+from abiyss.qq import QueryQueue
 
 
 def test_schema_unknown_type_fails_closed() -> None:
@@ -80,6 +81,42 @@ def test_process_output_overflow_is_terminated_early(tmp_path: Path) -> None:
     assert result.error == "tool output exceeded configured capture limit"
     assert elapsed < 2
     assert len(result.output.encode("utf-8")) <= 4096 + 16
+
+
+def test_query_becomes_recovery_required_when_post_effect_persistence_fails(tmp_path: Path) -> None:
+    class FailingStore(QuPsStore):
+        def __init__(self, root: Path) -> None:
+            super().__init__(root)
+            self.fail_after_running = False
+
+        def save(self, query: Query) -> None:
+            if self.fail_after_running and query.state.value in {"completed", "failed", "paused", "queued"}:
+                raise PersistenceError("simulated post-effect persistence failure")
+            super().save(query)
+
+    store = FailingStore(tmp_path / "qups")
+    audit = AuditLog(tmp_path / "audit.jsonl")
+    side_effects: list[str] = []
+
+    queue = QueryQueue(
+        store=store,
+        audit=audit,
+        tool_execute=lambda _query_type, _name, _args: (side_effects.append("ran") or ToolResult("ok", {"done": True})),
+    )
+    query = Query.new(
+        query_type=QueryType.AQUERY,
+        priority=1,
+        payload={"tool_name": "noop", "arguments": {}},
+    )
+    queue.submit(query)
+    store.fail_after_running = True
+    result = queue.run_once()
+
+    assert result is query
+    assert side_effects == ["ran"]
+    assert query.state.value == "recovery_required"
+    assert query.checkpoint.state.value == "recovery_required"
+    assert "post-side-effect" in (query.checkpoint.error or "")
 
 
 def test_sleep_failed_summary_is_throttled(tmp_path: Path) -> None:
