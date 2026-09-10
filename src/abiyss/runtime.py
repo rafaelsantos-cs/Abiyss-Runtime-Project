@@ -7,14 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from .audit import AuditLog
-from .errors import ProviderError, QueueInvariantError, RecoveryRequired, ValidationError
+from .errors import ProviderError, QueueInvariantError, SystemPlaneError
 from .gemini import ModelProvider, ModelTurn
 from .memory import MemoryStore
-from .models import Query, QueryState, QueryType
+from .models import Query, QueryState, QueryType, ToolResult
 from .qq import QueryQueue
 from .qups import QuPsStore
 from .security import ensure_base_dir_safe
 from .sleep import SleepManager
+from .system_plane import SystemPlaneClient
 from .tools import AST, SST, ToolRegistry, build_default_registry
 
 
@@ -29,6 +30,8 @@ class AbiyssRuntime:
         allow_exec: bool = False,
         allow_root_exec: bool = False,
         command_allowlist: tuple[str, ...] = (),
+        system_socket: Path | None = None,
+        system_timeout: float = 5.0,
     ) -> None:
         self.root = ensure_base_dir_safe(Path(root)).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -44,17 +47,9 @@ class AbiyssRuntime:
         )
         self.ast = AST(self.tools)
         self.sst = SST(self.tools)
-        self.sleep = SleepManager(
-            memory=self.memory,
-            audit=self.audit,
-            obsidian_dir=self.root / "obsidian",
-        )
-        self.qq = QueryQueue(
-            store=self.qups,
-            audit=self.audit,
-            tool_execute=self._execute_tool,
-            tool_validator=self.tools.validate_call,
-        )
+        self.system_plane = SystemPlaneClient(system_socket, timeout=system_timeout) if system_socket is not None else None
+        self.sleep = SleepManager(memory=self.memory, audit=self.audit, obsidian_dir=self.root / "obsidian")
+        self.qq = QueryQueue(store=self.qups, audit=self.audit, tool_execute=self._execute_tool, tool_validator=self.tools.validate_call)
         self.qq.restore()
         self.provider = provider
         self.last_interaction_id: str | None = None
@@ -62,8 +57,28 @@ class AbiyssRuntime:
         self._closed = False
         self._lock = threading.RLock()
 
-    def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]):
-        return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
+    def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]) -> ToolResult:
+        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec"}:
+            return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
+        try:
+            if name == "system.info":
+                return ToolResult("ok", self.system_plane.info())
+            if name == "process.list":
+                return ToolResult("ok", self.system_plane.process_list(args.get("limit", 32)))
+            if name == "system.exec":
+                argv = args.get("argv")
+                if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
+                    return ToolResult("denied", error="invalid argv")
+                return ToolResult(
+                    "ok",
+                    self.system_plane.call(
+                        "process.exec",
+                        {"executable": argv[0], "argv": argv[1:], "cwd": args.get("cwd", ".")},
+                    ).result,
+                )
+        except (SystemPlaneError, ValueError, TypeError) as exc:
+            return ToolResult("error", error=str(exc))
+        return ToolResult("error", error=f"unsupported system-plane tool: {name}")
 
     def submit_query(self, query: Query) -> Query:
         if self._closed:
@@ -101,11 +116,7 @@ class AbiyssRuntime:
             raise ValueError("prompt must be non-empty text")
         if self.provider is None:
             raise ProviderError("no model provider configured")
-        turn = self.provider.turn(
-            text,
-            self.tools.specs_for(QueryType.AQUERY),
-            self.last_interaction_id,
-        )
+        turn = self.provider.turn(text, self.tools.specs_for(QueryType.AQUERY), self.last_interaction_id)
         self.ingest_model_turn(turn)
         return turn
 
@@ -122,11 +133,7 @@ class AbiyssRuntime:
             payload = query.checkpoint.result or {}
             status = query.state.value
             if query.state == QueryState.RECOVERY_REQUIRED:
-                payload = {
-                    "status": "recovery_required",
-                    "error": query.checkpoint.error,
-                    "step_index": query.checkpoint.step_index,
-                }
+                payload = {"status": "recovery_required", "error": query.checkpoint.error, "step_index": query.checkpoint.step_index}
             elif query.state == QueryState.FAILED:
                 payload = {**payload, "status": "failed", "error": query.checkpoint.error}
             model_result = {**payload, "status": status}
@@ -135,19 +142,12 @@ class AbiyssRuntime:
                 model_result = {"status": status, "error": "tool result omitted because it exceeds model result limit"}
                 if query.checkpoint.error:
                     model_result["error"] = query.checkpoint.error[:4096]
-            results.append(
-                {
-                    "type": "function_result",
-                    "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
-                    "call_id": query.tool_call_id,
-                    "result": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
-                        }
-                    ],
-                }
-            )
+            results.append({
+                "type": "function_result",
+                "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
+                "call_id": query.tool_call_id,
+                "result": [{"type": "text", "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False)}],
+            })
         return results
 
     def _wait_for_model_queries(self, interaction_id: str, max_steps: int) -> None:
@@ -163,13 +163,7 @@ class AbiyssRuntime:
                 time.sleep(0.005)
         raise QueueInvariantError("model Query set exceeded execution step budget")
 
-    def execute_agent_cycle(
-        self,
-        text: str,
-        *,
-        max_rounds: int = 8,
-        max_steps_per_round: int = 1000,
-    ) -> ModelTurn:
+    def execute_agent_cycle(self, text: str, *, max_rounds: int = 8, max_steps_per_round: int = 1000) -> ModelTurn:
         if self.provider is None:
             raise ProviderError("no model provider configured")
         if not 1 <= max_rounds <= 64:
