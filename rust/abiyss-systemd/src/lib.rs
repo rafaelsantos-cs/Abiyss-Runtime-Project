@@ -5,6 +5,8 @@
 //! and owns Linux-specific operations. It never interprets shell strings or
 //! model output directly.
 
+pub mod linux;
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -130,8 +132,7 @@ pub fn validate_relative_path(value: &str) -> Result<PathBuf, &'static str> {
     }
     for component in path.components() {
         match component {
-            Component::Normal(_) => {}
-            Component::CurDir => {}
+            Component::Normal(_) | Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err("path escapes configured root")
             }
@@ -193,4 +194,10 @@ impl fmt::Display for ErrorBody {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
     }
+}
+
+/// Narrow public seam used by integration tests and future system-plane clients.
+/// The actual Linux implementation remains in the private daemon subsystem.
+pub fn read_confined_file(root: &Path, relative: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+    linux::read_confined_file(root, relative, max_bytes)
 }
