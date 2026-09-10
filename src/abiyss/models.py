@@ -96,7 +96,10 @@ class Query:
                 raise ValidationError(f"invalid {label}")
         if not isinstance(self.source, str) or not 1 <= len(self.source.encode("utf-8")) <= 128:
             raise ValidationError("invalid query source")
-        self.checkpoint.state = self.state
+        if not isinstance(self.attempts, int) or isinstance(self.attempts, bool) or self.attempts < 0:
+            raise ValidationError("invalid query attempts")
+        if self.checkpoint.state != self.state:
+            raise ValidationError("query state does not match checkpoint state")
         self._validate_checkpoint()
 
     @classmethod
@@ -110,6 +113,7 @@ class Query:
         parent_interaction_id: str | None = None,
         tool_call_id: str | None = None,
     ) -> "Query":
+        checkpoint = Checkpoint()
         return cls(
             id=f"q_{uuid.uuid4().hex}",
             type=query_type,
@@ -118,6 +122,7 @@ class Query:
             source=source,
             parent_interaction_id=parent_interaction_id,
             tool_call_id=tool_call_id,
+            checkpoint=checkpoint,
         )
 
     def _validate_checkpoint(self) -> None:
@@ -127,6 +132,8 @@ class Query:
             raise ValidationError("invalid checkpoint step index")
         if not isinstance(self.checkpoint.attempt, int) or isinstance(self.checkpoint.attempt, bool) or self.checkpoint.attempt < 0:
             raise ValidationError("invalid checkpoint attempt")
+        if self.checkpoint.attempt != self.attempts:
+            raise ValidationError("query attempts do not match checkpoint attempt")
         if self.checkpoint.tool_name is not None and (
             not isinstance(self.checkpoint.tool_name, str) or not 1 <= len(self.checkpoint.tool_name.encode("utf-8")) <= 256
         ):
@@ -135,6 +142,21 @@ class Query:
             not isinstance(self.checkpoint.tool_call_id, str) or not 1 <= len(self.checkpoint.tool_call_id.encode("utf-8")) <= 256
         ):
             raise ValidationError("invalid checkpoint tool call id")
+        if self.checkpoint.result is not None and not isinstance(self.checkpoint.result, dict):
+            raise ValidationError("invalid checkpoint result")
+        if self.checkpoint.error is not None and not isinstance(self.checkpoint.error, str):
+            raise ValidationError("invalid checkpoint error")
+        if self.checkpoint.execution_started_at is not None and (
+            not isinstance(self.checkpoint.execution_started_at, (int, float))
+            or isinstance(self.checkpoint.execution_started_at, bool)
+            or not math.isfinite(self.checkpoint.execution_started_at)
+            or self.checkpoint.execution_started_at <= 0
+        ):
+            raise ValidationError("invalid checkpoint execution timestamp")
+        if not isinstance(self.checkpoint.updated_at, (int, float)) or isinstance(self.checkpoint.updated_at, bool):
+            raise ValidationError("invalid checkpoint updated_at")
+        if not math.isfinite(self.checkpoint.updated_at) or self.checkpoint.updated_at <= 0:
+            raise ValidationError("invalid checkpoint updated_at")
 
     def transition(
         self,
@@ -186,9 +208,29 @@ class Query:
     def from_snapshot(cls, data: dict[str, Any]) -> "Query":
         if not isinstance(data, dict):
             raise ValidationError("query snapshot must be an object")
-        required = {"id", "type", "priority", "payload", "state", "checkpoint"}
-        if not required.issubset(data):
-            raise ValidationError("query snapshot missing required fields")
+        allowed_fields = {
+            "id",
+            "type",
+            "priority",
+            "payload",
+            "created_at",
+            "updated_at",
+            "state",
+            "checkpoint",
+            "parent_interaction_id",
+            "tool_call_id",
+            "source",
+            "attempts",
+        }
+        if set(data) != allowed_fields:
+            unknown = sorted(set(data) - allowed_fields)
+            missing = sorted(allowed_fields - set(data))
+            details: list[str] = []
+            if unknown:
+                details.append(f"unknown fields: {unknown}")
+            if missing:
+                details.append(f"missing fields: {missing}")
+            raise ValidationError("invalid query snapshot fields; " + "; ".join(details))
         if not isinstance(data["id"], str) or not isinstance(data["type"], str) or not isinstance(data["state"], str):
             raise ValidationError("invalid query snapshot scalar field")
         if not isinstance(data["priority"], int) or isinstance(data["priority"], bool):
@@ -210,39 +252,56 @@ class Query:
             "execution_started_at",
             "updated_at",
         }
-        if not set(checkpoint_raw).issubset(checkpoint_fields):
-            raise ValidationError("checkpoint contains unknown fields")
-        checkpoint_data = dict(checkpoint_raw)
-        checkpoint_data["state"] = checkpoint_data.get("state", data["state"])
+        if set(checkpoint_raw) != checkpoint_fields:
+            unknown = sorted(set(checkpoint_raw) - checkpoint_fields)
+            missing = sorted(checkpoint_fields - set(checkpoint_raw))
+            details: list[str] = []
+            if unknown:
+                details.append(f"unknown fields: {unknown}")
+            if missing:
+                details.append(f"missing fields: {missing}")
+            raise ValidationError("invalid checkpoint fields; " + "; ".join(details))
         try:
-            checkpoint_data["state"] = QueryState(checkpoint_data["state"])
+            checkpoint_state = QueryState(checkpoint_raw["state"])
             state = QueryState(data["state"])
             query_type = QueryType(data["type"])
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise ValidationError("invalid query enum value") from exc
+        if checkpoint_state is not state:
+            raise ValidationError("query state does not match checkpoint state")
         for key in ("created_at", "updated_at"):
-            if key in data and (not isinstance(data[key], (int, float)) or isinstance(data[key], bool)):
+            if not isinstance(data[key], (int, float)) or isinstance(data[key], bool):
                 raise ValidationError(f"invalid {key}")
-        attempts = data.get("attempts", 0)
+            if not math.isfinite(data[key]) or data[key] <= 0:
+                raise ValidationError(f"invalid {key}")
+        attempts = data["attempts"]
         if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 0:
             raise ValidationError("invalid query attempts")
+        checkpoint_attempt = checkpoint_raw["attempt"]
+        if not isinstance(checkpoint_attempt, int) or isinstance(checkpoint_attempt, bool) or checkpoint_attempt < 0:
+            raise ValidationError("invalid checkpoint attempt")
+        if checkpoint_attempt != attempts:
+            raise ValidationError("query attempts do not match checkpoint attempt")
         for optional in ("parent_interaction_id", "tool_call_id"):
-            value = data.get(optional)
+            value = data[optional]
             if value is not None and not isinstance(value, str):
                 raise ValidationError(f"invalid {optional}")
+        if not isinstance(data["source"], str):
+            raise ValidationError("invalid query source")
         try:
+            checkpoint = Checkpoint(**checkpoint_raw)
             return cls(
                 id=data["id"],
                 type=query_type,
                 priority=data["priority"],
                 payload=data["payload"],
-                created_at=float(data.get("created_at", time.time())),
-                updated_at=float(data.get("updated_at", time.time())),
+                created_at=data["created_at"],
+                updated_at=data["updated_at"],
                 state=state,
-                checkpoint=Checkpoint(**checkpoint_data),
-                parent_interaction_id=data.get("parent_interaction_id"),
-                tool_call_id=data.get("tool_call_id"),
-                source=str(data.get("source", "runtime")),
+                checkpoint=checkpoint,
+                parent_interaction_id=data["parent_interaction_id"],
+                tool_call_id=data["tool_call_id"],
+                source=data["source"],
                 attempts=attempts,
             )
         except (KeyError, TypeError, ValueError) as exc:
