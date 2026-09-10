@@ -6,10 +6,17 @@ max_rounds = 8
 model = "gemini-3.8-flash"
 thinking_level = "medium"
 
+[system]
+# Set this to the Unix socket exposed by the Rust system plane.
+# Leave unset to run the Python development fallback only.
+socket = ""
+timeout = 5.0
+
 [security]
 allow_exec = false
 allow_root_exec = false
-# Only used when allow_exec=true. Prefer a tiny explicit allowlist.
+# Only used by the Python development fallback when allow_exec=true.
+# Production system execution should go through the Rust system plane.
 command_allowlist = [
   "/usr/bin/uname",
   "/usr/bin/id",
