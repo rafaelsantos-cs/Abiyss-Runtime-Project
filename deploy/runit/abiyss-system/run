@@ -2,12 +2,15 @@
 set -eu
 
 # Install this directory under /etc/sv/abiyss-system and enable it with sv(8).
-# The service intentionally requires explicit paths and an authorized runtime UID.
+# v0.1 deliberately runs the system plane as the same unprivileged account as
+# the Python runtime. Elevated operations require a later, separately isolated
+# privileged helper and are not enabled by this service.
 
-exec chpst -u root:root \
+: "${ABIYSS_SYSTEM_RUN_USER:?set ABIYSS_SYSTEM_RUN_USER to the runtime account}"
+
+exec chpst -u "$ABIYSS_SYSTEM_RUN_USER" \
   env \
-    ABIYSS_SYSTEM_SOCKET=/run/abiyss/abiyss-system.sock \
+    ABIYSS_SYSTEM_SOCKET=/run/user/$ABIYSS_SYSTEM_RUN_UID/abiyss-system.sock \
     ABIYSS_SYSTEM_ROOT=/ \
-    ABIYSS_SYSTEM_ALLOWED_UID=1000 \
     ABIYSS_SYSTEM_ALLOW_EXEC=0 \
     /usr/local/libexec/abiyss-system
