@@ -50,6 +50,18 @@ def stop_daemon(process: subprocess.Popen[str]) -> None:
         process.stderr.close()
 
 
+def make_provider() -> DeterministicProvider:
+    return DeterministicProvider(
+        planner=lambda input_data, tools, previous: {
+            "interaction_id": previous or "interaction-1",
+            "function_calls": [{"id": "call-1", "name": "system.info", "arguments": {}}]
+            if not previous
+            else [],
+            "output_text": "",
+        }
+    )
+
+
 def test_runtime_query_reaches_real_rust_system_plane(tmp_path: Path) -> None:
     binary_raw = os.environ.get("ABIYSS_SYSTEM_BINARY")
     if not binary_raw:
@@ -65,16 +77,7 @@ def test_runtime_query_reaches_real_rust_system_plane(tmp_path: Path) -> None:
     try:
         wait_for_socket(socket_path)
 
-        provider = DeterministicProvider(
-            planner=lambda input_data, tools, previous: {
-                "interaction_id": previous or "interaction-1",
-                "function_calls": [{"id": "call-1", "name": "system.info", "arguments": {}}]
-                if not previous
-                else [],
-                "output_text": "",
-            }
-        )
-        runtime = AbiyssRuntime(root, provider=provider, system_socket=socket_path, system_timeout=2.0)
+        runtime = AbiyssRuntime(root, provider=make_provider(), system_socket=socket_path, system_timeout=2.0)
         try:
             turn = runtime.execute_agent_cycle("inspect the local runtime")
             assert turn.interaction_id == "interaction-1"
@@ -87,6 +90,41 @@ def test_runtime_query_reaches_real_rust_system_plane(tmp_path: Path) -> None:
             assert query.checkpoint.result["output"]["platform"] == "linux"
         finally:
             runtime.shutdown()
+    finally:
+        stop_daemon(process)
+
+
+def test_completed_query_survives_runtime_restart_without_reexecution(tmp_path: Path) -> None:
+    binary_raw = os.environ.get("ABIYSS_SYSTEM_BINARY")
+    if not binary_raw:
+        pytest.skip("ABIYSS_SYSTEM_BINARY not configured")
+    binary = Path(binary_raw)
+    if not binary.is_file():
+        raise AssertionError(f"system-plane binary missing: {binary}")
+
+    root = tmp_path / "runtime"
+    socket_path = tmp_path / "system.sock"
+    root.mkdir()
+    process = spawn_daemon(binary, root, socket_path)
+    try:
+        wait_for_socket(socket_path)
+        runtime = AbiyssRuntime(root, provider=make_provider(), system_socket=socket_path, system_timeout=2.0)
+        try:
+            runtime.execute_agent_cycle("inspect the local runtime")
+            query = runtime.qq.find_external_call("interaction-1", "call-1")
+            assert query is not None
+            assert query.state is QueryState.COMPLETED
+        finally:
+            runtime.shutdown()
+
+        restored = AbiyssRuntime(root, system_socket=socket_path, system_timeout=2.0)
+        try:
+            query = restored.qq.find_external_call("interaction-1", "call-1")
+            assert query is not None
+            assert query.state is QueryState.COMPLETED
+            assert restored.execute_pending(10) == []
+        finally:
+            restored.shutdown()
     finally:
         stop_daemon(process)
 
