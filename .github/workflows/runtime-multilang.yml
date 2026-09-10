@@ -93,3 +93,28 @@ jobs:
           PYTHONPATH: src
           ABIYSS_SYSTEM_BINARY: ${{ github.workspace }}/artifacts/abiyss-system
         run: python -m pytest -q tests/system_plane_e2e.py
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Build Go watcher
+        working-directory: tools/abiyss-watch-go
+        run: go build -trimpath -o abiyss-watch .
+
+  julia:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - name: Instantiate Julia analysis environment
+        working-directory: tools/abiyss-analyze-julia
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Test Julia analysis
+        working-directory: tools/abiyss-analyze-julia
+        run: julia --project=. test/runtests.jl
