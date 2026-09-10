@@ -52,8 +52,44 @@ class AbiyssRuntime:
             self.tools.register(PythonTool(
                 ToolSpec(
                     "file.read",
-                    "Read a bounded regular file through the Rust system plane.",
+                    "Read a bounded regular file through the Rust system plane for internal Squery work.",
                     QueryType.SQUERY,
+                    {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "maxLength": 4096},
+                            "max_bytes": {"type": "integer", "minimum": 1, "maximum": 65536},
+                        },
+                        "required": ["path"],
+                        "additionalProperties": False,
+                    },
+                    privileged=True,
+                    reversible=True,
+                    allow_memory_persistence=False,
+                ),
+                lambda args: self.system_plane.read_file(args["path"], max_bytes=args.get("max_bytes", 64 * 1024)),
+            ))
+            self.tools.register(PythonTool(
+                ToolSpec(
+                    "system.process.list",
+                    "Read a bounded local process list through the Rust system plane.",
+                    QueryType.AQUERY,
+                    {
+                        "type": "object",
+                        "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 128}},
+                        "additionalProperties": False,
+                    },
+                    privileged=True,
+                    reversible=True,
+                    allow_memory_persistence=False,
+                ),
+                lambda args: self.system_plane.process_list(args.get("limit", 32)),
+            ))
+            self.tools.register(PythonTool(
+                ToolSpec(
+                    "system.file.read",
+                    "Read a bounded regular file through the Rust system plane.",
+                    QueryType.AQUERY,
                     {
                         "type": "object",
                         "properties": {
@@ -79,14 +115,14 @@ class AbiyssRuntime:
         self._lock = threading.RLock()
 
     def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]) -> ToolResult:
-        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec", "file.read"}:
+        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec", "file.read", "system.process.list", "system.file.read"}:
             return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
         try:
             if name == "system.info":
                 return ToolResult("ok", self.system_plane.info())
-            if name == "process.list":
+            if name in {"process.list", "system.process.list"}:
                 return ToolResult("ok", self.system_plane.process_list(args.get("limit", 32)))
-            if name == "file.read":
+            if name in {"file.read", "system.file.read"}:
                 return ToolResult("ok", self.system_plane.read_file(args["path"], max_bytes=args.get("max_bytes", 64 * 1024)))
             if name == "system.exec":
                 argv = args.get("argv")
