@@ -1,6 +1,3 @@
-mod linux;
-mod server;
-
 use abiyss_systemd::{ServerConfig, PROTOCOL_VERSION, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_PENDING, DEFAULT_MAX_WORKERS};
 use std::env;
 use std::fs;
@@ -142,5 +139,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_pending,
         io_timeout: Duration::from_secs(io_timeout_secs),
     };
-    server::run(config).map_err(Into::into)
+    abiyss_systemd::server::run(config).map_err(Into::into)
 }
