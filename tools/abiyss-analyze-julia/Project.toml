@@ -1,0 +1,10 @@
+name = "AbiyssAnalyze"
+version = "0.1.0"
+uuid = "4b5b52f7-a1db-4c1a-a9ae-dc8a1c733c0b"
+
+[deps]
+JSON3 = "0f8b85d8-3a1d-5f49-8c06-1b9c6b61f1a3"
+
+[compat]
+JSON3 = "1"
+julia = "1.10"
