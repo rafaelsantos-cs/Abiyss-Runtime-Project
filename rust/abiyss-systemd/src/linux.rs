@@ -6,6 +6,7 @@ use std::ffi::{CStr, CString};
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -192,14 +193,13 @@ pub fn execute_allowlisted(
         return Err("executable is not allowlisted".to_string());
     }
     let executable_meta = fs::symlink_metadata(executable).map_err(|e| format!("stat executable: {e}"))?;
-    if !executable_meta.file_type().is_file() || executable_meta.file_type().is_symlink() {
+    if executable_meta.file_type().is_symlink() || !executable_meta.is_file() {
         return Err("executable must be a regular non-symlink file".to_string());
     }
     if unsafe { libc::geteuid() } == 0
-        && (unsafe { libc::stat(executable.as_os_str().as_encoded_bytes().as_ptr() as *const i8, std::ptr::null_mut()) } != 0)
+        && (executable_meta.uid() != 0 || executable_meta.mode() & 0o022 != 0)
     {
-        // Ownership is checked below with Rust metadata; this branch only prevents
-        // accidental assumptions that a privileged launcher is automatically trusted.
+        return Err("privileged executable must be root-owned and not writable by group/world".to_string());
     }
 
     let canonical_root = fs::canonicalize(system_root).map_err(|e| format!("canonicalize system root: {e}"))?;
