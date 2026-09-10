@@ -88,6 +88,7 @@ def test_system_plane_rejects_malformed_error(tmp_path: Path) -> None:
         connection.sendall(json.dumps(response).encode() + b"\n")
 
     thread = serve_once(path, handler)
+    client = SystemPlaneClient(path)
     with pytest.raises(SystemPlaneError, match="malformed system-plane error"):
         client.call("system.info")
     thread.join(timeout=1)
