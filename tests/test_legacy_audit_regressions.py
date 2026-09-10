@@ -12,7 +12,7 @@ from abiyss.audit import AuditLog
 from abiyss.errors import PersistenceError, ValidationError
 from abiyss.memory import MemoryStore
 from abiyss.models import Query, QueryType, ToolResult, ToolSpec
-from abiyss.qups import QuPsStore
+from abiyss.qups import QuPsStore, canonical
 from abiyss.sleep import SleepConfig, SleepManager
 from abiyss.tools import ProcessTool
 from abiyss.schema import validate
@@ -33,7 +33,7 @@ def test_qups_fifo_is_rejected_without_blocking(tmp_path: Path) -> None:
     def worker() -> None:
         try:
             store.load("trap")
-        except BaseException as exc:  # pragma: no cover - assertion below records exact type
+        except BaseException as exc:
             result.append(exc)
 
     thread = threading.Thread(target=worker, daemon=True)
@@ -41,6 +41,19 @@ def test_qups_fifo_is_rejected_without_blocking(tmp_path: Path) -> None:
     thread.join(timeout=1)
     assert not thread.is_alive(), "QuPs FIFO load blocked"
     assert result and isinstance(result[0], PersistenceError)
+
+
+def test_qups_nested_json_is_bounded() -> None:
+    value: object = {"x": "leaf"}
+    for _ in range(40):
+        value = {"x": value}
+    with pytest.raises(ValidationError, match="nesting"):
+        canonical(value)
+
+
+def test_qups_container_cardinality_is_bounded() -> None:
+    with pytest.raises(ValidationError, match="too many fields"):
+        canonical({str(index): index for index in range(1025)})
 
 
 def test_process_output_overflow_is_terminated_early(tmp_path: Path) -> None:
