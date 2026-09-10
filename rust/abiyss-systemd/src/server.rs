@@ -75,22 +75,55 @@ fn arg_object<'a>(args: &'a Value) -> Result<&'a serde_json::Map<String, Value>,
     args.as_object().ok_or_else(|| "args must be an object".to_string())
 }
 
+fn validate_keys(args: &serde_json::Map<String, Value>, allowed: &[&str]) -> Result<(), (String, String)> {
+    if args.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err((
+            "invalid_argument".to_string(),
+            "request contains unknown argument fields".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn optional_u64(args: &serde_json::Map<String, Value>, key: &str, default: u64) -> Result<u64, (String, String)> {
+    match args.get(key) {
+        None => Ok(default),
+        Some(value) => value.as_u64().ok_or_else(|| {
+            ("invalid_argument".to_string(), format!("{key} must be a non-negative integer"))
+        }),
+    }
+}
+
+fn optional_string<'a>(args: &'a serde_json::Map<String, Value>, key: &str, default: &'a str) -> Result<&'a str, (String, String)> {
+    match args.get(key) {
+        None => Ok(default),
+        Some(value) => value.as_str().ok_or_else(|| {
+            ("invalid_argument".to_string(), format!("{key} must be a string"))
+        }),
+    }
+}
+
 fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, String)> {
     let args = arg_object(&request.args).map_err(|e| ("invalid_argument".to_string(), e))?;
     match request.op.as_str() {
-        "system.info" => Ok(system_info()),
+        "system.info" => {
+            validate_keys(args, &[])?;
+            Ok(system_info())
+        }
         "process.list" => {
-            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(32);
-            if limit > 128 {
+            validate_keys(args, &["limit"])?;
+            let limit = optional_u64(args, "limit", 32)?;
+            if !(1..=128).contains(&limit) {
                 return Err(("invalid_argument".to_string(), "limit is outside the allowed range".to_string()));
             }
             list_processes(limit as usize).map_err(|e| ("internal".to_string(), e))
         }
         "file.read" => {
+            validate_keys(args, &["path", "max_bytes"])?;
             let path = args.get("path").and_then(Value::as_str).ok_or_else(|| {
-                ("invalid_argument".to_string(), "path is required".to_string())
+                ("invalid_argument".to_string(), "path is required and must be a string".to_string())
             })?;
-            let max_bytes = args.get("max_bytes").and_then(Value::as_u64).unwrap_or(64 * 1024);
+            let max_bytes = optional_u64(args, "max_bytes", 64 * 1024)?;
             if max_bytes == 0 || max_bytes as usize > crate::MAX_OUTPUT_BYTES {
                 return Err(("invalid_argument".to_string(), "max_bytes is outside the allowed range".to_string()));
             }
@@ -104,14 +137,15 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
             }))
         }
         "process.exec" => {
+            validate_keys(args, &["executable", "argv", "cwd"])?;
             if !config.allow_exec {
                 return Err(("denied".to_string(), "process execution is disabled by policy".to_string()));
             }
             let executable = args.get("executable").and_then(Value::as_str).ok_or_else(|| {
-                ("invalid_argument".to_string(), "executable is required".to_string())
+                ("invalid_argument".to_string(), "executable is required and must be a string".to_string())
             })?;
             let argv = args.get("argv").and_then(Value::as_array).ok_or_else(|| {
-                ("invalid_argument".to_string(), "argv is required".to_string())
+                ("invalid_argument".to_string(), "argv is required and must be an array".to_string())
             })?;
             if argv.len() > crate::MAX_ARGS {
                 return Err(("invalid_argument".to_string(), "too many arguments".to_string()));
@@ -123,17 +157,18 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
                 })?;
                 parsed.push(value.to_string());
             }
-            let cwd = args.get("cwd").and_then(Value::as_str).unwrap_or(".");
+            let cwd = optional_string(args, "cwd", ".")?;
             let cwd_path = config.root.join(
                 validate_relative_path(cwd).map_err(|e| ("invalid_argument".to_string(), e.to_string()))?,
             );
             execute_allowlisted(
+                &config.root,
                 Path::new(executable),
                 &parsed,
                 &cwd_path,
                 &config.command_allowlist,
                 config.exec_timeout,
-                config.max_output_bytes.min(MAX_OUTPUT_BYTES),
+                config.max_output_bytes.min(crate::MAX_OUTPUT_BYTES),
                 config.allow_root_exec,
             )
             .map_err(|e| ("denied".to_string(), e))
@@ -143,7 +178,7 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
 }
 
 fn handle_connection(mut stream: UnixStream, config: ServerConfig) {
-    if peer_uid(&stream).map(|uid| uid == config.allowed_uid).unwrap_or(false) == false {
+    if !peer_uid(&stream).map(|uid| uid == config.allowed_uid).unwrap_or(false) {
         let _ = write_response(&mut stream, &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"));
         return;
     }
