@@ -91,7 +91,7 @@ pub fn read_confined_file(root: &Path, relative: &str, max_bytes: usize) -> Resu
         return Err("target is not a regular file".to_string());
     }
 
-    let mut file = unsafe { File::from_raw_fd(file_fd.into_raw_fd()) };
+    let mut file = File::from(file_fd);
     let mut output = Vec::with_capacity(max_bytes.min(64 * 1024));
     let mut buffer = [0u8; 8192];
     while output.len() <= max_bytes {
@@ -267,7 +267,6 @@ pub fn execute_allowlisted(
     });
 
     let deadline = Instant::now() + timeout;
-    let mut timed_out = false;
     loop {
         match child.try_wait().map_err(|e| format!("wait: {e}"))? {
             Some(status) => {
@@ -283,17 +282,15 @@ pub fn execute_allowlisted(
                 }));
             }
             None if Instant::now() >= deadline => {
-                timed_out = true;
                 unsafe { libc::kill(-pid, libc::SIGKILL); }
                 let _ = child.wait();
-                break;
+                let (output, _) = output_thread.join().map_err(|_| "output thread panicked".to_string())?;
+                return Ok(json!({
+                    "status": "timeout",
+                    "output": String::from_utf8_lossy(&output).into_owned(),
+                }));
             }
             None => thread::sleep(Duration::from_millis(10)),
         }
     }
-    let (output, _) = output_thread.join().map_err(|_| "output thread panicked".to_string())?;
-    Ok(json!({
-        "status": if timed_out { "timeout" } else { "error" },
-        "output": String::from_utf8_lossy(&output).into_owned(),
-    }))
 }
