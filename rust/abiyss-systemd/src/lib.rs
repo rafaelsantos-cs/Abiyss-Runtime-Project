@@ -26,6 +26,7 @@ pub const DEFAULT_MAX_PENDING: usize = 32;
 pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub version: u32,
     pub id: String,
