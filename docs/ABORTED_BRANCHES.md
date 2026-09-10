@@ -1,1 +1,0 @@
-Temporary development note. No release or runtime code is sourced from auxiliary checkpoint branches created during repository automation. The canonical development branch remains runtime-multilang-v0.1.
