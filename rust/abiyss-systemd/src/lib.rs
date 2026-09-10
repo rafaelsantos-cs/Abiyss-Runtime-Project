@@ -6,6 +6,7 @@
 //! model output directly.
 
 pub mod linux;
+pub mod server;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
