@@ -54,7 +54,10 @@ fn openat2(root_fd: i32, relative: &Path) -> Result<OwnedFd, String> {
     }
     let c_path = CString::new(bytes).map_err(|_| "path contains NUL".to_string())?;
     let how = OpenHow {
-        flags: (libc::O_RDONLY | libc::O_CLOEXEC) as u64,
+        // O_NONBLOCK is intentional: it prevents attacker-controlled FIFOs
+        // and other special files from blocking the system-plane thread before
+        // fstat() can reject them as non-regular files.
+        flags: (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK) as u64,
         mode: 0,
         resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV,
     };
