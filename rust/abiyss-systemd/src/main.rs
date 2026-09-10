@@ -20,6 +20,35 @@ fn env_path(name: &str) -> Result<Option<PathBuf>, String> {
     }
 }
 
+fn env_bool(name: &str, default: bool) -> Result<bool, String> {
+    match env::var(name) {
+        Ok(raw) => match raw.as_str() {
+            "0" | "false" | "False" => Ok(false),
+            "1" | "true" | "True" => Ok(true),
+            _ => Err(format!("{name} must be 0/1 or true/false")),
+        },
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_u64(name: &str, default: u64) -> Result<u64, String> {
+    match env::var(name) {
+        Ok(raw) => raw
+            .parse::<u64>()
+            .map_err(|_| format!("{name} must be an unsigned integer")),
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_usize(name: &str, default: usize) -> Result<usize, String> {
+    match env::var(name) {
+        Ok(raw) => raw
+            .parse::<usize>()
+            .map_err(|_| format!("{name} must be an unsigned integer")),
+        Err(_) => Ok(default),
+    }
+}
+
 fn current_uid() -> u32 {
     unsafe { libc::geteuid() as u32 }
 }
@@ -47,19 +76,6 @@ fn allowed_uid(default: u32) -> Result<u32, String> {
     }
 }
 
-fn env_usize(name: &str, default: usize, min: usize, max: usize) -> Result<usize, String> {
-    let value = match env::var(name) {
-        Ok(raw) => raw
-            .parse::<usize>()
-            .map_err(|_| format!("{name} must be an unsigned integer"))?,
-        Err(_) => default,
-    };
-    if value < min || value > max {
-        return Err(format!("{name} must be between {min} and {max}"));
-    }
-    Ok(value)
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let daemon_uid = current_uid();
     let socket = match env_path("ABIYSS_SYSTEM_SOCKET")? {
@@ -79,22 +95,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let allow_exec = env::var("ABIYSS_SYSTEM_ALLOW_EXEC").map(|v| v == "1").unwrap_or(false);
-    let allow_root_exec = env::var("ABIYSS_SYSTEM_ALLOW_ROOT_EXEC").map(|v| v == "1").unwrap_or(false);
-    let timeout_secs = env::var("ABIYSS_SYSTEM_EXEC_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(20);
-    let max_output = env::var("ABIYSS_SYSTEM_MAX_OUTPUT")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(64 * 1024);
-    let max_workers = env_usize("ABIYSS_SYSTEM_MAX_WORKERS", DEFAULT_MAX_WORKERS, 1, 64)?;
-    let max_pending = env_usize("ABIYSS_SYSTEM_MAX_PENDING", DEFAULT_MAX_PENDING, 0, 4096)?;
-    let io_timeout_secs = env::var("ABIYSS_SYSTEM_IO_TIMEOUT")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(DEFAULT_IO_TIMEOUT.as_secs());
+    let allow_exec = env_bool("ABIYSS_SYSTEM_ALLOW_EXEC", false)?;
+    let allow_root_exec = env_bool("ABIYSS_SYSTEM_ALLOW_ROOT_EXEC", false)?;
+    let timeout_secs = env_u64("ABIYSS_SYSTEM_EXEC_TIMEOUT", 20)?;
+    let max_output = env_usize("ABIYSS_SYSTEM_MAX_OUTPUT", 64 * 1024)?;
+    let max_workers = env_usize("ABIYSS_SYSTEM_MAX_WORKERS", DEFAULT_MAX_WORKERS)?;
+    let max_pending = env_usize("ABIYSS_SYSTEM_MAX_PENDING", DEFAULT_MAX_PENDING)?;
+    let io_timeout_secs = env_u64("ABIYSS_SYSTEM_IO_TIMEOUT", DEFAULT_IO_TIMEOUT.as_secs())?;
     if io_timeout_secs == 0 || io_timeout_secs > 60 {
         return Err("ABIYSS_SYSTEM_IO_TIMEOUT must be between 1 and 60 seconds".into());
     }
