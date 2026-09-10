@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -127,6 +128,47 @@ def test_completed_query_survives_runtime_restart_without_reexecution(tmp_path: 
             restored.shutdown()
     finally:
         stop_daemon(process)
+
+
+def test_runtime_preserves_function_result_identity_for_provider() -> None:
+    class RecordingProvider:
+        def __init__(self) -> None:
+            self.results: list[dict] | None = None
+
+        def turn(self, input_data, tools, previous_interaction_id=None) -> ModelTurn:
+            if previous_interaction_id is not None:
+                raise AssertionError("initial turn unexpectedly received continuation id")
+            return ModelTurn(
+                "interaction-recorded",
+                [ModelFunctionCall("call-recorded", "system.info", {})],
+                "",
+            )
+
+        def send_results(self, previous_interaction_id, results, tools) -> ModelTurn:
+            assert previous_interaction_id == "interaction-recorded"
+            self.results = results
+            return ModelTurn("interaction-recorded", [], "done")
+
+    provider = RecordingProvider()
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as directory:
+        runtime = AbiyssRuntime(Path(directory), provider=provider)
+        try:
+            turn = runtime.execute_agent_cycle("inspect")
+            assert turn.output_text == "done"
+            assert provider.results is not None
+            assert len(provider.results) == 1
+            result = provider.results[0]
+            assert result["type"] == "function_result"
+            assert result["name"] == "system.info"
+            assert result["call_id"] == "call-recorded"
+            payload = json.loads(result["result"][0]["text"])
+            assert payload["status"] == "completed"
+            assert payload["status"] != "ok"
+            assert payload["tool_name"] == "system.info"
+        finally:
+            runtime.shutdown()
 
 
 def test_runtime_rejects_duplicate_model_call_without_new_query(tmp_path: Path) -> None:
