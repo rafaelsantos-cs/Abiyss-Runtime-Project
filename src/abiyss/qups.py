@@ -16,33 +16,46 @@ from .security import assert_not_symlink, ensure_base_dir_safe
 
 QUPS_VERSION = 1
 MAX_QUPS_BYTES = 512 * 1024
+MAX_JSON_DEPTH = 32
+MAX_CONTAINER_ITEMS = 1024
 
 
-def _validate_json_tree(value: Any, *, path: str = "$") -> None:
+def _validate_json_tree(value: Any, *, path: str = "$", depth: int = 0) -> None:
+    if depth > MAX_JSON_DEPTH:
+        raise ValidationError(f"JSON nesting exceeds limit at {path}")
     if isinstance(value, float) and not math.isfinite(value):
         raise ValidationError(f"non-finite value at {path}")
     if isinstance(value, dict):
+        if len(value) > MAX_CONTAINER_ITEMS:
+            raise ValidationError(f"object contains too many fields at {path}")
         if any(not isinstance(key, str) for key in value):
             raise ValidationError(f"non-string key at {path}")
         for key, item in value.items():
-            _validate_json_tree(item, path=f"{path}.{key}")
+            _validate_json_tree(item, path=f"{path}.{key}", depth=depth + 1)
     elif isinstance(value, list):
+        if len(value) > MAX_CONTAINER_ITEMS:
+            raise ValidationError(f"array contains too many items at {path}")
         for index, item in enumerate(value):
-            _validate_json_tree(item, path=f"{path}[{index}]")
+            _validate_json_tree(item, path=f"{path}[{index}]", depth=depth + 1)
+    elif isinstance(value, str) and len(value.encode("utf-8")) > MAX_QUPS_BYTES:
+        raise ValidationError(f"string exceeds QuPs envelope limit at {path}")
 
 
 def canonical(value: Any) -> bytes:
     _validate_json_tree(value)
     try:
-        return json.dumps(
+        encoded = json.dumps(
             value,
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise ValidationError("value is not canonical JSON") from exc
+    if len(encoded) > MAX_QUPS_BYTES:
+        raise ValidationError("canonical JSON exceeds QuPs size limit")
+    return encoded
 
 
 def make_envelope(query: Query) -> dict[str, Any]:
@@ -66,7 +79,6 @@ def validate_envelope(envelope: Any) -> Query:
     expected = hashlib.sha256(canonical(body)).hexdigest()
     if not hmac.compare_digest(digest, expected):
         raise ValidationError("QuPs hash mismatch")
-    _validate_json_tree(body)
     return Query.from_snapshot(body["query"])
 
 
@@ -91,8 +103,6 @@ class QuPsStore:
 
     def save(self, query: Query) -> None:
         data = canonical(make_envelope(query))
-        if len(data) > MAX_QUPS_BYTES:
-            raise PersistenceError("QuPs payload too large")
         atomic_write_bytes(self.path_for(query.id), data, mode=0o600)
 
     def _read_nofollow(self, path: Path) -> bytes:
@@ -135,7 +145,7 @@ class QuPsStore:
             raise PersistenceError("QuPs payload too large")
         try:
             envelope = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise PersistenceError("invalid QuPs JSON") from exc
         try:
             return validate_envelope(envelope)
