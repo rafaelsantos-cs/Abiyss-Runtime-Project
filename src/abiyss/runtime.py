@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import AuditLog
+from .bridge import NativeWorker
 from .errors import ProviderError, QueueInvariantError, RecoveryRequired, ValidationError
 from .gemini import ModelProvider, ModelTurn
 from .memory import MemoryStore
@@ -19,7 +20,7 @@ from .tools import AST, SST, ToolRegistry, build_default_registry
 
 
 class AbiyssRuntime:
-    """Top-level ABIYSS runtime coordinating model, QQ, tools, memory and Sleep."""
+    """Top-level ABIYSS runtime coordinating model, QQ, tools, memory, Sleep and optional native workers."""
 
     def __init__(
         self,
@@ -29,6 +30,9 @@ class AbiyssRuntime:
         allow_exec: bool = False,
         allow_root_exec: bool = False,
         command_allowlist: tuple[str, ...] = (),
+        native_rust: Path | None = None,
+        native_cpp: Path | None = None,
+        native_go: Path | None = None,
     ) -> None:
         self.root = ensure_base_dir_safe(Path(root)).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -44,11 +48,7 @@ class AbiyssRuntime:
         )
         self.ast = AST(self.tools)
         self.sst = SST(self.tools)
-        self.sleep = SleepManager(
-            memory=self.memory,
-            audit=self.audit,
-            obsidian_dir=self.root / "obsidian",
-        )
+        self.sleep = SleepManager(memory=self.memory, audit=self.audit, obsidian_dir=self.root / "obsidian")
         self.qq = QueryQueue(
             store=self.qups,
             audit=self.audit,
@@ -61,6 +61,37 @@ class AbiyssRuntime:
         self._model_queries: dict[str, list[str]] = {}
         self._closed = False
         self._lock = threading.RLock()
+
+        # Native workers are optional. Their absence must never prevent the Python
+        # runtime from operating, preserving v0.1 compatibility.
+        self.native: dict[str, NativeWorker] = {}
+        for name, executable in (("rust", native_rust), ("cpp", native_cpp), ("go", native_go)):
+            if executable is not None:
+                self.native[name] = NativeWorker(str(executable))
+
+    def native_health(self) -> dict[str, dict[str, Any]]:
+        """Probe configured native workers without granting them Query authority."""
+        result: dict[str, dict[str, Any]] = {}
+        for name, worker in self.native.items():
+            try:
+                response = worker.call("health")
+                result[name] = {"ok": response.ok, "result": response.result, "error": response.error}
+            except Exception as exc:
+                result[name] = {"ok": False, "error": str(exc)[:4096]}
+        return result
+
+    def native_call(self, component: str, op: str, payload: dict[str, Any] | None = None) -> Any:
+        """Call an explicitly configured native helper.
+
+        This is infrastructure plumbing only. Model-generated calls still enter
+        the normal ToolRegistry -> QQ -> AST/SST path.
+        """
+        if component not in self.native:
+            raise ValidationError(f"native component is not configured: {component}")
+        response = self.native[component].call(op, payload)
+        if not response.ok:
+            raise ProviderError(response.error or "native worker failed")
+        return response.result
 
     def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]):
         return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
@@ -101,11 +132,7 @@ class AbiyssRuntime:
             raise ValueError("prompt must be non-empty text")
         if self.provider is None:
             raise ProviderError("no model provider configured")
-        turn = self.provider.turn(
-            text,
-            self.tools.specs_for(QueryType.AQUERY),
-            self.last_interaction_id,
-        )
+        turn = self.provider.turn(text, self.tools.specs_for(QueryType.AQUERY), self.last_interaction_id)
         self.ingest_model_turn(turn)
         return turn
 
@@ -122,11 +149,7 @@ class AbiyssRuntime:
             payload = query.checkpoint.result or {}
             status = query.state.value
             if query.state == QueryState.RECOVERY_REQUIRED:
-                payload = {
-                    "status": "recovery_required",
-                    "error": query.checkpoint.error,
-                    "step_index": query.checkpoint.step_index,
-                }
+                payload = {"status": "recovery_required", "error": query.checkpoint.error, "step_index": query.checkpoint.step_index}
             elif query.state == QueryState.FAILED:
                 payload = {**payload, "status": "failed", "error": query.checkpoint.error}
             model_result = {**payload, "status": status}
@@ -135,19 +158,12 @@ class AbiyssRuntime:
                 model_result = {"status": status, "error": "tool result omitted because it exceeds model result limit"}
                 if query.checkpoint.error:
                     model_result["error"] = query.checkpoint.error[:4096]
-            results.append(
-                {
-                    "type": "function_result",
-                    "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
-                    "call_id": query.tool_call_id,
-                    "result": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
-                        }
-                    ],
-                }
-            )
+            results.append({
+                "type": "function_result",
+                "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
+                "call_id": query.tool_call_id,
+                "result": [{"type": "text", "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False)}],
+            })
         return results
 
     def _wait_for_model_queries(self, interaction_id: str, max_steps: int) -> None:
@@ -163,13 +179,7 @@ class AbiyssRuntime:
                 time.sleep(0.005)
         raise QueueInvariantError("model Query set exceeded execution step budget")
 
-    def execute_agent_cycle(
-        self,
-        text: str,
-        *,
-        max_rounds: int = 8,
-        max_steps_per_round: int = 1000,
-    ) -> ModelTurn:
+    def execute_agent_cycle(self, text: str, *, max_rounds: int = 8, max_steps_per_round: int = 1000) -> ModelTurn:
         if self.provider is None:
             raise ProviderError("no model provider configured")
         if not 1 <= max_rounds <= 64:
