@@ -118,6 +118,22 @@ def test_query_becomes_recovery_required_when_post_effect_persistence_fails(tmp_
     assert query.checkpoint.state.value == "recovery_required"
     assert "post-side-effect" in (query.checkpoint.error or "")
 
+    # The failed terminal save must not be mistaken for durable recovery. The
+    # on-disk envelope is still RUNNING, so a fresh queue must convert that
+    # ambiguous state to RECOVERY_REQUIRED before it can execute anything.
+    store.fail_after_running = False
+    restored_audit = AuditLog(tmp_path / "restored-audit.jsonl")
+    restored = QueryQueue(
+        store=store,
+        audit=restored_audit,
+        tool_execute=lambda *_: (_ for _ in ()).throw(AssertionError("recovery path re-executed side effect")),
+    )
+    restored.restore()
+    recovered = restored.get(query.id)
+    assert recovered.state is QueryState.RECOVERY_REQUIRED
+    assert restored.run_once() is None
+    assert side_effects == ["ran"]
+
 
 def test_sleep_failed_summary_is_throttled(tmp_path: Path) -> None:
     memory = MemoryStore(tmp_path / "memory.sqlite3")
