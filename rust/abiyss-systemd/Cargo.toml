@@ -1,9 +1,13 @@
 [package]
-name = "abiyss-systemd"
+name = "abiyss-system-plane"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-description = "ABIYSS Rust system-plane daemon"
+description = "ABIYSS Rust Linux system-plane daemon"
+
+[[bin]]
+name = "abiyss-system"
+path = "src/main.rs"
 
 [dependencies]
 libc = "0.2"
