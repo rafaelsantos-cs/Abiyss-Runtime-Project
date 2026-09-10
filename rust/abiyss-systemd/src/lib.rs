@@ -21,6 +21,9 @@ pub const MAX_PATH_BYTES: usize = 4096;
 pub const MAX_ARG_BYTES: usize = 4096;
 pub const MAX_ARGS: usize = 32;
 pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+pub const DEFAULT_MAX_WORKERS: usize = 8;
+pub const DEFAULT_MAX_PENDING: usize = 32;
+pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Request {
@@ -151,6 +154,9 @@ pub struct ServerConfig {
     pub command_allowlist: Vec<PathBuf>,
     pub exec_timeout: Duration,
     pub max_output_bytes: usize,
+    pub max_workers: usize,
+    pub max_pending: usize,
+    pub io_timeout: Duration,
 }
 
 impl ServerConfig {
@@ -161,8 +167,17 @@ impl ServerConfig {
         if self.exec_timeout.is_zero() || self.exec_timeout > Duration::from_secs(300) {
             return Err(ConfigError::InvalidTimeout);
         }
+        if self.io_timeout.is_zero() || self.io_timeout > Duration::from_secs(60) {
+            return Err(ConfigError::InvalidIoTimeout);
+        }
         if self.max_output_bytes < 1024 || self.max_output_bytes > 4 * 1024 * 1024 {
             return Err(ConfigError::InvalidOutputLimit);
+        }
+        if !(1..=64).contains(&self.max_workers) {
+            return Err(ConfigError::InvalidWorkerCount);
+        }
+        if self.max_pending > 4096 {
+            return Err(ConfigError::InvalidQueueSize);
         }
         for path in &self.command_allowlist {
             if !path.is_absolute() {
@@ -182,8 +197,14 @@ pub enum ConfigError {
     EmptyPath,
     #[error("invalid execution timeout")]
     InvalidTimeout,
+    #[error("invalid system-plane I/O timeout")]
+    InvalidIoTimeout,
     #[error("invalid output limit")]
     InvalidOutputLimit,
+    #[error("invalid worker count")]
+    InvalidWorkerCount,
+    #[error("invalid pending queue size")]
+    InvalidQueueSize,
     #[error("allowlisted executables must be absolute paths")]
     InvalidExecutable,
     #[error("root execution requires allow_exec=true")]
@@ -197,7 +218,7 @@ impl fmt::Display for ErrorBody {
 }
 
 /// Narrow public seam used by integration tests and future system-plane clients.
-/// The actual Linux implementation remains in the private daemon subsystem.
+/// The actual Linux implementation remains in the daemon subsystem.
 pub fn read_confined_file(root: &Path, relative: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
     linux::read_confined_file(root, relative, max_bytes)
 }
