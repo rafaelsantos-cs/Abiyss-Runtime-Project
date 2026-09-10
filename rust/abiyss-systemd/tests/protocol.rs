@@ -1,5 +1,7 @@
-use abiyss_systemd::{validate_relative_path, Request, Response, PROTOCOL_VERSION};
+use abiyss_systemd::{validate_relative_path, ConfigError, Request, Response, ServerConfig, PROTOCOL_VERSION};
 use serde_json::json;
+use std::path::PathBuf;
+use std::time::Duration;
 
 #[test]
 fn accepts_valid_request_and_rejects_non_object_args() {
@@ -39,6 +41,19 @@ fn rejects_unknown_protocol_version_and_oversized_request() {
 }
 
 #[test]
+fn rejects_unknown_request_fields() {
+    let raw = serde_json::to_vec(&json!({
+        "version": PROTOCOL_VERSION,
+        "id": "req-1",
+        "op": "system.info",
+        "args": {},
+        "unexpected": true
+    }))
+    .unwrap();
+    assert!(Request::parse(&raw).is_err());
+}
+
+#[test]
 fn path_policy_rejects_absolute_parent_and_parent_escape() {
     for path in ["/etc/passwd", "../outside", "a/../../outside", ""] {
         assert!(validate_relative_path(path).is_err(), "accepted unsafe path {path}");
@@ -55,4 +70,34 @@ fn response_is_newline_delimited_and_versioned() {
     assert_eq!(value["version"], PROTOCOL_VERSION);
     assert_eq!(value["id"], "req-1");
     assert_eq!(value["ok"], true);
+}
+
+fn base_config() -> ServerConfig {
+    ServerConfig {
+        socket_path: PathBuf::from("/tmp/abiyss-test.sock"),
+        root: PathBuf::from("/tmp/abiyss-root"),
+        allowed_uid: 1000,
+        allow_exec: false,
+        allow_root_exec: false,
+        command_allowlist: Vec::new(),
+        exec_timeout: Duration::from_secs(20),
+        max_output_bytes: 64 * 1024,
+        max_workers: 8,
+        max_pending: 32,
+        io_timeout: Duration::from_secs(5),
+    }
+}
+
+#[test]
+fn config_rejects_invalid_worker_count() {
+    let mut config = base_config();
+    config.max_workers = 0;
+    assert!(matches!(config.validate(), Err(ConfigError::InvalidWorkerCount)));
+}
+
+#[test]
+fn config_rejects_invalid_io_timeout() {
+    let mut config = base_config();
+    config.io_timeout = Duration::ZERO;
+    assert!(matches!(config.validate(), Err(ConfigError::InvalidIoTimeout)));
 }
