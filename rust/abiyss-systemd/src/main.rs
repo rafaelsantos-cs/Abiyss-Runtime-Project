@@ -1,7 +1,7 @@
 mod linux;
 mod server;
 
-use abiyss_system_plane::{ServerConfig, PROTOCOL_VERSION};
+use abiyss_systemd::{ServerConfig, PROTOCOL_VERSION, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_PENDING, DEFAULT_MAX_WORKERS};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -40,9 +40,24 @@ fn default_socket(uid: u32) -> Result<PathBuf, String> {
 
 fn allowed_uid(default: u32) -> Result<u32, String> {
     match env::var("ABIYSS_SYSTEM_ALLOWED_UID") {
-        Ok(raw) => raw.parse::<u32>().map_err(|_| "ABIYSS_SYSTEM_ALLOWED_UID must be an unsigned integer".to_string()),
+        Ok(raw) => raw
+            .parse::<u32>()
+            .map_err(|_| "ABIYSS_SYSTEM_ALLOWED_UID must be an unsigned integer".to_string()),
         Err(_) => Ok(default),
     }
+}
+
+fn env_usize(name: &str, default: usize, min: usize, max: usize) -> Result<usize, String> {
+    let value = match env::var(name) {
+        Ok(raw) => raw
+            .parse::<usize>()
+            .map_err(|_| format!("{name} must be an unsigned integer"))?,
+        Err(_) => default,
+    };
+    if value < min || value > max {
+        return Err(format!("{name} must be between {min} and {max}"));
+    }
+    Ok(value)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,6 +89,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(64 * 1024);
+    let max_workers = env_usize("ABIYSS_SYSTEM_MAX_WORKERS", DEFAULT_MAX_WORKERS, 1, 64)?;
+    let max_pending = env_usize("ABIYSS_SYSTEM_MAX_PENDING", DEFAULT_MAX_PENDING, 0, 4096)?;
+    let io_timeout_secs = env::var("ABIYSS_SYSTEM_IO_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_IO_TIMEOUT.as_secs());
+    if io_timeout_secs == 0 || io_timeout_secs > 60 {
+        return Err("ABIYSS_SYSTEM_IO_TIMEOUT must be between 1 and 60 seconds".into());
+    }
     let allowlist = env::var("ABIYSS_SYSTEM_COMMAND_ALLOWLIST")
         .unwrap_or_default()
         .split(':')
@@ -87,13 +111,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!(
-        "abiyss-system protocol={} socket={} root={} daemon_uid={} allowed_uid={} exec={}",
+        "abiyss-system protocol={} socket={} root={} daemon_uid={} allowed_uid={} exec={} workers={} pending={}",
         PROTOCOL_VERSION,
         socket.display(),
         root.display(),
         daemon_uid,
         authorized_uid,
-        allow_exec
+        allow_exec,
+        max_workers,
+        max_pending
     );
 
     let config = ServerConfig {
@@ -105,6 +131,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         command_allowlist: allowlist,
         exec_timeout: Duration::from_secs(timeout_secs),
         max_output_bytes: max_output,
+        max_workers,
+        max_pending,
+        io_timeout: Duration::from_secs(io_timeout_secs),
     };
     server::run(config).map_err(Into::into)
 }
