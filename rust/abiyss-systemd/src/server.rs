@@ -1,10 +1,10 @@
 use crate::linux::{execute_allowlisted, list_processes, read_confined_file, system_info};
-use crate::{validate_relative_path, Request, Response, ServerConfig, MAX_RESPONSE_BYTES, MAX_REQUEST_BYTES};
+use crate::{validate_relative_path, Request, Response, ServerConfig, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::thread;
@@ -81,6 +81,9 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
         "system.info" => Ok(system_info()),
         "process.list" => {
             let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(32);
+            if limit > 128 {
+                return Err(("invalid_argument".to_string(), "limit is outside the allowed range".to_string()));
+            }
             list_processes(limit as usize).map_err(|e| ("internal".to_string(), e))
         }
         "file.read" => {
@@ -140,21 +143,15 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
 }
 
 fn handle_connection(mut stream: UnixStream, config: ServerConfig) {
-    let id = match peer_uid(&stream) {
-        Ok(uid) if uid == config.allowed_uid => None,
-        Ok(_) => {
-            let _ = write_response(&mut stream, &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"));
-            return;
-        }
-        Err(_) => {
-            return;
-        }
-    };
+    if peer_uid(&stream).map(|uid| uid == config.allowed_uid).unwrap_or(false) == false {
+        let _ = write_response(&mut stream, &Response::error("unknown".to_string(), "denied", "peer credentials are not authorized"));
+        return;
+    }
 
     let raw = match read_request(&mut stream) {
         Ok(value) => value,
         Err(error) => {
-            let _ = write_response(&mut stream, &Response::error(id.unwrap_or_else(|| "unknown".to_string()), "invalid_request", error));
+            let _ = write_response(&mut stream, &Response::error("unknown".to_string(), "invalid_request", error));
             return;
         }
     };
@@ -181,9 +178,15 @@ pub fn run(config: ServerConfig) -> Result<(), String> {
         return Err("system root must be a real directory".to_string());
     }
 
-    if config.socket_path.exists() {
-        if config.socket_path.is_symlink() || !config.socket_path.is_file() {
-            return Err("refusing to replace non-regular stale socket path".to_string());
+    if config.socket_path.exists() || fs::symlink_metadata(&config.socket_path).is_ok() {
+        let metadata = fs::symlink_metadata(&config.socket_path)
+            .map_err(|e| format!("inspect stale socket path: {e}"))?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err("refusing to replace symlink at socket path".to_string());
+        }
+        if !file_type.is_socket() {
+            return Err("refusing to replace non-socket path".to_string());
         }
         fs::remove_file(&config.socket_path).map_err(|e| format!("remove stale socket: {e}"))?;
     }
