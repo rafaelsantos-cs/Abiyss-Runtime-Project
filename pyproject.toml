@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abiyss"
-version = "0.1.0"
-description = "ABIYSS runtime for deterministic Query scheduling, guarded Linux tools, memory and optional Gemini integration."
+version = "0.2.0.dev0"
+description = "ABIYSS runtime with deterministic Query scheduling, guarded Linux tools, durable memory and optional multi-language native workers."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Rafael Alves"}]
