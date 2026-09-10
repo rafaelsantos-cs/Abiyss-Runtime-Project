@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 mod linux_security {
-    use abiyss_system_plane::ServerConfig;
+    use abiyss_system_plane::read_confined_file;
+    use std::ffi::CString;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -12,13 +13,14 @@ mod linux_security {
         let base = unique_temp_dir("abiyss-fifo-test");
         fs::create_dir_all(&base).unwrap();
         let fifo = base.join("trap");
-        let rc = unsafe { libc::mkfifo(fifo.as_os_str().as_encoded_bytes().as_ptr() as *const i8, 0o600) };
+        let c_fifo = CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(c_fifo.as_ptr(), 0o600) };
         assert_eq!(rc, 0);
 
         let (tx, rx) = mpsc::channel();
         let root = base.clone();
         thread::spawn(move || {
-            let result = super::read_confined_file_for_test(&root, "trap");
+            let result = read_confined_file(&root, "trap", 4096);
             let _ = tx.send(result);
         });
 
@@ -35,15 +37,5 @@ mod linux_security {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("{prefix}-{}-{suffix}", std::process::id()))
-    }
-
-    // Kept in one place so the security test doesn't depend on the server.
-    fn read_confined_file_for_test(root: &PathBuf, path: &str) -> Result<Vec<u8>, String> {
-        // `linux` is a private module in the binary today, so the integration
-        // test invokes the same public semantics through a tiny child process
-        // in the next test revision. This placeholder is deliberately failing
-        // closed until that public test seam exists.
-        let _ = (root, path);
-        Err("test seam unavailable".to_string())
     }
 }
