@@ -60,6 +60,7 @@ class SleepManager:
         source_ids = [item["source_id"] for item in data]
         summary = summarize(data) if summarize else "\n".join(item["content"] for item in data[:16])
         if not isinstance(summary, str) or not summary.strip():
+            self._last_tick = current
             self.audit.append("sleep.recap_skipped", reason="empty_summary")
             return None
         fingerprint = self.memory.create_immutable_recap(source_ids, summary)
