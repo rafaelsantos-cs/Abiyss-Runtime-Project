@@ -10,13 +10,13 @@ from .audit import AuditLog
 from .errors import ProviderError, QueueInvariantError, SystemPlaneError
 from .gemini import ModelProvider, ModelTurn
 from .memory import MemoryStore
-from .models import Query, QueryState, QueryType, ToolResult
+from .models import Query, QueryState, QueryType, ToolResult, ToolSpec
 from .qq import QueryQueue
 from .qups import QuPsStore
 from .security import ensure_base_dir_safe
 from .sleep import SleepManager
 from .system_plane import SystemPlaneClient
-from .tools import AST, SST, ToolRegistry, build_default_registry
+from .tools import AST, SST, PythonTool, ToolRegistry, build_default_registry
 
 
 class AbiyssRuntime:
@@ -48,6 +48,27 @@ class AbiyssRuntime:
         self.ast = AST(self.tools)
         self.sst = SST(self.tools)
         self.system_plane = SystemPlaneClient(system_socket, timeout=system_timeout) if system_socket is not None else None
+        if self.system_plane is not None:
+            self.tools.register(PythonTool(
+                ToolSpec(
+                    "file.read",
+                    "Read a bounded regular file through the Rust system plane.",
+                    QueryType.SQUERY,
+                    {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "maxLength": 4096},
+                            "max_bytes": {"type": "integer", "minimum": 1, "maximum": 65536},
+                        },
+                        "required": ["path"],
+                        "additionalProperties": False,
+                    },
+                    privileged=True,
+                    reversible=True,
+                    allow_memory_persistence=False,
+                ),
+                lambda args: self.system_plane.read_file(args["path"], max_bytes=args.get("max_bytes", 64 * 1024)),
+            ))
         self.sleep = SleepManager(memory=self.memory, audit=self.audit, obsidian_dir=self.root / "obsidian")
         self.qq = QueryQueue(store=self.qups, audit=self.audit, tool_execute=self._execute_tool, tool_validator=self.tools.validate_call)
         self.qq.restore()
@@ -58,13 +79,15 @@ class AbiyssRuntime:
         self._lock = threading.RLock()
 
     def _execute_tool(self, query_type: QueryType, name: str, args: dict[str, Any]) -> ToolResult:
-        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec"}:
+        if self.system_plane is None or name not in {"system.info", "process.list", "system.exec", "file.read"}:
             return self.ast.execute(name, args) if query_type == QueryType.AQUERY else self.sst.execute(name, args)
         try:
             if name == "system.info":
                 return ToolResult("ok", self.system_plane.info())
             if name == "process.list":
                 return ToolResult("ok", self.system_plane.process_list(args.get("limit", 32)))
+            if name == "file.read":
+                return ToolResult("ok", self.system_plane.read_file(args["path"], max_bytes=args.get("max_bytes", 64 * 1024)))
             if name == "system.exec":
                 argv = args.get("argv")
                 if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
@@ -146,7 +169,7 @@ class AbiyssRuntime:
                 "type": "function_result",
                 "name": query.checkpoint.tool_name or query.payload.get("tool_name"),
                 "call_id": query.tool_call_id,
-                "result": [{"type": "text", "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False)}],
+                "result": [{"type": "text", "text": json.dumps(model_result, ensure_ascii=False, separators=(",", ":"))}],
             })
         return results
 
