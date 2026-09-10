@@ -26,5 +26,9 @@ class ProviderError(AbiyssError):
     """The model provider failed or returned an invalid response."""
 
 
+class SystemPlaneError(AbiyssError):
+    """The Rust Linux system plane rejected or failed an operation."""
+
+
 class RecoveryRequired(AbiyssError):
     """A durable side-effect state requires explicit recovery."""

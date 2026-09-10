@@ -1,0 +1,120 @@
+name: ABIYSS Runtime Multilang
+
+on:
+  push:
+    branches: [runtime-multilang-v0.1]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest pytest-cov
+      - name: Test Python runtime
+        env:
+          PYTHONPATH: src
+        run: python -m pytest -q
+      - name: Compile Python
+        run: python -m compileall -q src tests
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Format check
+        working-directory: rust/abiyss-systemd
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: rust/abiyss-systemd
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Test
+        working-directory: rust/abiyss-systemd
+        run: cargo test --all-targets --all-features
+      - name: Release build
+        working-directory: rust/abiyss-systemd
+        run: cargo build --release
+      - name: Upload system-plane binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: abiyss-system-linux
+          path: rust/abiyss-systemd/target/release/abiyss-system
+          if-no-files-found: error
+
+  python-native-client:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pytest
+      - name: Run system-plane client and legacy regression tests
+        env:
+          PYTHONPATH: src
+        run: python -m pytest -q tests/test_system_plane.py tests/test_legacy_audit_regressions.py
+
+  system-plane-e2e:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@v4
+        with:
+          name: abiyss-system-linux
+          path: ./artifacts
+      - name: Make native binary executable
+        run: chmod 0755 ./artifacts/abiyss-system
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pytest
+      - name: Run real Python -> Rust -> Linux integration
+        env:
+          PYTHONPATH: src
+          ABIYSS_SYSTEM_BINARY: ${{ github.workspace }}/artifacts/abiyss-system
+        run: python -m pytest -q tests/system_plane_e2e.py tests/runtime_system_plane_e2e.py
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+      - name: Build Go watcher
+        working-directory: tools/abiyss-watch-go
+        run: go build -trimpath -o abiyss-watch .
+
+  julia:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - name: Instantiate Julia analysis environment
+        working-directory: tools/abiyss-analyze-julia
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+      - name: Test Julia analysis
+        working-directory: tools/abiyss-analyze-julia
+        run: julia --project=. test/runtests.jl
