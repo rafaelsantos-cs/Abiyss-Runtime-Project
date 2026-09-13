@@ -6,19 +6,20 @@
 //! race; execution is still a separate boundary and is not authorized by a
 //! stale verification result.
 
-use crate::skill::{SkillManifest, VerifiedSkill, VerifyError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
+use thiserror::Error;
 
-const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_FILES: usize = 256;
 const MAX_NAME_BYTES: usize = 128;
 const MAX_TOKEN_BYTES: usize = 4096;
@@ -45,25 +46,47 @@ struct OpenHow {
     resolve: u64,
 }
 
-#[derive(Clone, Copy)]
-struct FdStat {
-    mode: u32,
-    uid: u32,
-    gid: u32,
-    size: u64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillManifest {
+    pub name: String,
+    pub version: String,
+    pub entrypoint: Vec<String>,
+    pub files: BTreeMap<String, String>,
+    pub allow_root: bool,
+    pub timeout_seconds: f64,
+    pub max_output_bytes: u64,
+    pub max_args: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawManifest {
-    name: String,
-    version: String,
-    entrypoint: Vec<String>,
-    files: BTreeMap<String, String>,
-    allow_root: bool,
-    timeout_seconds: f64,
-    max_output_bytes: u64,
-    max_args: usize,
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifiedSkill {
+    pub directory: String,
+    #[serde(flatten)]
+    pub manifest: SkillManifest,
+}
+
+#[derive(Debug, Error, Clone)]
+pub enum VerifyError {
+    #[error("unsafe skill path: {0}")]
+    UnsafePath(String),
+    #[error("invalid skill manifest: {0}")]
+    Manifest(String),
+    #[error("skill I/O failure: {0}")]
+    Io(String),
+    #[error("skill hash mismatch: {0}")]
+    HashMismatch(String),
+    #[error("skill file set mismatch; missing={missing:?}, unexpected={unexpected:?}")]
+    FileSetMismatch {
+        missing: Vec<String>,
+        unexpected: Vec<String>,
+    },
+}
+
+impl From<io::Error> for VerifyError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error.to_string())
+    }
 }
 
 fn io_error(prefix: &str) -> VerifyError {
@@ -90,19 +113,19 @@ fn openat2_fd(dirfd: RawFd, path: &Path, flags: u64, resolve: u64) -> Result<Own
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-fn stat_fd(fd: &OwnedFd) -> Result<FdStat, VerifyError> {
+fn stat_fd(fd: &OwnedFd) -> Result<(u32, u32, u32, u64), VerifyError> {
     let mut stat = std::mem::MaybeUninit::<libc::stat>::zeroed();
     let rc = unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) };
     if rc != 0 {
         return Err(io_error("fstat failed"));
     }
     let stat = unsafe { stat.assume_init() };
-    Ok(FdStat {
-        mode: stat.st_mode as u32,
-        uid: stat.st_uid as u32,
-        gid: stat.st_gid as u32,
-        size: stat.st_size.max(0) as u64,
-    })
+    Ok((
+        stat.st_mode as u32,
+        stat.st_uid as u32,
+        stat.st_gid as u32,
+        stat.st_size.max(0) as u64,
+    ))
 }
 
 fn is_regular(mode: u32) -> bool {
@@ -114,11 +137,8 @@ fn is_directory(mode: u32) -> bool {
 }
 
 fn secure_open(root_fd: RawFd, relative: &Path, flags: u64) -> Result<OwnedFd, VerifyError> {
-    if relative.is_absolute() {
-        return Err(VerifyError::UnsafePath("secure path must be relative".to_string()));
-    }
-    if relative.as_os_str().is_empty() {
-        return Err(VerifyError::UnsafePath("secure path must not be empty".to_string()));
+    if relative.is_absolute() || relative.as_os_str().is_empty() {
+        return Err(VerifyError::UnsafePath("secure path must be non-empty and relative".to_string()));
     }
     openat2_fd(
         root_fd,
@@ -143,8 +163,8 @@ fn open_root(root: &Path) -> Result<OwnedFd, VerifyError> {
         &canonical,
         libc::O_PATH as u64 | libc::O_DIRECTORY as u64 | libc::O_CLOEXEC as u64,
     )?;
-    let metadata = stat_fd(&fd)?;
-    if !is_directory(metadata.mode) {
+    let (mode, _, _, _) = stat_fd(&fd)?;
+    if !is_directory(mode) {
         return Err(VerifyError::UnsafePath("system root is not a directory".to_string()));
     }
     Ok(fd)
@@ -174,45 +194,34 @@ fn validate_member(value: &str) -> Result<(), VerifyError> {
     Ok(())
 }
 
-fn validate_manifest(raw: RawManifest) -> Result<SkillManifest, VerifyError> {
-    validate_text(&raw.name, MAX_NAME_BYTES, "skill name")?;
-    validate_text(&raw.version, MAX_VERSION_BYTES, "skill version")?;
-    if raw.entrypoint.is_empty() || raw.entrypoint.len() > 32 {
+fn validate_manifest(manifest: SkillManifest) -> Result<SkillManifest, VerifyError> {
+    validate_text(&manifest.name, MAX_NAME_BYTES, "skill name")?;
+    validate_text(&manifest.version, MAX_VERSION_BYTES, "skill version")?;
+    if manifest.entrypoint.is_empty() || manifest.entrypoint.len() > MAX_FILES {
         return Err(VerifyError::Manifest("invalid entrypoint".to_string()));
     }
-    for token in &raw.entrypoint {
+    for token in &manifest.entrypoint {
         validate_text(token, MAX_TOKEN_BYTES, "entrypoint token")?;
     }
-    if raw.files.len() > MAX_FILES {
+    if manifest.files.len() > MAX_FILES {
         return Err(VerifyError::Manifest("too many manifest files".to_string()));
     }
-    for (path, digest) in &raw.files {
+    for (path, digest) in &manifest.files {
         validate_member(path)?;
-        if digest.len() != 64
-            || digest.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
-        {
+        if digest.len() != 64 || digest.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_lowercase() == false) {
             return Err(VerifyError::Manifest(format!("invalid SHA-256 for {path}")));
         }
     }
-    if !raw.timeout_seconds.is_finite() || !(0.1..=300.0).contains(&raw.timeout_seconds) {
+    if !manifest.timeout_seconds.is_finite() || !(0.1..=300.0).contains(&manifest.timeout_seconds) {
         return Err(VerifyError::Manifest("timeout outside policy".to_string()));
     }
-    if !(1024..=4 * 1024 * 1024).contains(&raw.max_output_bytes) {
+    if !(1024..=4 * 1024 * 1024).contains(&manifest.max_output_bytes) {
         return Err(VerifyError::Manifest("output limit outside policy".to_string()));
     }
-    if !(1..=32).contains(&raw.max_args) {
+    if !(1..=32).contains(&manifest.max_args) {
         return Err(VerifyError::Manifest("max_args outside policy".to_string()));
     }
-    Ok(SkillManifest {
-        name: raw.name,
-        version: raw.version,
-        entrypoint: raw.entrypoint,
-        files: raw.files,
-        allow_root: raw.allow_root,
-        timeout_seconds: raw.timeout_seconds,
-        max_output_bytes: raw.max_output_bytes,
-        max_args: raw.max_args,
-    })
+    Ok(manifest)
 }
 
 fn read_manifest(root_fd: RawFd, skill_relative: &Path) -> Result<SkillManifest, VerifyError> {
@@ -222,29 +231,26 @@ fn read_manifest(root_fd: RawFd, skill_relative: &Path) -> Result<SkillManifest,
         &path,
         libc::O_RDONLY as u64 | libc::O_CLOEXEC as u64 | libc::O_NONBLOCK as u64,
     )?;
-    let stat = stat_fd(&fd)?;
-    if !is_regular(stat.mode) {
-        return Err(VerifyError::UnsafePath("skill.json is not a regular file".to_string()));
-    }
-    if stat.size > MAX_MANIFEST_BYTES {
+    let (_, _, _, size) = stat_fd(&fd)?;
+    if size > MAX_MANIFEST_BYTES {
         return Err(VerifyError::Manifest("manifest too large".to_string()));
     }
     let mut file = fs::File::from(fd);
-    let mut raw = Vec::with_capacity(stat.size as usize);
+    let mut raw = Vec::with_capacity(size as usize);
     file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut raw)?;
     if raw.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(VerifyError::Manifest("manifest too large".to_string()));
     }
-    let parsed: RawManifest = serde_json::from_slice(&raw)
+    let manifest: SkillManifest = serde_json::from_slice(&raw)
         .map_err(|error| VerifyError::Manifest(format!("invalid JSON: {error}")))?;
-    validate_manifest(parsed)
+    validate_manifest(manifest)
 }
 
-fn check_private(stat: FdStat, label: &str, required: bool) -> Result<(), VerifyError> {
+fn check_private(uid: u32, mode: u32, label: &str, required: bool) -> Result<(), VerifyError> {
     if !required || unsafe { libc::geteuid() } != 0 {
         return Ok(());
     }
-    if stat.uid != 0 || stat.mode & 0o022 != 0 {
+    if uid != 0 || mode & 0o022 != 0 {
         return Err(VerifyError::UnsafePath(format!(
             "privileged skill {label} must be root-owned and not group/world writable"
         )));
@@ -252,20 +258,20 @@ fn check_private(stat: FdStat, label: &str, required: bool) -> Result<(), Verify
     Ok(())
 }
 
-fn hash_file(root_fd: RawFd, relative: &Path, expected_size: u64) -> Result<(String, FdStat), VerifyError> {
+fn hash_file(root_fd: RawFd, relative: &Path, expected_size: u64) -> Result<(String, (u32, u32, u32, u64)), VerifyError> {
     let fd = secure_open(
         root_fd,
         relative,
         libc::O_RDONLY as u64 | libc::O_CLOEXEC as u64 | libc::O_NONBLOCK as u64,
     )?;
     let stat = stat_fd(&fd)?;
-    if !is_regular(stat.mode) {
+    if !is_regular(stat.0) {
         return Err(VerifyError::UnsafePath(format!("not a regular file: {}", relative.display())));
     }
-    if stat.size != expected_size {
+    if stat.3 != expected_size {
         return Err(VerifyError::Io(format!("file changed size during verification: {}", relative.display())));
     }
-    if stat.size > MAX_FILE_BYTES {
+    if stat.3 > MAX_FILE_BYTES {
         return Err(VerifyError::Io(format!("file exceeds {} byte cap: {}", MAX_FILE_BYTES, relative.display())));
     }
     let mut file = fs::File::from(fd);
@@ -323,10 +329,10 @@ fn walk_tree(
             libc::O_PATH as u64 | libc::O_DIRECTORY as u64 | libc::O_CLOEXEC as u64,
         )?;
         let dir_stat = stat_fd(&dir_fd)?;
-        if !is_directory(dir_stat.mode) {
+        if !is_directory(dir_stat.0) {
             return Err(VerifyError::UnsafePath(format!("skill directory changed type: {}", current.display())));
         }
-        check_private(dir_stat, "directory", require_private)?;
+        check_private(dir_stat.1, dir_stat.0, "directory", require_private)?;
         for entry in fs::read_dir(current)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -369,13 +375,13 @@ fn walk_tree(
     }
     let root_relative = skill_relative.join(relative);
     let (digest, opened_stat) = hash_file(root_fd, &root_relative, path_stat.len())?;
-    if opened_stat.uid != path_stat.uid()
-        || opened_stat.gid != path_stat.gid()
-        || opened_stat.mode != path_stat.mode()
+    if opened_stat.1 != path_stat.uid()
+        || opened_stat.2 != path_stat.gid()
+        || opened_stat.0 != path_stat.mode()
     {
         return Err(VerifyError::Io(format!("file metadata changed during verification: {relative_text}")));
     }
-    check_private(opened_stat, "file", require_private)?;
+    check_private(opened_stat.1, opened_stat.0, "file", require_private)?;
     files.insert(relative_text.to_string(), digest);
     Ok(())
 }
@@ -383,7 +389,7 @@ fn walk_tree(
 fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
     let fd = secure_open_absolute(path, libc::O_PATH as u64 | libc::O_CLOEXEC as u64)?;
     let stat = stat_fd(&fd)?;
-    if !is_regular(stat.mode) {
+    if !is_regular(stat.0) {
         return Err(VerifyError::UnsafePath("absolute skill executable is not a regular file".to_string()));
     }
     if !SYSTEM_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
@@ -394,7 +400,7 @@ fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
     {
         return Err(VerifyError::UnsafePath("generic command launcher is not an allowed skill entrypoint".to_string()));
     }
-    check_private(stat, "executable", false)
+    check_private(stat.1, "executable", true)
 }
 
 fn validate_relative_entrypoint(
@@ -410,7 +416,7 @@ fn validate_relative_entrypoint(
     let relative = skill_relative.join(entrypoint);
     let fd = secure_open(root_fd, &relative, libc::O_PATH as u64 | libc::O_CLOEXEC as u64)?;
     let stat = stat_fd(&fd)?;
-    if !is_regular(stat.mode) {
+    if !is_regular(stat.0) {
         return Err(VerifyError::UnsafePath("relative skill entrypoint is not a regular file".to_string()));
     }
     Ok(())
@@ -435,7 +441,7 @@ pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkil
         libc::O_PATH as u64 | libc::O_DIRECTORY as u64 | libc::O_CLOEXEC as u64,
     )?;
     let skill_stat = stat_fd(&skill_dir)?;
-    if !is_directory(skill_stat.mode) {
+    if !is_directory(skill_stat.0) {
         return Err(VerifyError::UnsafePath("skill directory is not a directory".to_string()));
     }
 
