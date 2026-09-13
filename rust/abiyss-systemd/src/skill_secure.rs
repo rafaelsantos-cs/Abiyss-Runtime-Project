@@ -197,7 +197,7 @@ fn validate_member(value: &str) -> Result<(), VerifyError> {
 fn validate_manifest(manifest: SkillManifest) -> Result<SkillManifest, VerifyError> {
     validate_text(&manifest.name, MAX_NAME_BYTES, "skill name")?;
     validate_text(&manifest.version, MAX_VERSION_BYTES, "skill version")?;
-    if manifest.entrypoint.is_empty() || manifest.entrypoint.len() > MAX_FILES {
+    if manifest.entrypoint.is_empty() || manifest.entrypoint.len() > 32 {
         return Err(VerifyError::Manifest("invalid entrypoint".to_string()));
     }
     for token in &manifest.entrypoint {
@@ -208,7 +208,9 @@ fn validate_manifest(manifest: SkillManifest) -> Result<SkillManifest, VerifyErr
     }
     for (path, digest) in &manifest.files {
         validate_member(path)?;
-        if digest.len() != 64 || digest.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_lowercase() == false) {
+        if digest.len() != 64
+            || digest.bytes().any(|byte| !matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
             return Err(VerifyError::Manifest(format!("invalid SHA-256 for {path}")));
         }
     }
@@ -332,7 +334,7 @@ fn walk_tree(
         if !is_directory(dir_stat.0) {
             return Err(VerifyError::UnsafePath(format!("skill directory changed type: {}", current.display())));
         }
-        check_private(dir_stat.1, dir_stat.0, "directory", require_private)?;
+        check_private(dir_stat.1, "directory", require_private)?;
         for entry in fs::read_dir(current)? {
             let entry = entry?;
             let name = entry.file_name();
