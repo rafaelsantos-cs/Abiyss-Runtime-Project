@@ -34,28 +34,11 @@ pub struct SkillManifest {
     pub name: String,
     pub version: String,
     pub entrypoint: Vec<String>,
-    #[serde(default)]
     pub files: BTreeMap<String, String>,
-    #[serde(default)]
     pub allow_root: bool,
-    #[serde(default = "default_timeout")]
     pub timeout_seconds: f64,
-    #[serde(default = "default_output_limit")]
     pub max_output_bytes: u64,
-    #[serde(default = "default_max_args")]
     pub max_args: usize,
-}
-
-fn default_timeout() -> f64 {
-    10.0
-}
-
-fn default_output_limit() -> u64 {
-    64 * 1024
-}
-
-fn default_max_args() -> usize {
-    32
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -161,14 +144,20 @@ fn validate_manifest(manifest: &SkillManifest) -> Result<(), VerifyError> {
             return Err(VerifyError::Manifest(format!("invalid SHA-256 for {path}")));
         }
     }
-    if !manifest.timeout_seconds.is_finite() || !(0.1..=300.0).contains(&manifest.timeout_seconds) {
+    if !manifest.timeout_seconds.is_finite()
+        || !(0.1..=300.0).contains(&manifest.timeout_seconds)
+    {
         return Err(VerifyError::Manifest("timeout outside policy".to_string()));
     }
     if !(1024..=4 * 1024 * 1024).contains(&manifest.max_output_bytes) {
-        return Err(VerifyError::Manifest("output limit outside policy".to_string()));
+        return Err(VerifyError::Manifest(
+            "output limit outside policy".to_string(),
+        ));
     }
     if !(1..=32).contains(&manifest.max_args) {
-        return Err(VerifyError::Manifest("max_args outside policy".to_string()));
+        return Err(VerifyError::Manifest(
+            "max_args outside policy".to_string(),
+        ));
     }
     Ok(())
 }
@@ -376,6 +365,49 @@ fn canonical_within(root: &Path, directory: &Path) -> Result<PathBuf, VerifyErro
     Ok(canonical_directory)
 }
 
+fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(VerifyError::UnsafePath(
+            "absolute skill executable is unavailable or a symlink".to_string(),
+        ));
+    }
+    if !SYSTEM_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
+        return Err(VerifyError::UnsafePath(
+            "absolute skill executable is outside trusted system prefixes".to_string(),
+        ));
+    }
+    if let Some(name) = path.file_name().and_then(|value| value.to_str())
+        && FORBIDDEN_LAUNCHERS.contains(&name)
+    {
+        return Err(VerifyError::UnsafePath(
+            "generic command launcher is not an allowed skill entrypoint".to_string(),
+        ));
+    }
+    check_privileged_metadata(path, &metadata)
+}
+
+fn validate_relative_entrypoint(
+    directory: &Path,
+    entrypoint: &str,
+    files: &BTreeMap<String, String>,
+) -> Result<(), VerifyError> {
+    validate_relative_member(entrypoint)?;
+    let candidate = directory.join(entrypoint);
+    let metadata = fs::symlink_metadata(&candidate)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(VerifyError::UnsafePath(
+            "relative skill entrypoint is unavailable or a symlink".to_string(),
+        ));
+    }
+    if !files.contains_key(entrypoint) {
+        return Err(VerifyError::Manifest(
+            "relative skill entrypoint must be hashed in manifest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Verify the skill tree and return the manifest that passed verification.
 pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkill, VerifyError> {
     let directory = canonical_within(system_root, directory)?;
@@ -432,49 +464,6 @@ pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkil
         directory: directory.display().to_string(),
         manifest,
     })
-}
-
-fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(VerifyError::UnsafePath(
-            "absolute skill executable is unavailable or a symlink".to_string(),
-        ));
-    }
-    if !SYSTEM_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
-        return Err(VerifyError::UnsafePath(
-            "absolute skill executable is outside trusted system prefixes".to_string(),
-        ));
-    }
-    if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
-        if FORBIDDEN_LAUNCHERS.contains(&name) {
-            return Err(VerifyError::UnsafePath(
-                "generic command launcher is not an allowed skill entrypoint".to_string(),
-            ));
-        }
-    }
-    check_privileged_metadata(path, &metadata)
-}
-
-fn validate_relative_entrypoint(
-    directory: &Path,
-    entrypoint: &str,
-    files: &BTreeMap<String, String>,
-) -> Result<(), VerifyError> {
-    validate_relative_member(entrypoint)?;
-    let candidate = directory.join(entrypoint);
-    let metadata = fs::symlink_metadata(&candidate)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(VerifyError::UnsafePath(
-            "relative skill entrypoint is unavailable or a symlink".to_string(),
-        ));
-    }
-    if !files.contains_key(entrypoint) {
-        return Err(VerifyError::Manifest(
-            "relative skill entrypoint must be hashed in manifest".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -567,7 +556,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(
             skill.join("skill.json"),
-            r#"{"name":"demo","version":"1","entrypoint":["../outside"],"files":{}}"#,
+            r#"{"name":"demo","version":"1","entrypoint":["../outside"],"files":{},"allow_root":false,"timeout_seconds":10,"max_output_bytes":65536,"max_args":32}"#,
         )
         .unwrap();
         fs::write(root.join("outside"), b"bad").unwrap();
@@ -585,7 +574,24 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(
             skill.join("skill.json"),
-            r#"{"name":"demo","version":"1","entrypoint":["run"],"files":{},"future":true}"#,
+            r#"{"name":"demo","version":"1","entrypoint":["run"],"files":{},"allow_root":false,"timeout_seconds":10,"max_output_bytes":65536,"max_args":32,"future":true}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_skill(&root, &skill),
+            Err(VerifyError::Manifest(_))
+        ));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_manifest_field_is_rejected() {
+        let root = tempdir();
+        let skill = root.join("demo");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("skill.json"),
+            r#"{"name":"demo","version":"1","entrypoint":["run"],"files":{}}"#,
         )
         .unwrap();
         assert!(matches!(
