@@ -1,0 +1,33 @@
+name: Temporary Rustfmt Autofix
+
+on:
+  push:
+    branches:
+      - runtime-multilang-v0.1
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Apply rustfmt
+        run: cargo fmt --all
+      - name: Commit formatted sources
+        run: |
+          if git diff --quiet; then
+            echo 'Rust sources already formatted.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rust
+          git commit -m 'style: apply rustfmt to Rust sources'
+          git push origin HEAD:${GITHUB_REF_NAME}
