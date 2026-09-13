@@ -1,4 +1,4 @@
-use abiyss_system_plane::skill_secure::verify_skill;
+use abiyss_system_plane::skill::verify_skill;
 use sha2::Digest;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
