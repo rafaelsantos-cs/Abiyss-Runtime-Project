@@ -122,11 +122,11 @@ fn optional_u64(
     }
 }
 
-fn optional_string(
-    args: &serde_json::Map<String, Value>,
+fn optional_string<'a>(
+    args: &'a serde_json::Map<String, Value>,
     key: &str,
-    default: &str,
-) -> Result<&str, (String, String)> {
+    default: &'a str,
+) -> Result<&'a str, (String, String)> {
     match args.get(key) {
         None => Ok(default),
         Some(value) => value.as_str().ok_or_else(|| {
