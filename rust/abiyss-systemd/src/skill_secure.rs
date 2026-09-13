@@ -236,7 +236,7 @@ fn read_manifest(root_fd: RawFd, skill_relative: &Path) -> Result<SkillManifest,
     if size > MAX_MANIFEST_BYTES {
         return Err(VerifyError::Manifest("manifest too large".to_string()));
     }
-    let mut file = fs::File::from(fd);
+    let file = fs::File::from(fd);
     let mut raw = Vec::with_capacity(size as usize);
     file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut raw)?;
     if raw.len() as u64 > MAX_MANIFEST_BYTES {
@@ -333,7 +333,7 @@ fn walk_tree(
         if !is_directory(dir_stat.0) {
             return Err(VerifyError::UnsafePath(format!("skill directory changed type: {}", current.display())));
         }
-        check_private(dir_stat.1, "directory", require_private)?;
+        check_private(dir_stat.1, dir_stat.0, "directory", require_private)?;
         for entry in fs::read_dir(current)? {
             let entry = entry?;
             let name = entry.file_name();
@@ -401,7 +401,7 @@ fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
     {
         return Err(VerifyError::UnsafePath("generic command launcher is not an allowed skill entrypoint".to_string()));
     }
-    check_private(stat.1, "executable", true)
+    check_private(stat.1, stat.0, "executable", true)
 }
 
 fn validate_relative_entrypoint(
