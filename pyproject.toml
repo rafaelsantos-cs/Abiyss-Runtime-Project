@@ -9,11 +9,12 @@ description = "ABIYSS runtime for deterministic Query scheduling, guarded Linux 
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Rafael Alves"}]
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Operating System :: POSIX :: Linux",
+    "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = []
 

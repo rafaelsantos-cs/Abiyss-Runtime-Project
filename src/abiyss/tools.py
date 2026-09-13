@@ -139,22 +139,30 @@ class ProcessTool(Tool):
             raise ToolDenied(f"process launch failed: {exc}") from exc
 
         output = bytearray()
-        exceeded = False
+        exceeded = threading.Event()
         stop = threading.Event()
 
         def reader() -> None:
-            nonlocal exceeded
             assert process.stdout is not None
             try:
                 while True:
                     chunk = process.stdout.read(8192)
                     if not chunk:
                         break
-                    remaining = self.max_output_bytes - len(output)
-                    if remaining > 0:
-                        output.extend(chunk[:remaining])
-                    if len(chunk) > max(remaining, 0):
-                        exceeded = True
+                    if len(output) + len(chunk) > self.max_output_bytes:
+                        remaining = self.max_output_bytes - len(output)
+                        if remaining > 0:
+                            output.extend(chunk[:remaining])
+                        exceeded.set()
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            try:
+                                process.kill()
+                            except ProcessLookupError:
+                                pass
+                        break
+                    output.extend(chunk)
                     if stop.is_set():
                         break
             except OSError:
@@ -177,14 +185,15 @@ class ProcessTool(Tool):
             thread.join(timeout=2)
             return ToolResult("timeout", output.decode("utf-8", errors="replace"), "tool timeout")
         finally:
+            stop.set()
             thread.join(timeout=2)
             if process.stdout is not None:
                 try:
                     process.stdout.close()
                 except OSError:
                     pass
-        error = "tool output exceeded configured capture limit" if exceeded else (None if process.returncode == 0 else f"exit={process.returncode}")
-        return ToolResult("ok" if process.returncode == 0 and not exceeded else "error", output.decode("utf-8", errors="replace"), error)
+        error = "tool output exceeded configured capture limit" if exceeded.is_set() else (None if process.returncode == 0 else f"exit={process.returncode}")
+        return ToolResult("ok" if process.returncode == 0 and not exceeded.is_set() else "error", output.decode("utf-8", errors="replace"), error)
 
 
 class ToolRegistry:

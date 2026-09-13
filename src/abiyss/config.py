@@ -17,6 +17,8 @@ class Config:
     allow_root_exec: bool = False
     command_allowlist: tuple[str, ...] = ()
     max_rounds: int = 8
+    system_socket: Path | None = None
+    system_timeout: float = 5.0
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -33,8 +35,9 @@ class Config:
         runtime = data.get("runtime", {})
         security = data.get("security", {})
         gemini = data.get("gemini", {})
-        if not all(isinstance(section, dict) for section in (runtime, security, gemini)):
-            raise ValidationError("runtime, security and gemini must be tables")
+        system = data.get("system", {})
+        if not all(isinstance(section, dict) for section in (runtime, security, gemini, system)):
+            raise ValidationError("runtime, security, gemini and system must be tables")
         root_raw = runtime.get("root", os.getenv("ABIYSS_ROOT", "~/.local/share/abiyss"))
         if not isinstance(root_raw, str) or not root_raw or len(root_raw.encode("utf-8")) > 4096:
             raise ValidationError("runtime.root must be a bounded path string")
@@ -71,6 +74,24 @@ class Config:
             raise ValidationError("max_rounds must be between 1 and 64")
         if allow_root_exec and not allow_exec:
             raise ValidationError("allow_root_exec requires allow_exec=true")
+
+        socket_raw = system.get("socket", os.getenv("ABIYSS_SYSTEM_SOCKET"))
+        system_socket: Path | None
+        if socket_raw is None or socket_raw == "":
+            system_socket = None
+        elif not isinstance(socket_raw, str) or "\x00" in socket_raw or len(socket_raw.encode("utf-8")) > 4096:
+            raise ValidationError("system.socket must be a bounded path string")
+        else:
+            system_socket = Path(socket_raw).expanduser()
+            if not system_socket.is_absolute():
+                raise ValidationError("system.socket must be an absolute path")
+        timeout_raw = system.get("timeout", 5.0)
+        if not isinstance(timeout_raw, (int, float)) or isinstance(timeout_raw, bool):
+            raise ValidationError("system.timeout must be numeric")
+        system_timeout = float(timeout_raw)
+        if not 0.1 <= system_timeout <= 60.0:
+            raise ValidationError("system.timeout must be between 0.1 and 60 seconds")
+
         return cls(
             root=root,
             model=model,
@@ -79,4 +100,6 @@ class Config:
             allow_root_exec=allow_root_exec,
             command_allowlist=allowlist,
             max_rounds=max_rounds,
+            system_socket=system_socket,
+            system_timeout=system_timeout,
         )
