@@ -124,3 +124,12 @@ class SystemPlaneClient:
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or not 1 <= max_bytes <= 64 * 1024:
             raise ValueError("max_bytes must be between 1 and 65536")
         return self.call("file.read", {"path": path, "max_bytes": max_bytes}).result
+
+    def verify_skill(self, directory: Path) -> Any:
+        path = Path(directory)
+        if not path.is_absolute():
+            raise ValueError("skill directory must be absolute")
+        encoded = str(path).encode("utf-8")
+        if not encoded or len(encoded) > 4096 or b"\x00" in encoded:
+            raise ValueError("invalid skill directory")
+        return self.call("skill.verify", {"directory": str(path)}).result
