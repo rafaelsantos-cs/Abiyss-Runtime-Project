@@ -7,6 +7,7 @@
 
 pub mod linux;
 pub mod server;
+pub mod skill;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
