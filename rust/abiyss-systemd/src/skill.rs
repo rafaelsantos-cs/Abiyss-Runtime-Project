@@ -1,9 +1,8 @@
 //! Skill manifest and artifact verification for the ABIYSS system plane.
 //!
-//! Verification is intentionally performed close to the filesystem boundary.
-//! Python may still own the high-level SkillLE lifecycle, but it should not be
-//! responsible for deciding whether an on-disk skill tree is internally
-//! consistent and safe to inspect.
+//! Verification lives close to the filesystem boundary. The high-level
+//! SkillLE lifecycle remains in Python, but filesystem trust decisions are
+//! made here when the Rust system plane is enabled.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -72,17 +71,20 @@ pub enum VerifyError {
     Manifest(String),
     Io(String),
     HashMismatch(String),
-    FileSetMismatch { missing: Vec<String>, unexpected: Vec<String> },
+    FileSetMismatch {
+        missing: Vec<String>,
+        unexpected: Vec<String>,
+    },
 }
 
 impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            VerifyError::UnsafePath(message) => write!(f, "unsafe skill path: {message}"),
-            VerifyError::Manifest(message) => write!(f, "invalid skill manifest: {message}"),
-            VerifyError::Io(message) => write!(f, "skill I/O failure: {message}"),
-            VerifyError::HashMismatch(path) => write!(f, "skill hash mismatch: {path}"),
-            VerifyError::FileSetMismatch { missing, unexpected } => write!(
+            Self::UnsafePath(message) => write!(f, "unsafe skill path: {message}"),
+            Self::Manifest(message) => write!(f, "invalid skill manifest: {message}"),
+            Self::Io(message) => write!(f, "skill I/O failure: {message}"),
+            Self::HashMismatch(path) => write!(f, "skill hash mismatch: {path}"),
+            Self::FileSetMismatch { missing, unexpected } => write!(
                 f,
                 "skill file set mismatch; missing={:?}, unexpected={:?}",
                 &missing[..missing.len().min(8)],
@@ -96,6 +98,17 @@ impl From<io::Error> for VerifyError {
     fn from(error: io::Error) -> Self {
         Self::Io(error.to_string())
     }
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.as_ref();
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn validate_text(value: &str, max_bytes: usize, label: &str) -> Result<(), VerifyError> {
@@ -174,16 +187,13 @@ fn read_manifest(path: &Path) -> Result<SkillManifest, VerifyError> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)?;
-    let current = file.metadata()?;
-    if !current.is_file() {
+    let opened = file.metadata()?;
+    if !opened.is_file() {
         return Err(VerifyError::UnsafePath(
             "skill.json is not regular".to_string(),
         ));
     }
-    if current.len() > MAX_MANIFEST_BYTES {
-        return Err(VerifyError::Manifest("manifest too large".to_string()));
-    }
-    let mut raw = Vec::with_capacity(current.len() as usize);
+    let mut raw = Vec::with_capacity(opened.len() as usize);
     (&mut file)
         .take(MAX_MANIFEST_BYTES + 1)
         .read_to_end(&mut raw)?;
@@ -240,7 +250,7 @@ fn hash_regular_file(path: &Path, metadata: &fs::Metadata) -> Result<String, Ver
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_digest(hasher.finalize()))
 }
 
 fn check_privileged_metadata(path: &Path, metadata: &fs::Metadata) -> Result<(), VerifyError> {
@@ -314,9 +324,9 @@ fn walk_tree(
             "skill contains too many files".to_string(),
         ));
     }
-    let relative_text = relative
-        .to_str()
-        .ok_or_else(|| VerifyError::UnsafePath(format!("non-UTF-8 skill path: {}", current.display())))?;
+    let relative_text = relative.to_str().ok_or_else(|| {
+        VerifyError::UnsafePath(format!("non-UTF-8 skill path: {}", current.display()))
+    })?;
     validate_relative_member(relative_text)?;
     *total_bytes = total_bytes
         .checked_add(metadata.len())
@@ -332,50 +342,30 @@ fn walk_tree(
     Ok(())
 }
 
-fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(VerifyError::UnsafePath(
-            "absolute skill executable is unavailable or a symlink".to_string(),
-        ));
-    }
-    if !SYSTEM_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
-        return Err(VerifyError::UnsafePath(
-            "absolute skill executable is outside trusted system prefixes".to_string(),
-        ));
-    }
-    if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
-        if FORBIDDEN_LAUNCHERS.contains(&name) {
-            return Err(VerifyError::UnsafePath(
-                "generic command launcher is not an allowed skill entrypoint".to_string(),
-            ));
+fn reject_symlink_components(path: &Path) -> Result<(), VerifyError> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        if fs::symlink_metadata(&current)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(VerifyError::UnsafePath(format!(
+                "symlink in skill directory path: {}",
+                current.display()
+            )));
         }
-    }
-    check_privileged_metadata(path, &metadata)
-}
-
-fn validate_relative_entrypoint(
-    directory: &Path,
-    entrypoint: &str,
-    files: &BTreeMap<String, String>,
-) -> Result<(), VerifyError> {
-    validate_relative_member(entrypoint)?;
-    let candidate = directory.join(entrypoint);
-    let metadata = fs::symlink_metadata(&candidate)?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(VerifyError::UnsafePath(
-            "relative skill entrypoint is unavailable or a symlink".to_string(),
-        ));
-    }
-    if !files.contains_key(entrypoint) {
-        return Err(VerifyError::Manifest(
-            "relative skill entrypoint must be hashed in manifest".to_string(),
-        ));
     }
     Ok(())
 }
 
 fn canonical_within(root: &Path, directory: &Path) -> Result<PathBuf, VerifyError> {
+    if !directory.is_absolute() {
+        return Err(VerifyError::UnsafePath(
+            "skill directory must be absolute".to_string(),
+        ));
+    }
+    reject_symlink_components(directory)?;
     let canonical_root = fs::canonicalize(root)?;
     let canonical_directory = fs::canonicalize(directory)?;
     if !canonical_directory.starts_with(&canonical_root) {
@@ -386,9 +376,7 @@ fn canonical_within(root: &Path, directory: &Path) -> Result<PathBuf, VerifyErro
     Ok(canonical_directory)
 }
 
-/// Verify the skill tree and return the exact manifest that passed verification.
-/// The configured `system_root` is an additional boundary: a skill may never
-/// be verified outside it.
+/// Verify the skill tree and return the manifest that passed verification.
 pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkill, VerifyError> {
     let directory = canonical_within(system_root, directory)?;
     let metadata = fs::symlink_metadata(&directory)?;
@@ -446,6 +434,49 @@ pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkil
     })
 }
 
+fn validate_absolute_entrypoint(path: &Path) -> Result<(), VerifyError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(VerifyError::UnsafePath(
+            "absolute skill executable is unavailable or a symlink".to_string(),
+        ));
+    }
+    if !SYSTEM_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
+        return Err(VerifyError::UnsafePath(
+            "absolute skill executable is outside trusted system prefixes".to_string(),
+        ));
+    }
+    if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+        if FORBIDDEN_LAUNCHERS.contains(&name) {
+            return Err(VerifyError::UnsafePath(
+                "generic command launcher is not an allowed skill entrypoint".to_string(),
+            ));
+        }
+    }
+    check_privileged_metadata(path, &metadata)
+}
+
+fn validate_relative_entrypoint(
+    directory: &Path,
+    entrypoint: &str,
+    files: &BTreeMap<String, String>,
+) -> Result<(), VerifyError> {
+    validate_relative_member(entrypoint)?;
+    let candidate = directory.join(entrypoint);
+    let metadata = fs::symlink_metadata(&candidate)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(VerifyError::UnsafePath(
+            "relative skill entrypoint is unavailable or a symlink".to_string(),
+        ));
+    }
+    if !files.contains_key(entrypoint) {
+        return Err(VerifyError::Manifest(
+            "relative skill entrypoint must be hashed in manifest".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,9 +503,9 @@ mod tests {
         let entry = skill.join("run.bin");
         fs::write(&entry, content).unwrap();
         fs::set_permissions(&entry, fs::Permissions::from_mode(0o700)).unwrap();
-        let digest = format!("{:x}", Sha256::digest(content));
+        let digest = hex_digest(Sha256::digest(content));
         let manifest = format!(
-            "{{\"name\":\"demo\",\"version\":\"1\",\"entrypoint\":[\"run.bin\"],\"files\":{{\"run.bin\":\"{}\"}}}}",
+            "{{\"name\":\"demo\",\"version\":\"1\",\"entrypoint\":[\"run.bin\"],\"files\":{{\"run.bin\":\"{}\"}},\"allow_root\":false,\"timeout_seconds\":10.0,\"max_output_bytes\":65536,\"max_args\":32}}",
             digest
         );
         fs::write(skill.join("skill.json"), manifest).unwrap();
