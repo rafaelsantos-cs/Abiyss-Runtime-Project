@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -79,6 +80,90 @@ def test_real_rust_system_plane_round_trip(tmp_path: Path) -> None:
         processes = client.process_list(4)
         assert isinstance(processes, list)
         assert len(processes) <= 4
+    finally:
+        stop_daemon(process)
+
+
+def test_real_rust_skill_verification_round_trip(tmp_path: Path) -> None:
+    binary_raw = os.environ.get("ABIYSS_SYSTEM_BINARY")
+    if not binary_raw:
+        pytest.skip("ABIYSS_SYSTEM_BINARY not configured")
+    binary = Path(binary_raw)
+    if not binary.is_file():
+        raise AssertionError(f"system-plane binary missing: {binary}")
+
+    root = tmp_path / "system-root"
+    skill = root / "skills" / "demo"
+    socket_path = tmp_path / "system.sock"
+    skill.mkdir(parents=True)
+    entry = skill / "runner"
+    payload = b"verified skill artifact\n"
+    entry.write_bytes(payload)
+    entry.chmod(0o700)
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = {
+        "name": "demo",
+        "version": "1",
+        "entrypoint": ["runner"],
+        "files": {"runner": digest},
+        "allow_root": False,
+        "timeout_seconds": 10.0,
+        "max_output_bytes": 65536,
+        "max_args": 32,
+    }
+    (skill / "skill.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    process = spawn_daemon(binary, root, socket_path)
+    try:
+        wait_for_socket(socket_path)
+        client = SystemPlaneClient(socket_path, timeout=2.0)
+        verified = client.verify_skill(skill)
+        assert verified["directory"] == str(skill.resolve())
+        assert verified["name"] == "demo"
+        assert verified["version"] == "1"
+        assert verified["entrypoint"] == ["runner"]
+        assert verified["files"] == {"runner": digest}
+    finally:
+        stop_daemon(process)
+
+
+def test_real_rust_skill_tampering_is_rejected(tmp_path: Path) -> None:
+    binary_raw = os.environ.get("ABIYSS_SYSTEM_BINARY")
+    if not binary_raw:
+        pytest.skip("ABIYSS_SYSTEM_BINARY not configured")
+    binary = Path(binary_raw)
+
+    root = tmp_path / "system-root"
+    skill = root / "skills" / "demo"
+    socket_path = tmp_path / "system.sock"
+    skill.mkdir(parents=True)
+    entry = skill / "runner"
+    entry.write_bytes(b"original\n")
+    entry.chmod(0o700)
+    digest = hashlib.sha256(b"original\n").hexdigest()
+    (skill / "skill.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "version": "1",
+                "entrypoint": ["runner"],
+                "files": {"runner": digest},
+                "allow_root": False,
+                "timeout_seconds": 10.0,
+                "max_output_bytes": 65536,
+                "max_args": 32,
+            }
+        ),
+        encoding="utf-8",
+    )
+    entry.write_bytes(b"tampered\n")
+
+    process = spawn_daemon(binary, root, socket_path)
+    try:
+        wait_for_socket(socket_path)
+        client = SystemPlaneClient(socket_path, timeout=2.0)
+        with pytest.raises(Exception, match="hash mismatch"):
+            client.verify_skill(skill)
     finally:
         stop_daemon(process)
 
