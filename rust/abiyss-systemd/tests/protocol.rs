@@ -1,4 +1,6 @@
-use abiyss_systemd::{validate_relative_path, ConfigError, Request, Response, ServerConfig, PROTOCOL_VERSION};
+use abiyss_system_plane::{
+    validate_relative_path, ConfigError, Request, Response, ServerConfig, PROTOCOL_VERSION,
+};
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -36,7 +38,7 @@ fn rejects_unknown_protocol_version_and_oversized_request() {
     .unwrap();
     assert!(Request::parse(&bad_version).is_err());
 
-    let oversized = vec![b'x'; abiyss_systemd::MAX_REQUEST_BYTES + 1];
+    let oversized = vec![b'x'; abiyss_system_plane::MAX_REQUEST_BYTES + 1];
     assert!(Request::parse(&oversized).is_err());
 }
 
@@ -56,7 +58,10 @@ fn rejects_unknown_request_fields() {
 #[test]
 fn path_policy_rejects_absolute_parent_and_parent_escape() {
     for path in ["/etc/passwd", "../outside", "a/../../outside", ""] {
-        assert!(validate_relative_path(path).is_err(), "accepted unsafe path {path}");
+        assert!(
+            validate_relative_path(path).is_err(),
+            "accepted unsafe path {path}"
+        );
     }
     assert!(validate_relative_path("etc/hosts").is_ok());
 }
@@ -92,12 +97,18 @@ fn base_config() -> ServerConfig {
 fn config_rejects_invalid_worker_count() {
     let mut config = base_config();
     config.max_workers = 0;
-    assert!(matches!(config.validate(), Err(ConfigError::InvalidWorkerCount)));
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::InvalidWorkerCount)
+    ));
 }
 
 #[test]
 fn config_rejects_invalid_io_timeout() {
     let mut config = base_config();
     config.io_timeout = Duration::ZERO;
-    assert!(matches!(config.validate(), Err(ConfigError::InvalidIoTimeout)));
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::InvalidIoTimeout)
+    ));
 }
