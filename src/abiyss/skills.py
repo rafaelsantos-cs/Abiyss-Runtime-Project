@@ -10,15 +10,20 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .errors import SecurityError, ToolDenied
 from .security import ensure_base_dir_safe, ensure_trusted_executable, set_no_new_privs
+
+if TYPE_CHECKING:
+    from .system_plane import SystemPlaneClient
 
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_FILES = 256
 MAX_ARGS = 32
 MAX_ARG_BYTES = 4096
 MAX_NAME_BYTES = 128
+MAX_VERSION_BYTES = 128
 _SYSTEM_EXEC_PREFIXES = (Path("/bin"), Path("/usr/bin"), Path("/usr/local/bin"))
 _FORBIDDEN_LAUNCHERS = {
     "env", "bash", "sh", "dash", "zsh", "fish",
@@ -39,6 +44,88 @@ class SkillManifest:
     max_args: int = 32
 
     @classmethod
+    def _from_object(cls, obj: dict[str, object]) -> "SkillManifest":
+        allowed = {
+            "name",
+            "version",
+            "entrypoint",
+            "files",
+            "allow_root",
+            "timeout_seconds",
+            "max_output_bytes",
+            "max_args",
+        }
+        if set(obj) != allowed:
+            unknown = sorted(set(obj) - allowed)
+            missing = sorted(allowed - set(obj))
+            details: list[str] = []
+            if unknown:
+                details.append(f"unknown fields: {unknown}")
+            if missing:
+                details.append(f"missing fields: {missing}")
+            raise SecurityError("invalid skill manifest fields; " + "; ".join(details))
+
+        name = obj["name"]
+        version = obj["version"]
+        entrypoint = obj["entrypoint"]
+        files = obj["files"]
+        allow_root = obj["allow_root"]
+        timeout = obj["timeout_seconds"]
+        max_output = obj["max_output_bytes"]
+        max_args = obj["max_args"]
+
+        if not isinstance(name, str) or not 1 <= len(name.encode("utf-8")) <= MAX_NAME_BYTES:
+            raise SecurityError("invalid skill name")
+        if not isinstance(version, str) or not 1 <= len(version.encode("utf-8")) <= MAX_VERSION_BYTES:
+            raise SecurityError("invalid skill version")
+        if not isinstance(entrypoint, list) or not 1 <= len(entrypoint) <= MAX_ARGS:
+            raise SecurityError("invalid skill entrypoint")
+        if any(
+            not isinstance(item, str)
+            or not item
+            or "\x00" in item
+            or len(item.encode("utf-8")) > MAX_ARG_BYTES
+            for item in entrypoint
+        ):
+            raise SecurityError("invalid skill entrypoint token")
+        if not isinstance(files, dict) or len(files) > MAX_FILES:
+            raise SecurityError("invalid skill file map")
+        normalized: dict[str, str] = {}
+        for relative, digest in files.items():
+            if (
+                not isinstance(relative, str)
+                or not relative
+                or Path(relative).is_absolute()
+                or ".." in Path(relative).parts
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise SecurityError(f"invalid skill file hash entry: {relative!r}")
+            normalized[relative] = digest
+        if not isinstance(allow_root, bool):
+            raise SecurityError("allow_root must be boolean")
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or not 0.1 <= float(timeout) <= 300.0
+        ):
+            raise SecurityError("skill timeout outside policy")
+        if (
+            not isinstance(max_output, int)
+            or isinstance(max_output, bool)
+            or not 1024 <= max_output <= 4 * 1024 * 1024
+        ):
+            raise SecurityError("skill output limit outside policy")
+        if (
+            not isinstance(max_args, int)
+            or isinstance(max_args, bool)
+            or not 1 <= max_args <= MAX_ARGS
+        ):
+            raise SecurityError("skill max_args outside policy")
+        return cls(name, version, tuple(entrypoint), normalized, allow_root, float(timeout), max_output, max_args)
+
+    @classmethod
     def load(cls, path: Path) -> "SkillManifest":
         if path.is_symlink() or not path.is_file():
             raise SecurityError("unsafe skill manifest")
@@ -47,61 +134,47 @@ class SkillManifest:
             raise SecurityError("skill manifest too large")
         try:
             obj = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise SecurityError("invalid skill manifest JSON") from exc
         if not isinstance(obj, dict):
             raise SecurityError("skill manifest must be an object")
-        name = obj.get("name")
-        version = obj.get("version")
-        entrypoint = obj.get("entrypoint")
-        files = obj.get("files", {})
-        if not isinstance(name, str) or not 1 <= len(name.encode()) <= MAX_NAME_BYTES:
-            raise SecurityError("invalid skill name")
-        if not isinstance(version, str) or not 1 <= len(version.encode()) <= 128:
-            raise SecurityError("invalid skill version")
-        if not isinstance(entrypoint, list) or not 1 <= len(entrypoint) <= MAX_ARGS:
-            raise SecurityError("invalid skill entrypoint")
-        if any(
-            not isinstance(item, str) or not item or "\x00" in item or len(item.encode("utf-8")) > MAX_ARG_BYTES
-            for item in entrypoint
-        ):
-            raise SecurityError("invalid skill entrypoint token")
-        if not isinstance(files, dict) or len(files) > MAX_FILES:
-            raise SecurityError("invalid skill file map")
-        allow_root = obj.get("allow_root", False)
-        if not isinstance(allow_root, bool):
-            raise SecurityError("allow_root must be boolean")
-        normalized: dict[str, str] = {}
-        for relative, digest in files.items():
-            path_obj = Path(relative)
-            if (
-                not isinstance(relative, str)
-                or not relative
-                or path_obj.is_absolute()
-                or ".." in path_obj.parts
-                or not isinstance(digest, str)
-                or len(digest) != 64
-                or any(character not in "0123456789abcdef" for character in digest)
-            ):
-                raise SecurityError(f"invalid skill file hash entry: {relative!r}")
-            normalized[relative] = digest
-        try:
-            timeout = float(obj.get("timeout_seconds", 10.0))
-            max_output = int(obj.get("max_output_bytes", 64 * 1024))
-            max_args = int(obj.get("max_args", MAX_ARGS))
-        except (TypeError, ValueError) as exc:
-            raise SecurityError("invalid skill limits") from exc
-        if not 0.1 <= timeout <= 300 or not 1024 <= max_output <= 4 * 1024 * 1024 or not 1 <= max_args <= MAX_ARGS:
-            raise SecurityError("skill limits outside policy")
-        return cls(name, version, tuple(entrypoint), normalized, allow_root, timeout, max_output, max_args)
+        return cls._from_object(obj)
+
+    @classmethod
+    def from_verified_response(cls, response: dict[str, object]) -> "SkillManifest":
+        """Reconstruct only the manifest already verified by the Rust system plane."""
+        if not isinstance(response, dict):
+            raise SecurityError("invalid Rust skill verification response")
+        if set(response) != {
+            "directory",
+            "name",
+            "version",
+            "entrypoint",
+            "files",
+            "allow_root",
+            "timeout_seconds",
+            "max_output_bytes",
+            "max_args",
+        }:
+            raise SecurityError("invalid Rust skill verification response fields")
+        manifest_data = dict(response)
+        manifest_data.pop("directory")
+        return cls._from_object(manifest_data)
 
 
 class SkillLoader:
-    def __init__(self, root: Path, *, allow_root_skills: bool = False) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        allow_root_skills: bool = False,
+        system_plane: SystemPlaneClient | None = None,
+    ) -> None:
         self.root = ensure_base_dir_safe(Path(root)).absolute()
         self.root.mkdir(parents=True, exist_ok=True)
         ensure_base_dir_safe(self.root)
         self.allow_root_skills = bool(allow_root_skills)
+        self.system_plane = system_plane
 
     def _inside(self, path: Path) -> Path:
         raw = Path(os.path.abspath(path))
@@ -149,6 +222,11 @@ class SkillLoader:
                 raise SecurityError(f"privileged skill path is not root-owned and private: {candidate}")
 
     def verify(self, directory: Path, manifest: SkillManifest) -> None:
+        """Standalone verification for development/fallback mode.
+
+        Production-shaped Runtime instances should provide a Rust system plane,
+        making the system plane the authority for on-disk verification.
+        """
         directory = self._inside(directory)
         self._check_entrypoint(directory, manifest)
         expected_files = set(manifest.files)
@@ -177,6 +255,17 @@ class SkillLoader:
         directory = self._inside(self.root / name)
         if not directory.is_dir() or directory.is_symlink():
             raise SecurityError("skill directory is unavailable or unsafe")
+
+        if self.system_plane is not None:
+            response = self.system_plane.verify_skill(directory)
+            manifest = SkillManifest.from_verified_response(response)
+            verified_directory = Path(str(response["directory"])).resolve()
+            if verified_directory != directory:
+                raise SecurityError("Rust verifier returned an unexpected skill directory")
+            if manifest.allow_root and not self.allow_root_skills:
+                raise SecurityError("root skill execution disabled by policy")
+            return directory, manifest
+
         manifest = SkillManifest.load(directory / "skill.json")
         self.verify(directory, manifest)
         return directory, manifest
@@ -200,7 +289,12 @@ class SkillLoader:
             resource_module.setrlimit(resource_module.RLIMIT_NOFILE, (128, 128))
             resource_module.setrlimit(resource_module.RLIMIT_CORE, (0, 0))
 
-        environment = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "C", "LC_ALL": "C", "HOME": str(directory)}
+        environment = {
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "HOME": str(directory),
+        }
         argv = list(manifest.entrypoint) + list(args)
         try:
             process = subprocess.Popen(
@@ -275,7 +369,11 @@ class SkillLoader:
                                 pass
                         process.wait(timeout=2)
                         thread.join(timeout=2)
-                        return {"status": "timeout", "output": output.decode("utf-8", errors="replace"), "error": "skill timeout"}
+                        return {
+                            "status": "timeout",
+                            "output": output.decode("utf-8", errors="replace"),
+                            "error": "skill timeout",
+                        }
         finally:
             stop.set()
             thread.join(timeout=2)
@@ -301,7 +399,12 @@ class SkillCandidate:
 
 
 class SkillEmergence:
-    def candidate(self, observations: list[dict], min_repetition: int = 3, min_competence: float = 0.8) -> SkillCandidate | None:
+    def candidate(
+        self,
+        observations: list[dict],
+        min_repetition: int = 3,
+        min_competence: float = 0.8,
+    ) -> SkillCandidate | None:
         if not observations:
             return None
         counts: dict[str, list[bool]] = {}
@@ -311,4 +414,9 @@ class SkillEmergence:
         signature, outcomes = max(counts.items(), key=lambda item: (len(item[1]), item[0]))
         repetition = len(outcomes)
         competence = sum(outcomes) / repetition
-        return SkillCandidate(signature, repetition, competence, repetition >= min_repetition and competence >= min_competence)
+        return SkillCandidate(
+            signature,
+            repetition,
+            competence,
+            repetition >= min_repetition and competence >= min_competence,
+        )
