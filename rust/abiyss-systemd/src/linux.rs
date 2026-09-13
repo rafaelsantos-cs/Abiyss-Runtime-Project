@@ -32,7 +32,8 @@ fn errno_io(context: &str) -> String {
 }
 
 fn open_root(root: &Path) -> Result<OwnedFd, String> {
-    let c_root = CString::new(root.as_os_str().as_encoded_bytes()).map_err(|_| "root contains NUL".to_string())?;
+    let c_root = CString::new(root.as_os_str().as_encoded_bytes())
+        .map_err(|_| "root contains NUL".to_string())?;
     let fd = unsafe {
         libc::open(
             c_root.as_ptr(),
@@ -54,12 +55,14 @@ fn openat2(root_fd: i32, relative: &Path) -> Result<OwnedFd, String> {
     }
     let c_path = CString::new(bytes).map_err(|_| "path contains NUL".to_string())?;
     let how = OpenHow {
-        // O_NONBLOCK is intentional: it prevents attacker-controlled FIFOs
-        // and other special files from blocking the system-plane thread before
-        // fstat() can reject them as non-regular files.
+        // O_NONBLOCK prevents attacker-controlled FIFOs and special files from
+        // blocking the system-plane thread before fstat() can reject them.
         flags: (libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK) as u64,
         mode: 0,
-        resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV,
+        resolve: RESOLVE_BENEATH
+            | RESOLVE_NO_SYMLINKS
+            | RESOLVE_NO_MAGICLINKS
+            | RESOLVE_NO_XDEV,
     };
     let fd = unsafe {
         libc::syscall(
@@ -76,7 +79,11 @@ fn openat2(root_fd: i32, relative: &Path) -> Result<OwnedFd, String> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-pub fn read_confined_file(root: &Path, relative: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+pub fn read_confined_file(
+    root: &Path,
+    relative: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
     if max_bytes == 0 || max_bytes > MAX_OUTPUT_BYTES {
         return Err("invalid read limit".to_string());
     }
@@ -101,7 +108,9 @@ pub fn read_confined_file(root: &Path, relative: &str, max_bytes: usize) -> Resu
     while output.len() <= max_bytes {
         let remaining = max_bytes + 1 - output.len();
         let read_size = remaining.min(buffer.len());
-        let read = file.read(&mut buffer[..read_size]).map_err(|e| format!("read file: {e}"))?;
+        let read = file
+            .read(&mut buffer[..read_size])
+            .map_err(|e| format!("read file: {e}"))?;
         if read == 0 {
             return Ok(output);
         }
@@ -155,7 +164,9 @@ pub fn system_info() -> serde_json::Value {
     let hostname = unsafe {
         let mut buffer = [0i8; 256];
         if libc::gethostname(buffer.as_mut_ptr(), buffer.len()) == 0 {
-            CStr::from_ptr(buffer.as_ptr()).to_string_lossy().into_owned()
+            CStr::from_ptr(buffer.as_ptr())
+                .to_string_lossy()
+                .into_owned()
         } else {
             "unknown".to_string()
         }
@@ -170,42 +181,59 @@ pub fn system_info() -> serde_json::Value {
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ExecutionPolicy<'a> {
+    pub allowlist: &'a [PathBuf],
+    pub timeout: Duration,
+    pub max_output: usize,
+    pub allow_root: bool,
+}
+
 pub fn execute_allowlisted(
     system_root: &Path,
     executable: &Path,
     args: &[String],
     cwd: &Path,
-    allowlist: &[PathBuf],
-    timeout: Duration,
-    max_output: usize,
-    allow_root: bool,
+    policy: ExecutionPolicy<'_>,
 ) -> Result<serde_json::Value, String> {
-    if !executable.is_absolute() || executable.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES {
+    if !executable.is_absolute()
+        || executable.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES
+    {
         return Err("executable must be an absolute bounded path".to_string());
     }
-    if args.len() > MAX_ARGS || args.iter().any(|arg| arg.is_empty() || arg.len() > MAX_ARG_BYTES || arg.as_bytes().contains(&0)) {
+    if args.len() > MAX_ARGS
+        || args
+            .iter()
+            .any(|arg| arg.is_empty() || arg.len() > MAX_ARG_BYTES || arg.as_bytes().contains(&0))
+    {
         return Err("invalid argument vector".to_string());
     }
-    if max_output == 0 || max_output > MAX_OUTPUT_BYTES {
+    if policy.max_output == 0 || policy.max_output > MAX_OUTPUT_BYTES {
         return Err("invalid output limit".to_string());
     }
-    if unsafe { libc::geteuid() } == 0 && !allow_root {
+    if unsafe { libc::geteuid() } == 0 && !policy.allow_root {
         return Err("root execution disabled".to_string());
     }
-    if !allowlist.iter().any(|allowed| allowed == executable) {
+    if !policy.allowlist.iter().any(|allowed| allowed == executable) {
         return Err("executable is not allowlisted".to_string());
     }
-    let executable_meta = fs::symlink_metadata(executable).map_err(|e| format!("stat executable: {e}"))?;
+
+    let executable_meta = fs::symlink_metadata(executable)
+        .map_err(|e| format!("stat executable: {e}"))?;
     if executable_meta.file_type().is_symlink() || !executable_meta.is_file() {
         return Err("executable must be a regular non-symlink file".to_string());
     }
     if unsafe { libc::geteuid() } == 0
         && (executable_meta.uid() != 0 || executable_meta.mode() & 0o022 != 0)
     {
-        return Err("privileged executable must be root-owned and not writable by group/world".to_string());
+        return Err(
+            "privileged executable must be root-owned and not writable by group/world"
+                .to_string(),
+        );
     }
 
-    let canonical_root = fs::canonicalize(system_root).map_err(|e| format!("canonicalize system root: {e}"))?;
+    let canonical_root =
+        fs::canonicalize(system_root).map_err(|e| format!("canonicalize system root: {e}"))?;
     let canonical_cwd = fs::canonicalize(cwd).map_err(|e| format!("canonicalize cwd: {e}"))?;
     if !canonical_cwd.starts_with(&canonical_root) {
         return Err("cwd escapes system root".to_string());
@@ -227,9 +255,9 @@ pub fn execute_allowlisted(
         .env("LANG", "C")
         .env("LC_ALL", "C");
 
-    let timeout_secs = timeout.as_secs().clamp(1, 300) as libc::rlim_t;
+    let timeout_secs = policy.timeout.as_secs().clamp(1, 300) as libc::rlim_t;
     let nofile = 128 as libc::rlim_t;
-    let fsize = max_output as libc::rlim_t;
+    let fsize = policy.max_output as libc::rlim_t;
     unsafe {
         command.pre_exec(move || {
             if libc::setpgid(0, 0) != 0 {
@@ -238,19 +266,31 @@ pub fn execute_allowlisted(
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let cpu = libc::rlimit { rlim_cur: timeout_secs, rlim_max: timeout_secs };
+            let cpu = libc::rlimit {
+                rlim_cur: timeout_secs,
+                rlim_max: timeout_secs,
+            };
             if libc::setrlimit(libc::RLIMIT_CPU, &cpu) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let files = libc::rlimit { rlim_cur: nofile, rlim_max: nofile };
+            let files = libc::rlimit {
+                rlim_cur: nofile,
+                rlim_max: nofile,
+            };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &files) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let size = libc::rlimit { rlim_cur: fsize, rlim_max: fsize };
+            let size = libc::rlimit {
+                rlim_cur: fsize,
+                rlim_max: fsize,
+            };
             if libc::setrlimit(libc::RLIMIT_FSIZE, &size) != 0 {
                 return Err(io::Error::last_os_error());
             }
-            let core = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            let core = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
             if libc::setrlimit(libc::RLIMIT_CORE, &core) != 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -260,7 +300,11 @@ pub fn execute_allowlisted(
 
     let mut child = command.spawn().map_err(|e| format!("spawn: {e}"))?;
     let pid = child.id() as libc::pid_t;
-    let stdout = child.stdout.take().ok_or_else(|| "stdout pipe missing".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "stdout pipe missing".to_string())?;
+    let max_output = policy.max_output;
     let output_thread = thread::spawn(move || {
         let mut reader = stdout;
         let mut data = Vec::with_capacity(max_output.min(64 * 1024));
@@ -274,7 +318,9 @@ pub fn execute_allowlisted(
                         let remaining = max_output.saturating_sub(data.len());
                         data.extend_from_slice(&buffer[..remaining]);
                         overflow = true;
-                        unsafe { libc::kill(-pid, libc::SIGKILL); }
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
                         break;
                     }
                     data.extend_from_slice(&buffer[..n]);
@@ -285,14 +331,19 @@ pub fn execute_allowlisted(
         (data, overflow)
     });
 
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + policy.timeout;
     loop {
         match child.try_wait().map_err(|e| format!("wait: {e}"))? {
             Some(status) => {
-                let (output, overflow) = output_thread.join().map_err(|_| "output thread panicked".to_string())?;
+                let (output, overflow) = output_thread
+                    .join()
+                    .map_err(|_| "output thread panicked".to_string())?;
                 let text = String::from_utf8_lossy(&output).into_owned();
                 if overflow {
-                    return Ok(json!({"status": "output_limit", "output": text}));
+                    return Ok(json!({
+                        "status": "output_limit",
+                        "output": text
+                    }));
                 }
                 return Ok(json!({
                     "status": if status.success() { "ok" } else { "error" },
@@ -301,9 +352,13 @@ pub fn execute_allowlisted(
                 }));
             }
             None if Instant::now() >= deadline => {
-                unsafe { libc::kill(-pid, libc::SIGKILL); }
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
                 let _ = child.wait();
-                let (output, _) = output_thread.join().map_err(|_| "output thread panicked".to_string())?;
+                let (output, _) = output_thread
+                    .join()
+                    .map_err(|_| "output thread panicked".to_string())?;
                 return Ok(json!({
                     "status": "timeout",
                     "output": String::from_utf8_lossy(&output).into_owned(),
