@@ -1,6 +1,10 @@
-use crate::linux::{execute_allowlisted, list_processes, read_confined_file, system_info};
+use crate::linux::{
+    execute_allowlisted, list_processes, read_confined_file, system_info, ExecutionPolicy,
+};
 use crate::skill::verify_skill;
-use crate::{validate_relative_path, Request, Response, ServerConfig, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES};
+use crate::{
+    validate_relative_path, Request, Response, ServerConfig, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -18,7 +22,12 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
         uid: libc::uid_t,
         gid: libc::gid_t,
     }
-    let mut cred = Ucred { pid: 0, uid: 0, gid: 0 };
+
+    let mut cred = Ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
     let mut len = std::mem::size_of::<Ucred>() as libc::socklen_t;
     let rc = unsafe {
         libc::getsockopt(
@@ -30,12 +39,15 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
         )
     };
     if rc != 0 {
-        return Err(format!("SO_PEERCRED failed: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "SO_PEERCRED failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     if len < std::mem::size_of::<Ucred>() as libc::socklen_t {
         return Err("SO_PEERCRED returned a truncated credential".to_string());
     }
-    Ok(cred.uid as u32)
+    Ok(cred.uid)
 }
 
 fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
@@ -76,7 +88,7 @@ fn write_response(stream: &mut UnixStream, response: &Response) -> io::Result<()
     stream.write_all(&bytes)
 }
 
-fn arg_object<'a>(args: &'a Value) -> Result<&'a serde_json::Map<String, Value>, String> {
+fn arg_object(args: &Value) -> Result<&serde_json::Map<String, Value>, String> {
     args.as_object()
         .ok_or_else(|| "args must be an object".to_string())
 }
@@ -110,11 +122,11 @@ fn optional_u64(
     }
 }
 
-fn optional_string<'a>(
-    args: &'a serde_json::Map<String, Value>,
+fn optional_string(
+    args: &serde_json::Map<String, Value>,
     key: &str,
-    default: &'a str,
-) -> Result<&'a str, (String, String)> {
+    default: &str,
+) -> Result<&str, (String, String)> {
     match args.get(key) {
         None => Ok(default),
         Some(value) => value.as_str().ok_or_else(|| {
@@ -253,15 +265,18 @@ fn dispatch(config: &ServerConfig, request: &Request) -> Result<Value, (String, 
                 validate_relative_path(cwd)
                     .map_err(|e| ("invalid_argument".to_string(), e.to_string()))?,
             );
+            let policy = ExecutionPolicy {
+                allowlist: &config.command_allowlist,
+                timeout: config.exec_timeout,
+                max_output: config.max_output_bytes.min(crate::MAX_OUTPUT_BYTES),
+                allow_root: config.allow_root_exec,
+            };
             execute_allowlisted(
                 &config.root,
                 Path::new(executable),
                 &parsed,
                 &cwd_path,
-                &config.command_allowlist,
-                config.exec_timeout,
-                config.max_output_bytes.min(crate::MAX_OUTPUT_BYTES),
-                config.allow_root_exec,
+                policy,
             )
             .map_err(|e| ("denied".to_string(), e))
         }
