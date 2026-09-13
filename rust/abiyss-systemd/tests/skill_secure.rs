@@ -2,6 +2,7 @@ use abiyss_system_plane::skill::verify_skill;
 use sha2::Digest;
 use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -74,7 +75,8 @@ fn fifo_manifest_is_rejected_without_blocking() {
     let root = tempdir();
     let skill = root.join("fifo-skill");
     fs::create_dir_all(&skill).unwrap();
-    let manifest = CString::new(skill.join("skill.json").as_os_str().as_encoded_bytes()).unwrap();
+    let manifest_path = skill.join("skill.json");
+    let manifest = CString::new(manifest_path.as_os_str().as_bytes()).unwrap();
     let rc = unsafe { libc::mkfifo(manifest.as_ptr(), 0o600) };
     assert_eq!(rc, 0);
     let result = verify_skill(&root, &skill);
@@ -96,10 +98,12 @@ fn hexadecimal_digits_are_valid_sha256_characters() {
 fn uppercase_sha256_digest_is_rejected() {
     let root = tempdir();
     let skill = write_skill(&root, b"hello");
+    let digest = format!("{:x}", sha2::Sha256::digest(b"hello"));
     let manifest_path = skill.join("skill.json");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
-    let uppercase = manifest.to_uppercase();
-    fs::write(manifest_path, uppercase).unwrap();
+    let mutated = manifest.replacen(&digest, &digest.to_uppercase(), 1);
+    assert_ne!(mutated, manifest);
+    fs::write(manifest_path, mutated).unwrap();
     assert!(verify_skill(&root, &skill).is_err());
     fs::remove_dir_all(root).unwrap();
 }
