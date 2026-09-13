@@ -288,8 +288,10 @@ class Query:
                 raise ValidationError(f"invalid {optional}")
         if not isinstance(data["source"], str):
             raise ValidationError("invalid query source")
+        checkpoint_data = dict(checkpoint_raw)
+        checkpoint_data["state"] = checkpoint_state
         try:
-            checkpoint = Checkpoint(**checkpoint_raw)
+            checkpoint = Checkpoint(**checkpoint_data)
             return cls(
                 id=data["id"],
                 type=query_type,
