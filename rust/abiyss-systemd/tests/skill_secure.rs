@@ -1,4 +1,5 @@
 use abiyss_system_plane::skill_secure::verify_skill;
+use sha2::Digest;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -59,7 +60,7 @@ fn symlinked_skill_directory_is_rejected() {
 }
 
 #[test]
-fn traversal_directory_is_rejected() {
+fn lexical_traversal_stays_inside_root() {
     let root = tempdir();
     let skill = write_skill(&root, b"hello");
     let traversal = skill.join("../demo");
