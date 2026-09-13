@@ -79,7 +79,9 @@ impl Request {
         if request.version != PROTOCOL_VERSION {
             return Err(ProtocolError::Version);
         }
-        validate_id(&request.id).map_err(|_| ProtocolError::Id)?;
+        if validate_id(&request.id).is_err() {
+            return Err(ProtocolError::Id);
+        }
         if request.op.is_empty() || request.op.len() > 64 || request.op.as_bytes().contains(&0) {
             return Err(ProtocolError::Operation);
         }
@@ -121,9 +123,15 @@ impl Response {
     }
 }
 
-pub fn validate_id(id: &str) -> Result<(), ()> {
+#[derive(Debug, Error)]
+pub enum IdError {
+    #[error("id must be non-empty, bounded and NUL-free")]
+    Invalid,
+}
+
+pub fn validate_id(id: &str) -> Result<(), IdError> {
     if id.is_empty() || id.len() > MAX_ID_BYTES || id.as_bytes().contains(&0) {
-        return Err(());
+        return Err(IdError::Invalid);
     }
     Ok(())
 }
