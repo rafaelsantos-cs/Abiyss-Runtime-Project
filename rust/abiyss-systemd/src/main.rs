@@ -1,4 +1,6 @@
-use abiyss_systemd::{ServerConfig, PROTOCOL_VERSION, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_PENDING, DEFAULT_MAX_WORKERS};
+use abiyss_system_plane::{
+    ServerConfig, DEFAULT_IO_TIMEOUT, DEFAULT_MAX_PENDING, DEFAULT_MAX_WORKERS, PROTOCOL_VERSION,
+};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -47,7 +49,7 @@ fn env_usize(name: &str, default: usize) -> Result<usize, String> {
 }
 
 fn current_uid() -> u32 {
-    unsafe { libc::geteuid() as u32 }
+    unsafe { libc::geteuid() }
 }
 
 fn default_socket(uid: u32) -> Result<PathBuf, String> {
@@ -139,5 +141,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_pending,
         io_timeout: Duration::from_secs(io_timeout_secs),
     };
-    abiyss_systemd::server::run(config).map_err(Into::into)
+    abiyss_system_plane::server::run(config).map_err(Into::into)
 }
