@@ -72,10 +72,7 @@ pub enum VerifyError {
     Manifest(String),
     Io(String),
     HashMismatch(String),
-    FileSetMismatch {
-        missing: Vec<String>,
-        unexpected: Vec<String>,
-    },
+    FileSetMismatch { missing: Vec<String>, unexpected: Vec<String> },
 }
 
 impl std::fmt::Display for VerifyError {
@@ -143,7 +140,11 @@ fn validate_manifest(manifest: &SkillManifest) -> Result<(), VerifyError> {
     }
     for (path, digest) in &manifest.files {
         validate_relative_member(path)?;
-        if digest.len() != 64 || digest.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase()) {
+        if digest.len() != 64
+            || digest
+                .bytes()
+                .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+        {
             return Err(VerifyError::Manifest(format!("invalid SHA-256 for {path}")));
         }
     }
@@ -259,6 +260,7 @@ fn walk_tree(
     current: &Path,
     relative: &Path,
     depth: usize,
+    require_private: bool,
     files: &mut BTreeMap<String, String>,
     total_bytes: &mut u64,
 ) -> Result<(), VerifyError> {
@@ -274,7 +276,9 @@ fn walk_tree(
             current.display()
         )));
     }
-    check_privileged_metadata(current, &metadata)?;
+    if require_private {
+        check_privileged_metadata(current, &metadata)?;
+    }
     if metadata.is_dir() {
         for entry in fs::read_dir(current)? {
             let entry = entry?;
@@ -285,7 +289,14 @@ fn walk_tree(
             } else {
                 relative.join(name)
             };
-            walk_tree(&next, &next_relative, depth + 1, files, total_bytes)?;
+            walk_tree(
+                &next,
+                &next_relative,
+                depth + 1,
+                require_private,
+                files,
+                total_bytes,
+            )?;
         }
         return Ok(());
     }
@@ -386,12 +397,18 @@ pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkil
             "skill directory is unavailable or a symlink".to_string(),
         ));
     }
-    check_privileged_metadata(&directory, &metadata)?;
 
     let manifest = read_manifest(&directory.join("skill.json"))?;
     let mut actual = BTreeMap::new();
     let mut total_bytes = 0u64;
-    walk_tree(&directory, Path::new(""), 0, &mut actual, &mut total_bytes)?;
+    walk_tree(
+        &directory,
+        Path::new(""),
+        0,
+        manifest.allow_root,
+        &mut actual,
+        &mut total_bytes,
+    )?;
 
     let expected = manifest.files.clone();
     let missing: Vec<String> = expected
@@ -421,10 +438,6 @@ pub fn verify_skill(system_root: &Path, directory: &Path) -> Result<VerifiedSkil
         validate_absolute_entrypoint(Path::new(entrypoint))?;
     } else {
         validate_relative_entrypoint(&directory, entrypoint, &actual)?;
-    }
-
-    if manifest.allow_root {
-        check_privileged_metadata(&directory, &fs::symlink_metadata(&directory)?)?;
     }
 
     Ok(VerifiedSkill {
