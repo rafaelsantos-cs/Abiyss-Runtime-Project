@@ -71,6 +71,44 @@ A process tool:
 
 These are guardrails, not a sandbox.
 
+## System-plane contract
+
+The Rust system plane is a separate local process connected through a bounded Unix-socket protocol.
+
+The system plane:
+
+- validates protocol version, request ID, operation and argument shape;
+- authenticates the peer with local Unix credentials;
+- bounds worker count, pending queue size, request size, response size and I/O timeouts;
+- refuses unsafe filesystem paths and special files;
+- performs bounded process execution under an explicit allowlist;
+- never interprets model output as authorization.
+
+System-plane operations are capability-specific. A successful read-only operation does not grant process-execution authority.
+
+## SkillLE verification contract
+
+Skill manifests and skill trees are treated as untrusted filesystem input.
+
+When `SkillLoader` has a Rust `SystemPlaneClient`, verification is delegated to `skill.verify` in the Rust system plane. Python consumes only the manifest returned by the verifier and does not independently re-read `skill.json` for the verification decision.
+
+Rust verification guarantees:
+
+- bounded manifest size;
+- closed manifest schema;
+- bounded file count and tree depth;
+- bounded individual and aggregate file sizes;
+- canonical relative member paths only;
+- regular-file-only traversal with symlink rejection;
+- exact manifest file-set matching;
+- SHA-256 digest matching;
+- safe relative entrypoints and restricted absolute entrypoints;
+- explicit root-skill policy checks.
+
+`skill.verify` is read-only. It does not execute the skill and does not itself authorize execution.
+
+The verification result is not an authentication token. The current v0.1 execution path still requires a later execution-hardening pass to close the remaining verification-to-execution time-of-check/time-of-use window.
+
 ## Memory contract
 
 Memory records preserve provenance through `source_id` and can be marked sensitive.
