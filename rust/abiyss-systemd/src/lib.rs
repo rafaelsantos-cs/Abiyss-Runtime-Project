@@ -8,6 +8,7 @@
 pub mod linux;
 pub mod server;
 pub mod skill;
+pub mod skill_secure;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
