@@ -13,9 +13,16 @@
 //! - Token de servidor HTTP só por variável de ambiente (`token_env`).
 //! - Um servidor que não sobe é registrado no log e ignorado: o Abiyss
 //!   continua funcionando sem ele.
+//! - Supervisão (no daemon, `supervisionar`): servidor que caiu, que
+//!   estourou uma chamada (`timeout_segundos`), que passou de
+//!   `max_memoria_mb` (árvore de processos inteira) ou de
+//!   `max_vida_segundos` é morto (o grupo de processos todo) e sobe de novo.
 
 use std::collections::{BTreeMap, HashMap};
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, Tool};
@@ -25,9 +32,11 @@ use rmcp::transport::{ConfigureCommandExt, StreamableHttpClientTransport, TokioC
 use rmcp::{RoleClient, ServiceExt};
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::nim::Ferramenta;
+use crate::processos;
 
 /// Separador entre o nome do servidor e o da ferramenta.
 pub const SEPARADOR: &str = "__";
@@ -62,6 +71,15 @@ pub struct ConfigMcp {
     /// Tempo máximo para um servidor subir e listar as ferramentas.
     /// (Na primeira vez o `uv` pode precisar baixar dependências.)
     pub timeout_inicio_segundos: u64,
+    /// De quanto em quanto tempo o daemon confere os servidores.
+    pub supervisao_segundos: u64,
+    /// Memória máxima (RSS do processo + descendentes) de um servidor stdio.
+    pub max_memoria_mb: u64,
+    /// Tempo máximo de vida de um servidor stdio antes de ser reiniciado
+    /// (0 = sem limite).
+    pub max_vida_segundos: u64,
+    /// Resultado de ferramenta maior que isto é cortado (com aviso).
+    pub max_bytes_resultado: usize,
     pub servidores: Vec<ConfigServidorMcp>,
 }
 
@@ -69,6 +87,10 @@ impl Default for ConfigMcp {
     fn default() -> Self {
         ConfigMcp {
             timeout_inicio_segundos: 120,
+            supervisao_segundos: 30,
+            max_memoria_mb: 512,
+            max_vida_segundos: 0,
+            max_bytes_resultado: 1_000_000,
             servidores: Vec::new(),
         }
     }
@@ -126,12 +148,42 @@ fn padrao_ativo() -> bool {
 /// Um servidor MCP em execução.
 struct ServidorMcp {
     nome: String,
-    cliente: RunningService<RoleClient, ()>,
+    /// Config original (para subir de novo ao reiniciar).
+    config: ConfigServidorMcp,
+    /// Ferramentas vistas na primeira subida (os nomes expostos ficam fixos).
     ferramentas: Vec<Tool>,
     timeout: Duration,
     /// As ferramentas aparecem para o modelo?
     expor: bool,
     transporte: &'static str,
+    /// Trocada inteira quando o servidor é reiniciado. As chamadas seguram
+    /// a leitura; o reinício espera elas terminarem (no máximo `timeout`).
+    conexao: RwLock<Conexao>,
+    /// Uma chamada estourou o tempo: o servidor provavelmente travou.
+    pedir_reinicio: AtomicBool,
+    reinicios: AtomicU32,
+}
+
+/// A conexão viva com um servidor.
+struct Conexao {
+    cliente: RunningService<RoleClient, ()>,
+    /// PID do processo filho, que também é o ID do grupo de processos
+    /// (`None` no transporte HTTP).
+    pid: Option<u32>,
+    inicio: Instant,
+}
+
+impl Conexao {
+    /// Fecha com educação e depois mata o grupo (pega netos que sobrarem).
+    async fn encerrar(self) {
+        let pid = self.pid;
+        if let Err(e) = self.cliente.cancel().await {
+            tracing::debug!("erro ao encerrar conexão MCP: {e}");
+        }
+        if let Some(pid) = pid {
+            processos::matar_grupo(pid);
+        }
+    }
 }
 
 /// Resposta de uma ferramenta MCP chamada pelo próprio kernel.
@@ -156,6 +208,9 @@ pub struct PonteMcp {
     servidores: Vec<ServidorMcp>,
     /// nome exposto → (servidor, nome original)
     enderecos: HashMap<String, Endereco>,
+    /// Raiz do projeto (para resolver `diretorio` ao reiniciar).
+    raiz: PathBuf,
+    limites: ConfigMcp,
 }
 
 impl PonteMcp {
@@ -166,10 +221,17 @@ impl PonteMcp {
 
     /// Sobe todos os servidores ativos da config.
     pub async fn iniciar(config: &Config) -> PonteMcp {
-        let mut ponte = PonteMcp::vazia();
+        let mut ponte = PonteMcp {
+            raiz: config.raiz.clone(),
+            limites: ConfigMcp {
+                servidores: Vec::new(),
+                ..config.mcp.clone()
+            },
+            ..PonteMcp::default()
+        };
         let timeout = Duration::from_secs(config.mcp.timeout_inicio_segundos);
         for item in config.mcp.servidores.iter().filter(|s| s.ativo) {
-            match iniciar_servidor(config, item, timeout).await {
+            match iniciar_servidor(&config.raiz, item, timeout).await {
                 Ok(servidor) => {
                     tracing::info!(
                         "MCP '{}' ({}) ativo com {} ferramenta(s){}",
@@ -253,7 +315,7 @@ impl PonteMcp {
             .position(|s| s.nome == servidor)
             .with_context(|| format!("servidor MCP '{servidor}' não está ativo"))?;
         let resultado = self.chamar_interno(indice, ferramenta, argumentos).await?;
-        let texto = texto_do_resultado(&resultado);
+        let texto = self.limitar(texto_do_resultado(&resultado));
         if resultado.is_error == Some(true) {
             bail!("{texto}");
         }
@@ -302,11 +364,29 @@ impl PonteMcp {
                 argumentos,
             )
             .await?;
-        let texto = texto_do_resultado(&resultado);
+        let texto = self.limitar(texto_do_resultado(&resultado));
         if resultado.is_error == Some(true) {
             bail!("{texto}");
         }
         Ok(texto)
+    }
+
+    /// Corta resultados maiores que `max_bytes_resultado`.
+    fn limitar(&self, texto: String) -> String {
+        let maximo = self.limites.max_bytes_resultado;
+        if texto.len() <= maximo {
+            return texto;
+        }
+        let mut corte = maximo;
+        while !texto.is_char_boundary(corte) {
+            corte -= 1;
+        }
+        format!(
+            "{}\n[… resultado cortado: {} de {} bytes (mcp.max_bytes_resultado)]",
+            &texto[..corte],
+            corte,
+            texto.len()
+        )
     }
 
     /// Chamada com tempo limite, comum aos dois caminhos acima.
@@ -322,32 +402,128 @@ impl PonteMcp {
         if let Value::Object(mapa) = argumentos {
             parametros = parametros.with_arguments(mapa);
         }
-        let resultado =
-            tokio::time::timeout(servidor.timeout, servidor.cliente.call_tool(parametros))
-                .await
-                .with_context(|| {
-                    format!(
-                        "ferramenta {nome} passou do tempo limite ({} s)",
-                        servidor.timeout.as_secs()
-                    )
-                })?
-                .with_context(|| format!("falha ao chamar {nome}"))?;
-        Ok(resultado)
+        let conexao = servidor.conexao.read().await;
+        let chamada = tokio::time::timeout(servidor.timeout, conexao.cliente.call_tool(parametros));
+        let Ok(resultado) = chamada.await else {
+            // Travou: a supervisão mata e sobe de novo na próxima rodada.
+            servidor.pedir_reinicio.store(true, Ordering::Relaxed);
+            bail!(
+                "ferramenta {nome} passou do tempo limite ({} s)",
+                servidor.timeout.as_secs()
+            );
+        };
+        resultado.with_context(|| format!("falha ao chamar {nome}"))
     }
 
-    /// Encerra todos os servidores com educação (fecha o stdio e espera).
+    /// Supervisão contínua (roda no daemon até a tarefa ser abortada).
+    pub async fn supervisionar(self: Arc<Self>) {
+        let intervalo = Duration::from_secs(self.limites.supervisao_segundos.max(1));
+        let mut tique = tokio::time::interval(intervalo);
+        tique.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tique.tick().await; // o primeiro tique é imediato: os servidores acabaram de subir
+        loop {
+            tique.tick().await;
+            self.verificar().await;
+        }
+    }
+
+    /// Uma rodada de supervisão: reinicia quem precisa. Devolve os nomes
+    /// dos servidores reiniciados.
+    pub async fn verificar(&self) -> Vec<String> {
+        let mut reiniciados = Vec::new();
+        for servidor in &self.servidores {
+            let Some(motivo) = self.motivo_para_reiniciar(servidor).await else {
+                continue;
+            };
+            tracing::warn!("MCP '{}': {motivo}; reiniciando", servidor.nome);
+            match self.reiniciar(servidor).await {
+                Ok(()) => reiniciados.push(servidor.nome.clone()),
+                Err(e) => tracing::error!(
+                    "MCP '{}' não subiu de novo (tenta na próxima rodada): {e:#}",
+                    servidor.nome
+                ),
+            }
+        }
+        reiniciados
+    }
+
+    async fn motivo_para_reiniciar(&self, servidor: &ServidorMcp) -> Option<String> {
+        if servidor.pedir_reinicio.load(Ordering::Relaxed) {
+            return Some("uma chamada passou do tempo limite".to_string());
+        }
+        let conexao = servidor.conexao.read().await;
+        if conexao.cliente.is_closed() || conexao.cliente.peer().is_transport_closed() {
+            return Some("o servidor caiu".to_string());
+        }
+        // Limites de memória e de tempo de vida: só para processos filhos.
+        let pid = conexao.pid?;
+        let maximo = self.limites.max_memoria_mb * 1024 * 1024;
+        if let Some(rss) = processos::rss_da_arvore_bytes(pid)
+            && rss > maximo
+        {
+            return Some(format!(
+                "usando {} MiB (limite mcp.max_memoria_mb = {})",
+                rss / (1024 * 1024),
+                self.limites.max_memoria_mb
+            ));
+        }
+        let vida = self.limites.max_vida_segundos;
+        if vida > 0 && conexao.inicio.elapsed() >= Duration::from_secs(vida) {
+            return Some(format!("passou de mcp.max_vida_segundos = {vida}"));
+        }
+        None
+    }
+
+    /// Mata o servidor (o grupo inteiro) e sobe de novo.
+    async fn reiniciar(&self, servidor: &ServidorMcp) -> anyhow::Result<()> {
+        // Espera as chamadas em andamento (no máximo o `timeout` delas).
+        let mut conexao = servidor.conexao.write().await;
+        // Mata ANTES de subir o novo, para não ficar com dois na memória.
+        if let Some(pid) = conexao.pid {
+            processos::matar_grupo(pid);
+        }
+        let timeout = Duration::from_secs(self.limites.timeout_inicio_segundos);
+        let (nova, ferramentas) = conectar(&self.raiz, &servidor.config, timeout).await?;
+        let nomes = |lista: &[Tool]| lista.iter().map(|f| f.name.to_string()).collect::<Vec<_>>();
+        if nomes(&ferramentas) != nomes(&servidor.ferramentas) {
+            tracing::warn!(
+                "MCP '{}' voltou com outras ferramentas; os nomes expostos continuam os da primeira subida",
+                servidor.nome
+            );
+        }
+        let velha = std::mem::replace(&mut *conexao, nova);
+        drop(conexao);
+        velha.encerrar().await;
+        servidor.pedir_reinicio.store(false, Ordering::Relaxed);
+        servidor.reinicios.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Quantas vezes o servidor foi reiniciado pela supervisão.
+    pub fn reinicios(&self, servidor: &str) -> Option<u32> {
+        self.servidores
+            .iter()
+            .find(|s| s.nome == servidor)
+            .map(|s| s.reinicios.load(Ordering::Relaxed))
+    }
+
+    /// PID (= grupo) do processo filho de um servidor stdio.
+    pub async fn pid(&self, servidor: &str) -> Option<u32> {
+        let servidor = self.servidores.iter().find(|s| s.nome == servidor)?;
+        servidor.conexao.read().await.pid
+    }
+
+    /// Encerra todos os servidores com educação (fecha o stdio e espera)
+    /// e mata o que sobrar de cada grupo de processos.
     pub async fn encerrar(self) {
         for servidor in self.servidores {
-            let nome = servidor.nome.clone();
-            if let Err(e) = servidor.cliente.cancel().await {
-                tracing::debug!("erro ao encerrar MCP '{nome}': {e}");
-            }
+            servidor.conexao.into_inner().encerrar().await;
         }
     }
 }
 
 async fn iniciar_servidor(
-    config: &Config,
+    raiz: &Path,
     item: &ConfigServidorMcp,
     timeout: Duration,
 ) -> anyhow::Result<ServidorMcp> {
@@ -362,45 +538,55 @@ async fn iniciar_servidor(
             item.nome
         );
     }
-    let (cliente, ferramentas) = match &item.url {
-        Some(url) => {
-            if !item.comando.is_empty() {
-                bail!("use 'comando' OU 'url', não os dois");
-            }
-            conectar_http(item, url, timeout).await?
-        }
-        None => subir_processo(config, item, timeout).await?,
-    };
+    if item.url.is_some() && !item.comando.is_empty() {
+        bail!("use 'comando' OU 'url', não os dois");
+    }
+    let (conexao, ferramentas) = conectar(raiz, item, timeout).await?;
     Ok(ServidorMcp {
         nome: item.nome.clone(),
-        cliente,
+        config: item.clone(),
         ferramentas,
         timeout: Duration::from_secs(item.timeout_segundos),
         expor: item.expor,
         transporte: item.transporte(),
+        conexao: RwLock::new(conexao),
+        pedir_reinicio: AtomicBool::new(false),
+        reinicios: AtomicU32::new(0),
     })
 }
 
-/// Cliente MCP conectado + as ferramentas que o servidor oferece.
-type Conexao = (RunningService<RoleClient, ()>, Vec<Tool>);
-
-/// Transporte stdio: sobe o servidor como processo filho com ambiente limpo.
-async fn subir_processo(
-    config: &Config,
+/// Sobe (stdio) ou conecta (HTTP) e lista as ferramentas.
+async fn conectar(
+    raiz: &Path,
     item: &ConfigServidorMcp,
     timeout: Duration,
-) -> anyhow::Result<Conexao> {
+) -> anyhow::Result<(Conexao, Vec<Tool>)> {
+    match &item.url {
+        Some(url) => conectar_http(item, url, timeout).await,
+        None => subir_processo(raiz, item, timeout).await,
+    }
+}
+
+/// Transporte stdio: sobe o servidor como processo filho com ambiente limpo,
+/// num grupo de processos próprio (para matar a árvore inteira depois).
+async fn subir_processo(
+    raiz: &Path,
+    item: &ConfigServidorMcp,
+    timeout: Duration,
+) -> anyhow::Result<(Conexao, Vec<Tool>)> {
     if item.comando.is_empty() {
         bail!("falta 'comando' (processo filho) ou 'url' (HTTP)");
     }
-    let diretorio = item
-        .diretorio
-        .as_deref()
-        .map(|d| config.resolver(d))
-        .unwrap_or_else(|| config.raiz.clone());
+    let diretorio = match item.diretorio.as_deref() {
+        Some(d) if Path::new(d).is_absolute() => PathBuf::from(d),
+        Some(d) => raiz.join(d),
+        None => raiz.to_path_buf(),
+    };
 
     let comando = tokio::process::Command::new(&item.comando).configure(|cmd| {
         cmd.args(&item.args).current_dir(&diretorio).env_clear();
+        #[cfg(unix)]
+        cmd.process_group(0);
         for nome in AMBIENTE_PERMITIDO {
             if let Ok(valor) = std::env::var(nome) {
                 cmd.env(nome, valor);
@@ -416,6 +602,7 @@ async fn subir_processo(
     });
     let transporte = TokioChildProcess::new(comando)
         .with_context(|| format!("não consegui executar '{}'", item.comando))?;
+    let pid = transporte.id();
 
     let subir = async {
         let cliente = ().serve(transporte).await.context("handshake MCP falhou")?;
@@ -425,9 +612,30 @@ async fn subir_processo(
             .context("não consegui listar as ferramentas")?;
         anyhow::Ok((cliente, ferramentas))
     };
-    tokio::time::timeout(timeout, subir)
-        .await
-        .with_context(|| format!("servidor não respondeu em {} s", timeout.as_secs()))?
+    let resultado = tokio::time::timeout(timeout, subir).await;
+    let pronto = match resultado {
+        Ok(pronto) => pronto,
+        Err(_) => Err(anyhow::anyhow!(
+            "servidor não respondeu em {} s",
+            timeout.as_secs()
+        )),
+    };
+    let (cliente, ferramentas) = match pronto {
+        Ok(pronto) => pronto,
+        Err(e) => {
+            // Não subiu: não deixa o processo (nem netos) para trás.
+            if let Some(pid) = pid {
+                processos::matar_grupo(pid);
+            }
+            return Err(e);
+        }
+    };
+    let conexao = Conexao {
+        cliente,
+        pid,
+        inicio: Instant::now(),
+    };
+    Ok((conexao, ferramentas))
 }
 
 /// Transporte HTTP "streamable": conecta num servidor que já está rodando.
@@ -435,7 +643,7 @@ async fn conectar_http(
     item: &ConfigServidorMcp,
     url: &str,
     timeout: Duration,
-) -> anyhow::Result<Conexao> {
+) -> anyhow::Result<(Conexao, Vec<Tool>)> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         bail!("url precisa começar com http:// ou https:// (veio '{url}')");
     }
@@ -461,9 +669,15 @@ async fn conectar_http(
             .context("não consegui listar as ferramentas")?;
         anyhow::Ok((cliente, ferramentas))
     };
-    tokio::time::timeout(timeout, conectar)
+    let (cliente, ferramentas) = tokio::time::timeout(timeout, conectar)
         .await
-        .with_context(|| format!("{url} não respondeu em {} s", timeout.as_secs()))?
+        .with_context(|| format!("{url} não respondeu em {} s", timeout.as_secs()))??;
+    let conexao = Conexao {
+        cliente,
+        pid: None,
+        inicio: Instant::now(),
+    };
+    Ok((conexao, ferramentas))
 }
 
 /// Nome exposto ao modelo: `servidor__ferramenta`, só com caracteres que a

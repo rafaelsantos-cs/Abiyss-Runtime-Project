@@ -56,6 +56,22 @@ pub struct ConfigNim {
     /// Tempo máximo para abrir a conexão TCP/TLS.
     #[serde(default = "padrao_timeout_conexao")]
     pub timeout_conexao_segundos: u64,
+    /// Máximo de bytes lidos de UMA resposta (com ou sem streaming). Passou
+    /// disso, a chamada falha: protege a memória de um servidor que não
+    /// para de mandar dados.
+    #[serde(default = "padrao_max_bytes_resposta")]
+    pub max_bytes_resposta: usize,
+    /// Conexões HTTP ociosas guardadas por pool para reaproveitar.
+    #[serde(default = "padrao_max_conexoes_ociosas")]
+    pub max_conexoes_ociosas: usize,
+}
+
+fn padrao_max_bytes_resposta() -> usize {
+    16 * 1024 * 1024
+}
+
+fn padrao_max_conexoes_ociosas() -> usize {
+    4
 }
 
 fn padrao_timeout_leitura() -> u64 {
@@ -139,6 +155,9 @@ pub struct ConfigPoolCerebro {
     /// autônomas (daemon) só podem usar `requisicoes_por_minuto - reserva`.
     #[serde(default = "padrao_reserva_conversa")]
     pub reserva_conversa_por_minuto: u32,
+    /// Máximo de chamadas esperando a vez neste pool; acima disso, erro.
+    #[serde(default = "padrao_max_na_fila")]
+    pub max_na_fila: usize,
     #[serde(default)]
     pub retentativas: ConfigRetentativas,
 }
@@ -154,6 +173,9 @@ pub struct ConfigPoolSubagentes {
     /// Máximo de chamadas simultâneas por nível de sub-agente.
     #[serde(default)]
     pub concorrencia: ConfigConcorrencia,
+    /// Máximo de chamadas esperando a vez neste pool; acima disso, erro.
+    #[serde(default = "padrao_max_na_fila")]
+    pub max_na_fila: usize,
     #[serde(default)]
     pub retentativas: ConfigRetentativas,
 }
@@ -206,6 +228,10 @@ fn padrao_rajada() -> u32 {
 
 fn padrao_reserva_conversa() -> u32 {
     10
+}
+
+fn padrao_max_na_fila() -> usize {
+    64
 }
 
 /// Onde ficam os arquivos do Abiyss (relativos à raiz do projeto).
@@ -449,6 +475,12 @@ impl Config {
                 cerebro.reserva_conversa_por_minuto,
                 cerebro.requisicoes_por_minuto
             );
+        }
+        if self.nim.max_bytes_resposta < 64 * 1024 {
+            bail!("nim.max_bytes_resposta precisa ser pelo menos 65536");
+        }
+        if cerebro.max_na_fila == 0 || self.pools.subagentes.max_na_fila == 0 {
+            bail!("pools.*.max_na_fila precisa ser maior que zero");
         }
         if self.daemon.heartbeat_segundos == 0 || self.daemon.cron_verificacao_segundos == 0 {
             bail!("daemon.heartbeat_segundos e daemon.cron_verificacao_segundos precisam ser > 0");

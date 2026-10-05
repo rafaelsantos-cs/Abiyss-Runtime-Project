@@ -14,6 +14,7 @@ dependencies = [
  "dotenvy",
  "fastrand",
  "futures",
+ "libc",
  "reqwest",
  "rmcp",
  "rusqlite",

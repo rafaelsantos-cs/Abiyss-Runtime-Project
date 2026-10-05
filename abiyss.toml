@@ -11,6 +11,11 @@ base_url = "https://integrate.api.nvidia.com/v1"
 # Segundos SEM receber nenhum byte antes de desistir (raciocínio longo demora).
 timeout_leitura_segundos = 600
 timeout_conexao_segundos = 15
+# Máximo de bytes lidos de UMA resposta (com ou sem streaming); passou, a
+# chamada falha. 16 MiB cobre com folga 32k tokens de saída em SSE.
+max_bytes_resposta = 16777216
+# Conexões HTTP ociosas guardadas por pool para reaproveitar.
+max_conexoes_ociosas = 4
 
 # ---------------------------------------------------------------------------
 # Modelos. `extra` é copiado como está para o corpo da requisição.
@@ -132,6 +137,8 @@ rajada = 1
 # Fatia reservada para conversa com o usuário: o trabalho autônomo do
 # daemon usa no máximo 40 - 10 = 30 req/min.
 reserva_conversa_por_minuto = 10
+# Máximo de chamadas esperando a vez neste pool (acima disso: erro na hora).
+max_na_fila = 64
 
 [pools.cerebro.retentativas]
 max_tentativas = 5
@@ -142,6 +149,7 @@ backoff_maximo_ms = 60000
 api_key_env = "NIM_API_KEY_SUBAGENTES"
 requisicoes_por_minuto = 40
 rajada = 1
+max_na_fila = 64
 
 # Fila com prioridade Ultra > Medium > Low; máximo de chamadas simultâneas por nível.
 [pools.subagentes.concorrencia]
@@ -291,6 +299,16 @@ ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
 [mcp]
 # Na primeira execução o uv pode precisar baixar dependências.
 timeout_inicio_segundos = 120
+# Supervisão (só no daemon): a cada N segundos, servidor que caiu, que
+# estourou uma chamada (timeout_segundos), que passou de max_memoria_mb
+# (processo + descendentes: o `uv` e o Python) ou de max_vida_segundos é
+# morto — o grupo de processos inteiro — e sobe de novo.
+supervisao_segundos = 30
+max_memoria_mb = 512
+# 0 = sem limite de tempo de vida.
+max_vida_segundos = 0
+# Resultado de ferramenta maior que isto é cortado (com aviso no texto).
+max_bytes_resultado = 1000000
 
 [[mcp.servidores]]
 nome = "exemplo"

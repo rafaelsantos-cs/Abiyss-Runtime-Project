@@ -78,12 +78,31 @@ impl ErroNim {
     }
 }
 
+/// Limites de memória de um cliente (vêm de `[nim]` no abiyss.toml).
+#[derive(Debug, Clone, Copy)]
+pub struct LimitesCliente {
+    /// Máximo de bytes lidos de uma resposta; acima disso, erro.
+    pub max_bytes_resposta: usize,
+    /// Conexões ociosas guardadas para reaproveitar.
+    pub max_conexoes_ociosas: usize,
+}
+
+impl Default for LimitesCliente {
+    fn default() -> Self {
+        LimitesCliente {
+            max_bytes_resposta: 16 * 1024 * 1024,
+            max_conexoes_ociosas: 4,
+        }
+    }
+}
+
 /// Cliente de um pool. Cada pool tem o SEU cliente, com a SUA chave.
 #[derive(Clone)]
 pub struct ClienteNim {
     http: reqwest::Client,
     url_chat: String,
     chave: String,
+    max_bytes_resposta: usize,
 }
 
 // Implementação manual de Debug para a chave NUNCA aparecer em logs.
@@ -104,7 +123,25 @@ impl ClienteNim {
         timeout_conexao: Duration,
         timeout_leitura: Duration,
     ) -> Result<ClienteNim, ErroNim> {
+        ClienteNim::novo_com_limites(
+            base_url,
+            chave,
+            timeout_conexao,
+            timeout_leitura,
+            LimitesCliente::default(),
+        )
+    }
+
+    /// Como `novo`, com limites de memória explícitos.
+    pub fn novo_com_limites(
+        base_url: &str,
+        chave: &str,
+        timeout_conexao: Duration,
+        timeout_leitura: Duration,
+        limites: LimitesCliente,
+    ) -> Result<ClienteNim, ErroNim> {
         let http = reqwest::Client::builder()
+            .pool_max_idle_per_host(limites.max_conexoes_ociosas)
             .connect_timeout(timeout_conexao)
             // Tempo máximo entre dois pedaços recebidos (não o total):
             // assim um stream longo não é cortado, mas um servidor mudo é.
@@ -116,7 +153,16 @@ impl ClienteNim {
             http,
             url_chat: format!("{}/chat/completions", base_url.trim_end_matches('/')),
             chave: chave.to_string(),
+            max_bytes_resposta: limites.max_bytes_resposta,
         })
+    }
+
+    /// Erro de "resposta grande demais".
+    fn erro_tamanho(&self) -> ErroNim {
+        ErroNim::RespostaInvalida(format!(
+            "resposta passou de {} bytes (nim.max_bytes_resposta)",
+            self.max_bytes_resposta
+        ))
     }
 
     /// Chamada SEM streaming: espera a resposta inteira.
@@ -126,10 +172,18 @@ impl ClienteNim {
         pedido.stream_options = None;
 
         let resposta = self.enviar(&pedido).await?;
-        let corpo = resposta
-            .text()
-            .await
-            .map_err(|e| ErroNim::Rede(e.to_string()))?;
+        // Lê pedaço por pedaço para poder parar no limite (`.text()` leria
+        // qualquer tamanho).
+        let mut bytes = resposta.bytes_stream();
+        let mut corpo_bytes = Vec::new();
+        while let Some(pedaco) = bytes.next().await {
+            let pedaco = pedaco.map_err(|e| ErroNim::Rede(e.to_string()))?;
+            if corpo_bytes.len() + pedaco.len() > self.max_bytes_resposta {
+                return Err(self.erro_tamanho());
+            }
+            corpo_bytes.extend_from_slice(&pedaco);
+        }
+        let corpo = String::from_utf8_lossy(&corpo_bytes);
 
         verificar_erro_no_corpo(&corpo)?;
         let dados: RespostaChat = serde_json::from_str(&corpo)
@@ -166,9 +220,16 @@ impl ClienteNim {
         let mut leitor = LeitorSse::novo();
         let mut acumulador = AcumuladorStream::novo();
         let mut terminou = false;
+        // Tudo que fica na memória (linha pendente, texto, raciocínio,
+        // argumentos) vem destes bytes: limitar o total limita tudo.
+        let mut recebidos = 0usize;
 
         while let Some(pedaco) = bytes.next().await {
             let pedaco = pedaco.map_err(|e| ErroNim::StreamInterrompido(e.to_string()))?;
+            recebidos += pedaco.len();
+            if recebidos > self.max_bytes_resposta {
+                return Err(self.erro_tamanho());
+            }
             for dados in leitor.alimentar(&pedaco) {
                 if processar_evento(&dados, &mut acumulador, ao_receber)? {
                     terminou = true;

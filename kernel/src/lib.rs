@@ -30,6 +30,7 @@ pub mod mcp;
 pub mod memoria;
 pub mod nim;
 pub mod orquestrador;
+pub mod processos;
 pub mod skills;
 pub mod status;
 pub mod subagentes;

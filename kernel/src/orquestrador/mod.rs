@@ -27,6 +27,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::{self, Config, ConfigRetentativas};
 use crate::db::Banco;
+use crate::nim::cliente::LimitesCliente;
 use crate::nim::{ClienteNim, ErroNim, EventoStream, PedidoChat, RespostaModelo};
 use crate::tempo::agora_ms;
 use balde::ConfigBalde;
@@ -131,7 +132,10 @@ struct NucleoPool {
 impl NucleoPool {
     /// Espera a vez na fila e pega 1 ficha de cada balde da lista.
     async fn esperar_ficha(&self, prioridade: u8, baldes: &[ConfigBalde]) -> anyhow::Result<()> {
-        let lugar = self.fila.entrar(prioridade);
+        let lugar = self
+            .fila
+            .entrar(prioridade)
+            .with_context(|| format!("pool {}", self.nome))?;
         loop {
             self.fila.esperar_a_vez(&lugar).await;
             match balde::tentar_pegar(&self.banco, baldes, agora_ms())? {
@@ -380,6 +384,10 @@ impl Orquestrador {
         let leitura = Duration::from_secs(config.nim.timeout_leitura_segundos);
         let c = &config.pools.cerebro;
         let s = &config.pools.subagentes;
+        let limites_cliente = LimitesCliente {
+            max_bytes_resposta: config.nim.max_bytes_resposta,
+            max_conexoes_ociosas: config.nim.max_conexoes_ociosas,
+        };
 
         let balde_total =
             ConfigBalde::por_minuto(BALDE_CEREBRO, c.requisicoes_por_minuto, c.rajada);
@@ -391,9 +399,15 @@ impl Orquestrador {
         let cerebro = PoolCerebro {
             nucleo: NucleoPool {
                 nome: "cerebro",
-                cliente: ClienteNim::novo(&config.nim.base_url, chave_cerebro, conexao, leitura)?,
+                cliente: ClienteNim::novo_com_limites(
+                    &config.nim.base_url,
+                    chave_cerebro,
+                    conexao,
+                    leitura,
+                    limites_cliente,
+                )?,
                 banco: banco.clone(),
-                fila: FilaPrioridade::nova(),
+                fila: FilaPrioridade::nova(c.max_na_fila),
                 retentativas: c.retentativas.clone(),
                 balde_principal: balde_total.clone(),
             },
@@ -406,14 +420,15 @@ impl Orquestrador {
         let subagentes = PoolSubagentes {
             nucleo: NucleoPool {
                 nome: "subagentes",
-                cliente: ClienteNim::novo(
+                cliente: ClienteNim::novo_com_limites(
                     &config.nim.base_url,
                     chave_subagentes,
                     conexao,
                     leitura,
+                    limites_cliente,
                 )?,
                 banco,
-                fila: FilaPrioridade::nova(),
+                fila: FilaPrioridade::nova(s.max_na_fila),
                 retentativas: s.retentativas.clone(),
                 balde_principal: balde_sub.clone(),
             },
@@ -446,7 +461,7 @@ mod testes {
             )
             .unwrap(),
             banco: Banco::em_memoria().unwrap(),
-            fila: FilaPrioridade::nova(),
+            fila: FilaPrioridade::nova(8),
             retentativas: ConfigRetentativas {
                 max_tentativas: 10,
                 backoff_inicial_ms: 100,

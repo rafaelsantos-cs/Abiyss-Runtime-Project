@@ -27,9 +27,13 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
             .com_mcp(mcp.clone())
             .com_memoria(memoria),
     );
+    // Supervisão dos servidores MCP: reinicia quem cai, trava ou passa dos limites.
+    let supervisao = tokio::spawn(mcp.clone().supervisionar());
     let daemon = Daemon::novo(config, banco, orquestrador, ferramentas);
     let resultado = daemon.rodar(&opcoes).await;
     drop(daemon);
+    supervisao.abort();
+    let _ = supervisao.await;
     if let Ok(ponte) = Arc::try_unwrap(mcp) {
         ponte.encerrar().await;
     }
