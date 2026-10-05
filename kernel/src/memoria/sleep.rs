@@ -4,12 +4,15 @@
 //! - escopo interno com origem externa → REJEITADA (a regra dura);
 //! - nota esquecida pelo usuário depois da proposta → rejeitada (não volta);
 //! - o resto passa por `Cofre::gravar`, que confere procedência, tipos e as
-//!   regras das notas externas. Erro ali também vira rejeição com motivo.
+//!   regras das notas externas. Erro ali também vira rejeição com motivo;
+//! - escopo "central" (memória central): mesma regra dura; repetida não
+//!   entra de novo; acima do orçamento é REJEITADA (nunca cortada).
 //!
 //! Cada decisão fica na própria proposta e no registro de operações.
 
 use anyhow::{Context, bail};
 
+use super::central::MemoriaCentral;
 use super::cofre::{Cofre, REGRA_DURA};
 use super::nota::{CAMPOS_DO_KERNEL, Escopo, Fonte, Procedencia, Tipo};
 use super::propostas::{self, EstadoProposta, Proposta};
@@ -42,11 +45,20 @@ impl RelatorioSleep {
 }
 
 /// Aplica (ou rejeita) todas as propostas pendentes.
-pub fn aplicar_pendentes(cofre: &Cofre, banco: &Banco) -> anyhow::Result<RelatorioSleep> {
+pub fn aplicar_pendentes(
+    cofre: &Cofre,
+    central: &MemoriaCentral,
+    banco: &Banco,
+) -> anyhow::Result<RelatorioSleep> {
     let mut relatorio = RelatorioSleep::default();
     for proposta in propostas::pendentes(banco)? {
         let rotulo = format!("proposta #{}", proposta.id);
-        let decisao = match aplicar(cofre, banco, &proposta) {
+        let resultado = if proposta.escopo == super::ESCOPO_CENTRAL {
+            aplicar_central(central, &proposta)
+        } else {
+            aplicar(cofre, banco, &proposta)
+        };
+        let decisao = match resultado {
             Ok((acao, detalhe)) => {
                 propostas::decidir(banco, proposta.id, EstadoProposta::Aplicada, &detalhe)?;
                 propostas::registrar(banco, acao, &proposta.caminho, &rotulo)?;
@@ -72,6 +84,33 @@ pub fn aplicar_pendentes(cofre: &Cofre, banco: &Banco) -> anyhow::Result<Relator
         relatorio.decisoes.push(decisao);
     }
     Ok(relatorio)
+}
+
+/// Aplica uma proposta para a memória central.
+fn aplicar_central(
+    central: &MemoriaCentral,
+    proposta: &Proposta,
+) -> anyhow::Result<(&'static str, String)> {
+    let tipo = Tipo::de_texto(&proposta.tipo)
+        .with_context(|| format!("tipo desconhecido '{}'", proposta.tipo))?;
+    // A memória central é interna: vale a mesma regra dura.
+    if let Some(origem) = &proposta.origem_externa {
+        bail!("{REGRA_DURA} nem na memória central (origem: {origem})");
+    }
+    if central.contem(&proposta.conteudo) {
+        return Ok((
+            "sem_mudanca",
+            "já estava na memória central (nada repetido)".to_string(),
+        ));
+    }
+    let uso = central.acrescentar(tipo, &proposta.conteudo)?;
+    Ok((
+        "acrescentada",
+        format!(
+            "acrescentada à memória central ({uso}/{} caracteres)",
+            central.limite()
+        ),
+    ))
 }
 
 /// Aplica uma proposta. Devolve a ação ("criada"/"atualizada") e um resumo.

@@ -529,14 +529,16 @@ fn definicoes_memoria() -> Vec<Ferramenta> {
              sub-agentes é REJEITADO aqui pelo kernel. Escopo 'externo': mapa de fontes; o conteúdo \
              precisa começar com frontmatter YAML com links (site oficial, changelog, docs), \
              navegador (rapido|contemplativo|agentico) e revalidar_apos (AAAA-MM-DD); resumo em cache \
-             só com data no título, ex.: '## Resumo em cache (AAAA-MM-DD)'. Tipo 'dito' = afirmado \
-             diretamente; 'deduzido' = sua inferência; uma nota tem um tipo só. Use [[wikilinks]] \
-             para ligar notas (internas podem apontar para externas, não o contrário).",
+             só com data no título, ex.: '## Resumo em cache (AAAA-MM-DD)'. Escopo 'central': uma \
+             frase curta e essencial para ter em TODO turno (a memória central, com orçamento de \
+             caracteres; se não couber, é recusada; mesma regra do interno; 'caminho' é ignorado). \
+             Tipo 'dito' = afirmado diretamente; 'deduzido' = sua inferência; uma nota tem um tipo \
+             só. Use [[wikilinks]] para ligar notas (internas podem apontar para externas, não o contrário).",
             json!({
                 "type": "object",
                 "properties": {
-                    "escopo": {"type": "string", "enum": ["interno", "externo"]},
-                    "caminho": {"type": "string", "description": "Relativo ao escopo, ex.: pessoas/ana.md"},
+                    "escopo": {"type": "string", "enum": ["interno", "externo", "central"]},
+                    "caminho": {"type": "string", "description": "Relativo ao escopo, ex.: pessoas/ana.md (ignorado no central)"},
                     "conteudo": {"type": "string", "description": "Markdown (no externo, com frontmatter)"},
                     "tipo": {"type": "string", "enum": ["dito", "deduzido"]}
                 },

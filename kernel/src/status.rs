@@ -12,6 +12,8 @@ use crate::goals;
 use crate::heartbeat;
 use crate::identidade::Identidade;
 use crate::interocepcao::Interocepcao;
+use crate::memoria::central::MemoriaCentral;
+use crate::memoria::propostas;
 use crate::tempo::{agora_ms, formatar_ms};
 
 /// Monta o relatório em texto.
@@ -56,6 +58,25 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
     } else {
         writeln!(t, "Identidade: ok")?;
     }
+
+    // Memória central e propostas
+    let central = MemoriaCentral::da_config(config);
+    let uso = central.uso();
+    writeln!(
+        t,
+        "Memória central: {uso}/{} caracteres{}",
+        central.limite(),
+        if uso > central.limite() {
+            " — ACIMA DO ORÇAMENTO (vai inteira para o prompt; corrija o arquivo)"
+        } else {
+            ""
+        }
+    )?;
+    writeln!(
+        t,
+        "Propostas de memória pendentes: {} (aplique com `abiyss sleep`)",
+        propostas::pendentes(banco)?.len()
+    )?;
 
     // Goals
     let contagem = goals::contar_por_estado(banco)?;

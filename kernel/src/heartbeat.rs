@@ -21,8 +21,9 @@ use crate::db::Banco;
 use crate::diario;
 use crate::eventos::{self, Evento};
 use crate::goals::{self, EstadoGoal, Goal};
-use crate::identidade::Identidade;
+use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
+use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
@@ -263,12 +264,17 @@ impl Heartbeat {
         Ok(resultado)
     }
 
-    /// System prompt do heartbeat: regras + núcleo + instruções do modo.
+    /// System prompt do heartbeat: regras + núcleo + memória central +
+    /// instruções do modo.
     fn prompt_sistema(&self) -> String {
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
+        let blocos = BlocosPrompt {
+            memoria_central: MemoriaCentral::da_config(&self.config).bloco_para_prompt(),
+            ..Default::default()
+        };
         format!(
             "{}\n\n{}",
-            identidade.prompt_sistema(None),
+            identidade.prompt_sistema_com(&blocos),
             instrucoes_heartbeat()
         )
     }

@@ -4,8 +4,9 @@
 //! 1. `REGRAS_DO_KERNEL`: fixas no código. Valem mesmo que o núcleo seja
 //!    apagado ou mal escrito (nome, nunca ser "Hermes", dados ≠ instruções).
 //! 2. O núcleo de identidade (`identity/nucleo.md`), escrito pelo usuário.
-//! 3. Blocos opcionais montados por quem chama (`BlocosPrompt`): índice das
-//!    skills e contexto calculado pelo kernel (data/hora, interocepção).
+//! 3. Blocos opcionais montados por quem chama (`BlocosPrompt`): memória
+//!    central, índice das skills e contexto calculado pelo kernel (data/hora,
+//!    interocepção).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,8 @@ const MARCADOR_PLACEHOLDER: &str = "{{PREENCHER";
 /// Blocos opcionais do system prompt, depois do núcleo.
 #[derive(Debug, Clone, Default)]
 pub struct BlocosPrompt {
+    /// Memória central (pequena, com orçamento), logo depois do núcleo.
+    pub memoria_central: Option<String>,
     /// Índice das skills (só nome + descrição), já rotulado como dado.
     pub skills: Option<String>,
     /// Bloco calculado por código (data/hora, interocepção...), sempre no fim.
@@ -120,6 +123,11 @@ impl Identidade {
     pub fn prompt_sistema_com(&self, blocos: &BlocosPrompt) -> String {
         let mut prompt = String::from(REGRAS_DO_KERNEL);
         acrescentar_secao(&mut prompt, "# Núcleo de identidade", Some(&self.texto));
+        acrescentar_secao(
+            &mut prompt,
+            "# Memória central",
+            blocos.memoria_central.as_deref(),
+        );
         acrescentar_secao(
             &mut prompt,
             "# Skills disponíveis",

@@ -17,10 +17,15 @@
 //!
 //! REGRA DURA (código, não instrução): conteúdo que veio de ferramentas,
 //! web, sub-agentes ou qualquer fonte externa nunca é gravado em
-//! 01_internal. A origem é calculada pelo kernel a partir do que estava
-//! no contexto quando o modelo pediu a gravação (ver `ferramentas`).
+//! 01_internal (nem na memória central). A origem é calculada pelo kernel
+//! a partir do que estava no contexto quando o modelo pediu a gravação
+//! (ver `ferramentas`).
+//!
+//! Além do cofre há a MEMÓRIA CENTRAL (`central`): um arquivo pequeno, com
+//! orçamento em caracteres, injetado no system prompt em todo turno.
 
 pub mod busca;
+pub mod central;
 pub mod cofre;
 pub mod nota;
 pub mod propostas;
@@ -33,6 +38,7 @@ use crate::config::Config;
 use crate::db::Banco;
 use crate::frontmatter;
 use busca::ResultadoBusca;
+use central::MemoriaCentral;
 use cofre::{Cofre, resolver_wikilink};
 use nota::{Escopo, EscopoBusca, Fonte, Nota, Tipo, extrair_wikilinks};
 use propostas::NovaProposta;
@@ -51,6 +57,10 @@ pub struct ConfigMemoria {
     pub max_bytes_nota: usize,
     /// Tamanho máximo do conteúdo de uma proposta.
     pub max_bytes_proposta: usize,
+    /// Arquivo da memória central (relativo à raiz do projeto).
+    pub central: String,
+    /// Orçamento da memória central, em caracteres.
+    pub limite_central_caracteres: usize,
 }
 
 impl Default for ConfigMemoria {
@@ -60,9 +70,16 @@ impl Default for ConfigMemoria {
             max_resultados: 8,
             max_bytes_nota: 200_000,
             max_bytes_proposta: 20_000,
+            central: "identity/memoria-central.md".to_string(),
+            limite_central_caracteres: 4_000,
         }
     }
 }
+
+/// Escopo de `memoria_propor` que mira a memória central (não o cofre).
+pub const ESCOPO_CENTRAL: &str = "central";
+/// "Caminho" gravado nas propostas para a memória central.
+pub const CAMINHO_CENTRAL: &str = "memoria-central";
 
 /// Pedido de proposta (argumentos de `memoria_propor` + origem).
 #[derive(Debug, Clone)]
@@ -104,6 +121,7 @@ pub struct LeituraNota {
 pub struct Memoria {
     config: ConfigMemoria,
     cofre: Cofre,
+    central: MemoriaCentral,
     banco: Banco,
 }
 
@@ -114,12 +132,17 @@ impl Memoria {
         Ok(Memoria {
             config: config.memoria.clone(),
             cofre,
+            central: MemoriaCentral::da_config(config),
             banco,
         })
     }
 
     pub fn cofre(&self) -> &Cofre {
         &self.cofre
+    }
+
+    pub fn central(&self) -> &MemoriaCentral {
+        &self.central
     }
 
     pub fn config(&self) -> &ConfigMemoria {
@@ -161,20 +184,25 @@ impl Memoria {
     }
 
     /// Valida e coloca uma proposta na fila. NÃO grava no cofre.
+    /// Escopos: "interno", "externo" ou "central" (memória central).
     pub fn propor(&self, pedido: &PedidoProposta) -> anyhow::Result<PropostaRegistrada> {
-        let escopo = Escopo::de_texto(&pedido.escopo).with_context(|| {
-            format!(
-                "escopo '{}' inválido: use 'interno' ou 'externo'",
-                pedido.escopo
-            )
-        })?;
+        let central = pedido.escopo.trim().eq_ignore_ascii_case(ESCOPO_CENTRAL);
+        let escopo = if central {
+            None
+        } else {
+            Some(Escopo::de_texto(&pedido.escopo).with_context(|| {
+                format!(
+                    "escopo '{}' inválido: use 'interno', 'externo' ou 'central'",
+                    pedido.escopo
+                )
+            })?)
+        };
         let tipo = Tipo::de_texto(&pedido.tipo).with_context(|| {
             format!(
                 "tipo '{}' inválido: use 'dito' (afirmado) ou 'deduzido' (inferido)",
                 pedido.tipo
             )
         })?;
-        let caminho = self.cofre.caminho_no_escopo(escopo, &pedido.caminho)?;
         let conteudo = pedido.conteudo.trim();
         if conteudo.is_empty() {
             bail!("o conteúdo está vazio");
@@ -186,13 +214,23 @@ impl Memoria {
                 self.config.max_bytes_proposta
             );
         }
-        // Frontmatter quebrado é recusado já, não só no sleep.
-        frontmatter::separar(conteudo)?;
+        let (texto_escopo, caminho) = match escopo {
+            Some(escopo) => {
+                // Frontmatter quebrado é recusado já, não só no sleep.
+                frontmatter::separar(conteudo)?;
+                let caminho = self.cofre.caminho_no_escopo(escopo, &pedido.caminho)?;
+                (escopo.como_texto(), caminho)
+            }
+            None => {
+                central::validar_texto(conteudo)?;
+                (ESCOPO_CENTRAL, CAMINHO_CENTRAL.to_string())
+            }
+        };
 
         let id = propostas::enfileirar(
             &self.banco,
             &NovaProposta {
-                escopo: escopo.como_texto().to_string(),
+                escopo: texto_escopo.to_string(),
                 caminho: caminho.clone(),
                 conteudo: conteudo.to_string(),
                 tipo,
@@ -200,19 +238,32 @@ impl Memoria {
                 origem_externa: pedido.origem_externa.clone(),
             },
         )?;
-        let aviso = match (&pedido.origem_externa, escopo) {
-            (Some(origem), Escopo::Interno) => Some(format!(
+        let interna = central || escopo == Some(Escopo::Interno);
+        let mut aviso = match &pedido.origem_externa {
+            Some(origem) if interna => Some(format!(
                 "o contexto desta conversa tem conteúdo externo ({origem}); propostas para 01_internal \
-                 com essa origem são REJEITADAS no sleep. Se for um dado externo útil, proponha no escopo externo."
+                 ou para a memória central com essa origem são REJEITADAS no sleep. Se for um dado \
+                 externo útil, proponha no escopo externo."
             )),
             _ => None,
         };
+        // Memória central: avisa já se não vai caber (o sleep recusa).
+        if central && aviso.is_none() {
+            let uso = self.central.uso_com(tipo, conteudo);
+            if uso > self.central.limite() {
+                aviso = Some(format!(
+                    "a memória central ficaria com {uso} caracteres (limite {}); do jeito que está, \
+                     a proposta será recusada no sleep. Prefira uma nota em 01_internal.",
+                    self.central.limite()
+                ));
+            }
+        }
         Ok(PropostaRegistrada { id, caminho, aviso })
     }
 
     /// Aplica as propostas pendentes (`abiyss sleep`).
     pub fn sleep(&self) -> anyhow::Result<RelatorioSleep> {
-        sleep::aplicar_pendentes(&self.cofre, &self.banco)
+        sleep::aplicar_pendentes(&self.cofre, &self.central, &self.banco)
     }
 
     /// Remove uma nota e registra QUE foi removida (nunca o conteúdo).

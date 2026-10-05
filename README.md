@@ -34,6 +34,7 @@ comando (`abiyss ...`); não há painel web.
 ```
 abiyss.toml  .env            ← configuração (sem segredos) + chaves (fora do git)
 identity/nucleo.md           ← núcleo de identidade (o Abiyss NÃO edita)
+identity/memoria-central.md  ← memória central com orçamento (fora do git; escrita só pelo sleep/importação)
 skills/                      ← skills (SKILL.md); só leitura para o Abiyss
 kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/nim/                   ← cliente NIM (SSE, tool calling) + mock para testes
@@ -236,6 +237,7 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss memoria propostas [--todas]` | Propostas pendentes (ou recentes, com a decisão) |
 | `abiyss memoria buscar "consulta" [--escopo interno\|externo\|ambos]` | Busca no cofre (a mesma da ferramenta) |
 | `abiyss memoria esquecer CAMINHO` | Remove uma nota (ex.: `01_internal/pessoas/ana.md`) e registra só que foi removida |
+| `abiyss memoria central` | Mostra a memória central e o uso do orçamento |
 | `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
 | `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
@@ -290,6 +292,26 @@ rejeita no escopo interno (o `Cofre::gravar` confere de novo). Leituras da
 memória interna e confirmações do kernel não contam como externas; memória
 externa, arquivos do workspace, skills, MCP e sub-agentes contam. Para
 sub-agentes, tudo conta como externo.
+
+### Memória central
+
+Arquivo pequeno (`[memoria] central`, padrão `identity/memoria-central.md`)
+injetado no system prompt **em todo turno** (conversa e heartbeat), logo
+depois do núcleo, e relido a cada turno. Entradas separadas por uma linha
+`§` (formato do Hermes), cada uma marcada `[dito]` ou `[deduzido]`:
+
+```text
+[dito] O usuário se chama Rafael.
+§
+[deduzido] Prefere respostas curtas.
+```
+
+Orçamento em caracteres (`limite_central_caracteres`, padrão 4000). Escrita
+acima do limite é **recusada e relatada** (no sleep e no aviso da
+proposta); o kernel nunca corta em silêncio. Se o arquivo for editado à mão
+e passar do limite, ele vai inteiro para o prompt e `abiyss status` avisa.
+O Abiyss escreve aqui com `memoria_propor(escopo="central", ...)` (mesma
+regra dura do escopo interno; repetições são ignoradas).
 
 ---
 

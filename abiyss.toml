@@ -134,6 +134,13 @@ cofre = "cofre"
 max_resultados = 8
 max_bytes_nota = 200000
 max_bytes_proposta = 20000
+# Memória central: arquivo PEQUENO injetado no system prompt em todo turno
+# (conversa e heartbeat), ao lado do núcleo. Entradas separadas por "§",
+# cada uma marcada [dito] ou [deduzido]. Fora do git (dados pessoais).
+central = "identity/memoria-central.md"
+# Orçamento em caracteres. Escrita que passaria do limite é RECUSADA e
+# relatada (nunca cortada). O Hermes usava ~2200 (MEMORY.md) + ~1375 (USER.md).
+limite_central_caracteres = 4000
 
 # ---------------------------------------------------------------------------
 # Daemon (`abiyss daemon`): heartbeat e crons.

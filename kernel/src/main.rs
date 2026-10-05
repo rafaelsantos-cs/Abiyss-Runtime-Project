@@ -142,6 +142,8 @@ enum ComandoMemoria {
         #[arg(long, default_value = "ambos")]
         escopo: String,
     },
+    /// Mostra a memória central (injetada em todo turno) e o uso do orçamento.
+    Central,
     /// Mostra o registro de operações (criada, atualizada, rejeitada, esquecida).
     Registro {
         #[arg(long, default_value_t = 30)]
@@ -239,6 +241,7 @@ async fn main() -> anyhow::Result<()> {
                 ComandoMemoria::Buscar { consulta, escopo } => {
                     cli::memoria::buscar(&config, &consulta, &escopo).await
                 }
+                ComandoMemoria::Central => cli::memoria::central(&config),
                 ComandoMemoria::Registro { limite } => cli::memoria::registro(&config, limite),
             }
         }

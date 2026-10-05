@@ -4,6 +4,7 @@
 use abiyss::config::Config;
 use abiyss::db::Banco;
 use abiyss::memoria::Memoria;
+use abiyss::memoria::central::MemoriaCentral;
 use abiyss::memoria::nota::EscopoBusca;
 use abiyss::memoria::propostas::{self, EstadoProposta};
 use abiyss::tempo::formatar_ms;
@@ -114,6 +115,35 @@ pub fn registro(config: &Config, limite: usize) -> anyhow::Result<()> {
             formatar_ms(e.momento_ms),
             e.acao,
             e.caminho
+        );
+    }
+    Ok(())
+}
+
+/// Mostra a memória central e quanto do orçamento ela usa.
+pub fn central(config: &Config) -> anyhow::Result<()> {
+    let central = MemoriaCentral::da_config(config);
+    let uso = central.uso();
+    println!(
+        "Memória central: {} ({uso}/{} caracteres{})",
+        central.caminho().display(),
+        central.limite(),
+        if uso > central.limite() {
+            ", ACIMA DO ORÇAMENTO"
+        } else {
+            ""
+        }
+    );
+    let entradas = central.entradas();
+    if entradas.is_empty() {
+        println!("(vazia)");
+    }
+    for (i, e) in entradas.iter().enumerate() {
+        let tipo = e.tipo.map(|t| t.como_texto()).unwrap_or("sem tipo");
+        println!(
+            "{:>3}. [{tipo}] {}",
+            i + 1,
+            e.texto.replace('\n', "\n     ")
         );
     }
     Ok(())

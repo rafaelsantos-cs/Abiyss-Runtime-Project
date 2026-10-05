@@ -468,9 +468,15 @@ impl Config {
         self.resolver(&self.memoria.cofre)
     }
 
+    /// Arquivo da memória central (injetada no system prompt).
+    pub fn caminho_memoria_central(&self) -> PathBuf {
+        self.resolver(&self.memoria.central)
+    }
+
     /// Áreas que o workspace NUNCA pode conter nem ficar dentro:
     /// código do kernel, identidade, dados, segredos, config, git, recursos,
-    /// skills (só leitura) e o cofre de memória (escrita só pelo sleep).
+    /// skills (só leitura), o cofre de memória e a memória central (escrita
+    /// só pelo sleep e pelo importador).
     pub fn areas_protegidas(&self) -> Vec<PathBuf> {
         let mut areas = vec![
             self.raiz.join("kernel"),
@@ -483,6 +489,7 @@ impl Config {
             self.caminho_identidade(),
             self.caminho_skills(),
             self.caminho_cofre(),
+            self.caminho_memoria_central(),
         ];
         // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
         if let Some(pasta) = self.caminho_identidade().parent()
