@@ -11,6 +11,11 @@ base_url = "https://integrate.api.nvidia.com/v1"
 # Segundos SEM receber nenhum byte antes de desistir (raciocínio longo demora).
 timeout_leitura_segundos = 600
 timeout_conexao_segundos = 15
+# Máximo de bytes lidos de UMA resposta (com ou sem streaming); passou, a
+# chamada falha. 16 MiB cobre com folga 32k tokens de saída em SSE.
+max_bytes_resposta = 16777216
+# Conexões HTTP ociosas guardadas por pool para reaproveitar.
+max_conexoes_ociosas = 4
 
 # ---------------------------------------------------------------------------
 # Modelos. `extra` é copiado como está para o corpo da requisição.
@@ -25,20 +30,94 @@ max_tokens = 32768
 # (ex.: reasoning_effort = "max"), acrescente aqui.
 extra = { chat_template_kwargs = { enable_thinking = true, clear_thinking = false } }
 
+# ---------------------------------------------------------------------------
+# Tabela de esforço. O kernel pensa em níveis abstratos (do mais leve ao mais
+# pesado): minimal, low, medium, high, xhigh, ultra. Dois modos por cima:
+#   raso     = minimal, low, medium
+#   profundo = high, xhigh, ultra
+# Cada modelo traduz cada nível para o que ele aceita:
+#   pensar      = true/false  → grava no campo `campo_pensar` do corpo
+#   orcamento   = N (tokens)  → grava no campo `campo_orcamento`
+#   max_tokens  = N           → substitui o max_tokens do modelo
+#   extra       = { ... }     → mesclado por cima do `extra` do modelo
+#   usar_modelo = "<papel>"   → usa OUTRO modelo de [modelos] neste nível
+#   a_confirmar = "..."       → PLACEHOLDER: capacidade não verificada no NIM
+# Campo vazio = o modelo não tem esse botão (usar `pensar`/`orcamento` nele
+# é recusado ao carregar). Confira o resultado com `abiyss esforco`.
+# Por enquanto só a camada de config/cliente usa esta tabela (o chat, o
+# heartbeat e os sub-agentes ainda usam os parâmetros fixos acima).
+# ---------------------------------------------------------------------------
+
+[modelos.cerebro.esforco]
+campo_pensar = "chat_template_kwargs.enable_thinking"
+# GLM: nenhum orçamento de raciocínio documentado no NIM — A CONFIRMAR.
+campo_orcamento = ""
+
+[modelos.cerebro.esforco.niveis]
+minimal = { pensar = false, max_tokens = 4096 }
+low = { pensar = false }
+medium = { pensar = true, max_tokens = 16384 }
+high = { pensar = true }
+# Sem orçamento conhecido, xhigh e ultra só diferem pelo esforço pedido.
+xhigh = { pensar = true, a_confirmar = "GLM não tem orçamento de raciocínio conhecido; igual a high" }
+ultra = { pensar = true, extra = { reasoning_effort = "max" }, a_confirmar = "o NIM aceita reasoning_effort = \"max\" para o GLM?" }
+
 [modelos.sub_ultra]
 # Kimi K3 — PLACEHOLDER: ID não encontrado; confirme no catálogo.
 id = "moonshotai/kimi-k3"
 max_tokens = 16384
+
+[modelos.sub_ultra.esforco]
+# Kimi: o raciocínio costuma ser um MODELO separado (variante "thinking"),
+# não um campo — A CONFIRMAR para o K3. Sem botões por enquanto.
+campo_pensar = ""
+campo_orcamento = ""
+
+[modelos.sub_ultra.esforco.niveis]
+# Níveis rasos ficam com um modelo mais barato.
+minimal = { usar_modelo = "sub_low", pensar = false }
+low = { usar_modelo = "sub_medium", pensar = false }
+medium = { usar_modelo = "sub_medium", pensar = true }
+high = { a_confirmar = "Kimi K3: existe variante com raciocínio no NIM?" }
+xhigh = { a_confirmar = "Kimi K3: existe variante com raciocínio no NIM?" }
+ultra = { usar_modelo = "cerebro", pensar = true, extra = { reasoning_effort = "max" }, a_confirmar = "mesmo placeholder do cerebro.ultra" }
 
 [modelos.sub_medium]
 # GLM 5.3 Flash — A CONFIRMAR o ID exato.
 id = "z-ai/glm-5.3-flash"
 max_tokens = 8192
 
+[modelos.sub_medium.esforco]
+campo_pensar = "chat_template_kwargs.enable_thinking"
+campo_orcamento = ""
+
+[modelos.sub_medium.esforco.niveis]
+minimal = { pensar = false, max_tokens = 2048 }
+low = { pensar = false }
+medium = { pensar = true }
+high = { pensar = true, a_confirmar = "GLM Flash: sem orçamento conhecido; igual a medium" }
+# Acima de high, o Flash cede a vez ao GLM completo.
+xhigh = { usar_modelo = "cerebro", pensar = true }
+ultra = { usar_modelo = "cerebro", pensar = true, extra = { reasoning_effort = "max" }, a_confirmar = "mesmo placeholder do cerebro.ultra" }
+
 [modelos.sub_low]
 # Nemotron 120b — A CONFIRMAR o ID exato.
 id = "nvidia/nemotron-3-super-120b-a12b"
 max_tokens = 8192
+
+[modelos.sub_low.esforco]
+# Nemotron 3: raciocínio por chat_template_kwargs — A CONFIRMAR o nome do
+# campo; o orçamento de raciocínio (thinking budget) também.
+campo_pensar = "chat_template_kwargs.enable_thinking"
+campo_orcamento = ""
+
+[modelos.sub_low.esforco.niveis]
+minimal = { pensar = false, max_tokens = 1024, a_confirmar = "nome do campo de raciocínio do Nemotron 3" }
+low = { pensar = false, a_confirmar = "nome do campo de raciocínio do Nemotron 3" }
+medium = { pensar = true, a_confirmar = "nome do campo de raciocínio do Nemotron 3" }
+high = { usar_modelo = "sub_medium", pensar = true }
+xhigh = { usar_modelo = "cerebro", pensar = true }
+ultra = { usar_modelo = "cerebro", pensar = true, extra = { reasoning_effort = "max" }, a_confirmar = "mesmo placeholder do cerebro.ultra" }
 
 # ---------------------------------------------------------------------------
 # Pools de chamadas. Cada pool tem a SUA chave (nome da variável no .env)
@@ -58,6 +137,8 @@ rajada = 1
 # Fatia reservada para conversa com o usuário: o trabalho autônomo do
 # daemon usa no máximo 40 - 10 = 30 req/min.
 reserva_conversa_por_minuto = 10
+# Máximo de chamadas esperando a vez neste pool (acima disso: erro na hora).
+max_na_fila = 64
 
 [pools.cerebro.retentativas]
 max_tentativas = 5
@@ -68,6 +149,7 @@ backoff_maximo_ms = 60000
 api_key_env = "NIM_API_KEY_SUBAGENTES"
 requisicoes_por_minuto = 40
 rajada = 1
+max_na_fila = 64
 
 # Fila com prioridade Ultra > Medium > Low; máximo de chamadas simultâneas por nível.
 [pools.subagentes.concorrencia]
@@ -173,6 +255,10 @@ cron_verificacao_segundos = 30
 revisao_minima_segundos = 1800
 # Máximo de eventos da fila colocados no contexto de um ciclo.
 max_eventos_por_ciclo = 20
+# Watchdog do systemd (WatchdogSec= na unit): se o loop principal ficar
+# este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
+# o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
+max_travado_segundos = 3600
 
 # ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
@@ -217,6 +303,16 @@ ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
 [mcp]
 # Na primeira execução o uv pode precisar baixar dependências.
 timeout_inicio_segundos = 120
+# Supervisão (só no daemon): a cada N segundos, servidor que caiu, que
+# estourou uma chamada (timeout_segundos), que passou de max_memoria_mb
+# (processo + descendentes: o `uv` e o Python) ou de max_vida_segundos é
+# morto — o grupo de processos inteiro — e sobe de novo.
+supervisao_segundos = 30
+max_memoria_mb = 512
+# 0 = sem limite de tempo de vida.
+max_vida_segundos = 0
+# Resultado de ferramenta maior que isto é cortado (com aviso no texto).
+max_bytes_resultado = 1000000
 
 [[mcp.servidores]]
 nome = "exemplo"
@@ -236,3 +332,24 @@ timeout_segundos = 30
 # Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
 expor = false
 ativo = true
+
+# ---------------------------------------------------------------------------
+# Retenção e manutenção do banco (feita pelo daemon; `abiyss manutencao`
+# roda na hora). Detalhe mais velho que N dias vira agregado diário (dia
+# UTC) e é apagado: chamadas_modelo → chamadas_modelo_diarias, eventos JÁ
+# consumidos → eventos_diarios (pendentes nunca são apagados), ciclos →
+# ciclos_diarios. Mínimo de 2 dias (status e interocepção leem as últimas 24 h).
+# ---------------------------------------------------------------------------
+
+[retencao]
+chamadas_modelo_dias = 30
+eventos_dias = 30
+ciclos_dias = 30
+# Retenção + vacuum incremental.
+manutencao_minutos = 360
+# Checkpoint do WAL (o arquivo -wal é truncado; teto de 64 MiB entre checkpoints).
+checkpoint_minutos = 15
+vacuum_max_paginas = 2000
+# Bancos criados antes desta versão precisam de UM VACUUM completo para
+# ligar o vacuum incremental; o daemon faz isso sozinho na 1ª manutenção.
+converter_auto_vacuum = true

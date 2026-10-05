@@ -203,7 +203,55 @@ const MIGRACOES: &[&str] = &[
         momento_ms INTEGER NOT NULL
     );
     "#,
+    // 8 (infra v0.2) — latência das chamadas ao modelo: tempo até o primeiro
+    // token (NULL quando a chamada falhou antes de qualquer token) e se a
+    // chamada foi por streaming. A duração total já existia (`duracao_ms`).
+    r#"
+    ALTER TABLE chamadas_modelo ADD COLUMN primeiro_token_ms INTEGER;
+    ALTER TABLE chamadas_modelo ADD COLUMN stream INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_chamadas_modelo_momento ON chamadas_modelo(modelo, momento_ms);
+    "#,
+    // 9 (infra v0.2) — retenção: o detalhe antigo de chamadas, eventos
+    // consumidos e ciclos vira agregado diário (dia UTC, "AAAA-MM-DD").
+    // Só somas, contagens e máximos: dá para somar dois lotes do mesmo dia.
+    r#"
+    CREATE TABLE chamadas_modelo_diarias (
+        dia                     TEXT    NOT NULL,
+        pool                    TEXT    NOT NULL,
+        modelo                  TEXT    NOT NULL,
+        status                  TEXT    NOT NULL,
+        chamadas                INTEGER NOT NULL,
+        tokens_entrada          INTEGER NOT NULL,
+        tokens_saida            INTEGER NOT NULL,
+        duracao_soma_ms         INTEGER NOT NULL,
+        duracao_max_ms          INTEGER NOT NULL,
+        primeiro_token_soma_ms  INTEGER NOT NULL,
+        primeiro_token_amostras INTEGER NOT NULL,
+        PRIMARY KEY (dia, pool, modelo, status)
+    );
+    CREATE TABLE eventos_diarios (
+        dia     TEXT    NOT NULL,
+        tipo    TEXT    NOT NULL,
+        origem  TEXT    NOT NULL,
+        eventos INTEGER NOT NULL,
+        PRIMARY KEY (dia, tipo, origem)
+    );
+    CREATE TABLE ciclos_diarios (
+        dia             TEXT    PRIMARY KEY,
+        ciclos          INTEGER NOT NULL,
+        com_modelo      INTEGER NOT NULL,
+        com_erro        INTEGER NOT NULL,
+        tokens          INTEGER NOT NULL,
+        duracao_soma_ms INTEGER NOT NULL
+    );
+    CREATE INDEX idx_fila_momento ON fila_eventos(momento_ms);
+    CREATE INDEX idx_ciclos_inicio ON ciclos(inicio_ms);
+    "#,
 ];
+
+/// Teto do arquivo WAL depois de cada checkpoint (o SQLite trunca o que
+/// passar disto). Sem teto, o WAL fica do tamanho do maior pico.
+const LIMITE_WAL_BYTES: i64 = 64 * 1024 * 1024;
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.
 ///
@@ -225,8 +273,10 @@ impl Banco {
         }
         let conexao = Connection::open(caminho)
             .with_context(|| format!("não consegui abrir {}", caminho.display()))?;
+        ligar_vacuum_incremental_se_novo(&conexao)?;
         // WAL permite um processo escrever enquanto outro lê.
         conexao.pragma_update(None, "journal_mode", "WAL")?;
+        conexao.pragma_update(None, "journal_size_limit", LIMITE_WAL_BYTES)?;
         Banco::preparar(conexao)
     }
 
@@ -278,6 +328,18 @@ impl Banco {
             .query_row("PRAGMA user_version", [], |linha| linha.get(0))?;
         Ok(versao as usize)
     }
+}
+
+/// Banco novo (arquivo ainda vazio): liga o vacuum incremental. Precisa vir
+/// ANTES de qualquer escrita, inclusive a troca para WAL — depois disso o
+/// modo só muda com um VACUUM completo
+/// (ver `manutencao::converter_para_vacuum_incremental`).
+fn ligar_vacuum_incremental_se_novo(conexao: &Connection) -> anyhow::Result<()> {
+    let paginas: i64 = conexao.query_row("PRAGMA page_count", [], |l| l.get(0))?;
+    if paginas == 0 {
+        conexao.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+    }
+    Ok(())
 }
 
 /// Quantas migrações existem (para testes e para o `abiyss status`).

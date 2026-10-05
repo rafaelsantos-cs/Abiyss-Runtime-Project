@@ -27,6 +27,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::{self, Config, ConfigRetentativas};
 use crate::db::Banco;
+use crate::nim::cliente::LimitesCliente;
 use crate::nim::{ClienteNim, ErroNim, EventoStream, PedidoChat, RespostaModelo};
 use crate::tempo::agora_ms;
 use balde::ConfigBalde;
@@ -109,6 +110,14 @@ pub fn reemprestar<'b>(ao_receber: &'b mut AoReceber<'_>) -> AoReceber<'b> {
     }
 }
 
+/// Tempos medidos numa tentativa de chamada (vão para `chamadas_modelo`).
+struct Latencia {
+    stream: bool,
+    /// `None` quando a chamada falhou antes de qualquer token.
+    primeiro_token: Option<Duration>,
+    total: Duration,
+}
+
 /// O que os dois pools têm em comum: cliente, fila, banco e retentativas.
 struct NucleoPool {
     nome: &'static str,
@@ -123,7 +132,10 @@ struct NucleoPool {
 impl NucleoPool {
     /// Espera a vez na fila e pega 1 ficha de cada balde da lista.
     async fn esperar_ficha(&self, prioridade: u8, baldes: &[ConfigBalde]) -> anyhow::Result<()> {
-        let lugar = self.fila.entrar(prioridade);
+        let lugar = self
+            .fila
+            .entrar(prioridade)
+            .with_context(|| format!("pool {}", self.nome))?;
         loop {
             self.fila.esperar_a_vez(&lugar).await;
             match balde::tentar_pegar(&self.banco, baldes, agora_ms())? {
@@ -165,17 +177,37 @@ impl NucleoPool {
             self.esperar_ficha(prioridade, baldes).await?;
 
             let inicio = Instant::now();
+            // Tempo até o primeiro token: no streaming, o primeiro pedaço
+            // (texto, raciocínio ou início de ferramenta) que chega; sem
+            // streaming, o primeiro token só chega junto com a resposta inteira.
+            let mut primeiro_token: Option<Duration> = None;
+            let stream = ao_receber.is_some();
             let resultado = match ao_receber.as_mut() {
-                Some(callback) => self.cliente.completar_stream(pedido, *callback).await,
+                Some(callback) => {
+                    let mut medir_e_repassar = |evento: EventoStream| {
+                        if primeiro_token.is_none() {
+                            primeiro_token = Some(inicio.elapsed());
+                        }
+                        callback(evento);
+                    };
+                    self.cliente
+                        .completar_stream(pedido, &mut medir_e_repassar)
+                        .await
+                }
                 None => self.cliente.completar(pedido).await,
             };
-            self.registrar(
-                origem,
-                &pedido.model,
-                tentativa,
-                &resultado,
-                inicio.elapsed(),
-            );
+            let duracao = inicio.elapsed();
+            let latencia = Latencia {
+                stream,
+                // Resposta sem nenhum pedaço (ex.: só `usage`) ou sem
+                // streaming: o primeiro token chegou com o fim da resposta.
+                primeiro_token: match &resultado {
+                    Ok(_) => Some(primeiro_token.unwrap_or(duracao)),
+                    Err(_) => primeiro_token,
+                },
+                total: duracao,
+            };
+            self.registrar(origem, &pedido.model, tentativa, &resultado, &latencia);
 
             let erro = match resultado {
                 Ok(resposta) => return Ok(resposta),
@@ -213,7 +245,7 @@ impl NucleoPool {
         modelo: &str,
         tentativa: u32,
         resultado: &Result<RespostaModelo, ErroNim>,
-        duracao: Duration,
+        latencia: &Latencia,
     ) {
         let (status, http, entrada, saida) = match resultado {
             Ok(r) => ("ok", None, r.uso.prompt_tokens, r.uso.completion_tokens),
@@ -224,8 +256,8 @@ impl NucleoPool {
         let gravou = self.banco.conexao().execute(
             "INSERT INTO chamadas_modelo
                (momento_ms, pool, origem, modelo, tentativa, status, http_status,
-                tokens_entrada, tokens_saida, duracao_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                tokens_entrada, tokens_saida, duracao_ms, primeiro_token_ms, stream)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 agora_ms(),
                 self.nome,
@@ -236,7 +268,9 @@ impl NucleoPool {
                 http,
                 entrada as i64,
                 saida as i64,
-                duracao.as_millis() as i64
+                latencia.total.as_millis() as i64,
+                latencia.primeiro_token.map(|d| d.as_millis() as i64),
+                latencia.stream
             ],
         );
         if let Err(e) = gravou {
@@ -350,6 +384,10 @@ impl Orquestrador {
         let leitura = Duration::from_secs(config.nim.timeout_leitura_segundos);
         let c = &config.pools.cerebro;
         let s = &config.pools.subagentes;
+        let limites_cliente = LimitesCliente {
+            max_bytes_resposta: config.nim.max_bytes_resposta,
+            max_conexoes_ociosas: config.nim.max_conexoes_ociosas,
+        };
 
         let balde_total =
             ConfigBalde::por_minuto(BALDE_CEREBRO, c.requisicoes_por_minuto, c.rajada);
@@ -361,9 +399,15 @@ impl Orquestrador {
         let cerebro = PoolCerebro {
             nucleo: NucleoPool {
                 nome: "cerebro",
-                cliente: ClienteNim::novo(&config.nim.base_url, chave_cerebro, conexao, leitura)?,
+                cliente: ClienteNim::novo_com_limites(
+                    &config.nim.base_url,
+                    chave_cerebro,
+                    conexao,
+                    leitura,
+                    limites_cliente,
+                )?,
                 banco: banco.clone(),
-                fila: FilaPrioridade::nova(),
+                fila: FilaPrioridade::nova(c.max_na_fila),
                 retentativas: c.retentativas.clone(),
                 balde_principal: balde_total.clone(),
             },
@@ -376,14 +420,15 @@ impl Orquestrador {
         let subagentes = PoolSubagentes {
             nucleo: NucleoPool {
                 nome: "subagentes",
-                cliente: ClienteNim::novo(
+                cliente: ClienteNim::novo_com_limites(
                     &config.nim.base_url,
                     chave_subagentes,
                     conexao,
                     leitura,
+                    limites_cliente,
                 )?,
                 banco,
-                fila: FilaPrioridade::nova(),
+                fila: FilaPrioridade::nova(s.max_na_fila),
                 retentativas: s.retentativas.clone(),
                 balde_principal: balde_sub.clone(),
             },
@@ -416,7 +461,7 @@ mod testes {
             )
             .unwrap(),
             banco: Banco::em_memoria().unwrap(),
-            fila: FilaPrioridade::nova(),
+            fila: FilaPrioridade::nova(8),
             retentativas: ConfigRetentativas {
                 max_tentativas: 10,
                 backoff_inicial_ms: 100,

@@ -5,14 +5,30 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now abiyss
 #   journalctl -u abiyss -f        # acompanhar os logs
+#
+# Limite de tamanho do journal: ver "Logs: tamanho do journal" no README.
 
 [Unit]
 Description=Abiyss - agente de IA autonomo 24/7
 After=network-online.target
 Wants=network-online.target
+# Mais de 5 reinícios em 10 min = algo está muito errado: o systemd desiste
+# (estado "failed") em vez de reiniciar em loop. `systemctl reset-failed abiyss`
+# e `systemctl start abiyss` depois de corrigir.
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
-Type=simple
+# O daemon avisa READY=1 quando terminou de subir (servidores MCP incluídos)
+# e manda WATCHDOG=1 enquanto o loop principal anda.
+Type=notify
+NotifyAccess=main
+# Subir os servidores MCP pode levar até [mcp] timeout_inicio_segundos cada.
+TimeoutStartSec=300
+# Sem WATCHDOG=1 por 2 min (tokio travado, ou o loop principal parado há
+# mais de [daemon] max_travado_segundos), o systemd mata e reinicia.
+WatchdogSec=120
+
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/Abiyss-Runtime-Project
@@ -26,17 +42,35 @@ Environment=TZ=America/Sao_Paulo
 # O uv precisa estar no PATH para subir os servidores MCP.
 Environment=PATH=/home/ubuntu/.local/bin:/home/ubuntu/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 
+# Reinicia em falha, em sinal fatal e em estouro do watchdog (não num stop normal).
 Restart=on-failure
 RestartSec=10
 # SIGTERM: o daemon para com educação, mesmo no meio de um ciclo.
 KillSignal=SIGTERM
 TimeoutStopSec=30
 
+# Recursos. Os limites valem para o cgroup inteiro: daemon + servidores MCP
+# (uv e Python). Acima de MemoryHigh o kernel recupera memória com força
+# (o serviço fica lento, mas vivo); em MemoryMax, o OOM killer age.
+MemoryHigh=3G
+MemoryMax=4G
+# Sem swap: um vazamento aparece como OOM em vez de travar a VM trocando páginas.
+MemorySwapMax=0
+# Se o OOM killer matar só um servidor MCP, o daemon continua (a supervisão
+# sobe o servidor de novo); se matar o daemon, Restart=on-failure resolve.
+OOMPolicy=continue
+# Processos + threads do cgroup (o tokio usa poucas threads; o uv/Python, algumas).
+TasksMax=256
+
+# Rajadas de log não enchem o journal (systemd >= 240; versões antigas
+# ignoram estas duas linhas com um aviso).
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=2000
+
 # Endurecimento básico.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-MemoryMax=4G
 
 [Install]
 WantedBy=multi-user.target

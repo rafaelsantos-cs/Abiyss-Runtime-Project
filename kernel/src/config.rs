@@ -34,6 +34,8 @@ pub struct Config {
     pub subagentes: ConfigSubagentes,
     #[serde(default)]
     pub memoria: crate::memoria::ConfigMemoria,
+    #[serde(default)]
+    pub retencao: crate::manutencao::ConfigRetencao,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -54,6 +56,22 @@ pub struct ConfigNim {
     /// Tempo máximo para abrir a conexão TCP/TLS.
     #[serde(default = "padrao_timeout_conexao")]
     pub timeout_conexao_segundos: u64,
+    /// Máximo de bytes lidos de UMA resposta (com ou sem streaming). Passou
+    /// disso, a chamada falha: protege a memória de um servidor que não
+    /// para de mandar dados.
+    #[serde(default = "padrao_max_bytes_resposta")]
+    pub max_bytes_resposta: usize,
+    /// Conexões HTTP ociosas guardadas por pool para reaproveitar.
+    #[serde(default = "padrao_max_conexoes_ociosas")]
+    pub max_conexoes_ociosas: usize,
+}
+
+fn padrao_max_bytes_resposta() -> usize {
+    16 * 1024 * 1024
+}
+
+fn padrao_max_conexoes_ociosas() -> usize {
+    4
 }
 
 fn padrao_timeout_leitura() -> u64 {
@@ -93,6 +111,26 @@ pub struct ConfigModelo {
     /// raciocínio (`chat_template_kwargs`), sem precisar recompilar o kernel.
     #[serde(default)]
     pub extra: Map<String, Value>,
+    /// Tabela de esforço: como cada nível abstrato (minimal..ultra) vira
+    /// parâmetros deste modelo. Ver `crate::esforco`.
+    #[serde(default)]
+    pub esforco: crate::esforco::ConfigEsforcoModelo,
+}
+
+impl ConfigModelos {
+    /// Nomes das seções `[modelos.<papel>]`.
+    pub const PAPEIS: [&'static str; 4] = ["cerebro", "sub_ultra", "sub_medium", "sub_low"];
+
+    /// O modelo de um papel, pelo nome da seção.
+    pub fn por_papel(&self, papel: &str) -> Option<&ConfigModelo> {
+        match papel {
+            "cerebro" => Some(&self.cerebro),
+            "sub_ultra" => Some(&self.sub_ultra),
+            "sub_medium" => Some(&self.sub_medium),
+            "sub_low" => Some(&self.sub_low),
+            _ => None,
+        }
+    }
 }
 
 /// Configuração dos dois pools de chamadas ao NIM.
@@ -117,6 +155,9 @@ pub struct ConfigPoolCerebro {
     /// autônomas (daemon) só podem usar `requisicoes_por_minuto - reserva`.
     #[serde(default = "padrao_reserva_conversa")]
     pub reserva_conversa_por_minuto: u32,
+    /// Máximo de chamadas esperando a vez neste pool; acima disso, erro.
+    #[serde(default = "padrao_max_na_fila")]
+    pub max_na_fila: usize,
     #[serde(default)]
     pub retentativas: ConfigRetentativas,
 }
@@ -132,6 +173,9 @@ pub struct ConfigPoolSubagentes {
     /// Máximo de chamadas simultâneas por nível de sub-agente.
     #[serde(default)]
     pub concorrencia: ConfigConcorrencia,
+    /// Máximo de chamadas esperando a vez neste pool; acima disso, erro.
+    #[serde(default = "padrao_max_na_fila")]
+    pub max_na_fila: usize,
     #[serde(default)]
     pub retentativas: ConfigRetentativas,
 }
@@ -186,6 +230,10 @@ fn padrao_reserva_conversa() -> u32 {
     10
 }
 
+fn padrao_max_na_fila() -> usize {
+    64
+}
+
 /// Onde ficam os arquivos do Abiyss (relativos à raiz do projeto).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -224,6 +272,10 @@ pub struct ConfigDaemon {
     pub revisao_minima_segundos: u64,
     /// Máximo de eventos da fila colocados no contexto de um ciclo.
     pub max_eventos_por_ciclo: usize,
+    /// Com o watchdog do systemd ligado: se o loop principal ficar este
+    /// tempo sem completar nenhuma volta (ex.: um ciclo travado), o daemon
+    /// para de mandar WATCHDOG=1 e o systemd o reinicia.
+    pub max_travado_segundos: u64,
 }
 
 impl Default for ConfigDaemon {
@@ -233,6 +285,7 @@ impl Default for ConfigDaemon {
             cron_verificacao_segundos: 30,
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
+            max_travado_segundos: 3_600,
         }
     }
 }
@@ -428,6 +481,12 @@ impl Config {
                 cerebro.requisicoes_por_minuto
             );
         }
+        if self.nim.max_bytes_resposta < 64 * 1024 {
+            bail!("nim.max_bytes_resposta precisa ser pelo menos 65536");
+        }
+        if cerebro.max_na_fila == 0 || self.pools.subagentes.max_na_fila == 0 {
+            bail!("pools.*.max_na_fila precisa ser maior que zero");
+        }
         if self.daemon.heartbeat_segundos == 0 || self.daemon.cron_verificacao_segundos == 0 {
             bail!("daemon.heartbeat_segundos e daemon.cron_verificacao_segundos precisam ser > 0");
         }
@@ -435,16 +494,14 @@ impl Config {
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
         }
-        for (nome, modelo) in [
-            ("cerebro", &self.modelos.cerebro),
-            ("sub_ultra", &self.modelos.sub_ultra),
-            ("sub_medium", &self.modelos.sub_medium),
-            ("sub_low", &self.modelos.sub_low),
-        ] {
+        for nome in ConfigModelos::PAPEIS {
+            let modelo = self.modelos.por_papel(nome).expect("papel da lista fixa");
             if modelo.id.trim().is_empty() {
                 bail!("modelos.{nome}.id está vazio");
             }
         }
+        crate::esforco::validar(&self.modelos)?;
+        self.retencao.validar()?;
         Ok(())
     }
 

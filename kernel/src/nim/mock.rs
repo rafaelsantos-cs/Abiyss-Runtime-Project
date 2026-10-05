@@ -97,12 +97,18 @@ pub type Roteiro = Arc<dyn Fn(&Value) -> RespostaMock + Send + Sync>;
 struct EstadoMock {
     fila: VecDeque<RespostaMock>,
     roteiro: Option<Roteiro>,
-    recebidas: Vec<RequisicaoRecebida>,
+    /// Só as últimas `MAX_RECEBIDAS_GUARDADAS` (o mock pode ficar horas no
+    /// ar no teste de resistência); o total fica em `total_recebidas`.
+    recebidas: VecDeque<RequisicaoRecebida>,
+    total_recebidas: usize,
     em_andamento: usize,
     pico_em_andamento: usize,
 }
 
 type Compartilhado = Arc<Mutex<EstadoMock>>;
+
+/// Quantas requisições recebidas o mock guarda para os testes conferirem.
+const MAX_RECEBIDAS_GUARDADAS: usize = 1_000;
 
 /// O servidor mock. Ao ser destruído (`drop`), o servidor para.
 pub struct MockNim {
@@ -161,12 +167,21 @@ impl MockNim {
         self.estado.lock().unwrap().roteiro = Some(Arc::new(roteiro));
     }
 
+    /// As últimas requisições recebidas (no máximo `MAX_RECEBIDAS_GUARDADAS`),
+    /// da mais antiga para a mais nova.
     pub fn requisicoes(&self) -> Vec<RequisicaoRecebida> {
-        self.estado.lock().unwrap().recebidas.clone()
+        self.estado
+            .lock()
+            .unwrap()
+            .recebidas
+            .iter()
+            .cloned()
+            .collect()
     }
 
+    /// Total de requisições desde que o mock subiu.
     pub fn total_requisicoes(&self) -> usize {
-        self.estado.lock().unwrap().recebidas.len()
+        self.estado.lock().unwrap().total_recebidas
     }
 
     /// Maior número de requisições atendidas ao mesmo tempo.
@@ -220,11 +235,15 @@ async fn tratar_chat(
     // Escolhe a resposta (e registra o pedido) segurando o lock só aqui.
     let resposta = {
         let mut e = estado.lock().unwrap();
-        e.recebidas.push(RequisicaoRecebida {
+        if e.recebidas.len() == MAX_RECEBIDAS_GUARDADAS {
+            e.recebidas.pop_front();
+        }
+        e.recebidas.push_back(RequisicaoRecebida {
             corpo: corpo.clone(),
             autorizacao: autorizacao.clone(),
             momento: Instant::now(),
         });
+        e.total_recebidas += 1;
         match e.fila.pop_front() {
             Some(r) => r,
             None => match &e.roteiro {
