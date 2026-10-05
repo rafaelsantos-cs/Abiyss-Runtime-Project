@@ -113,6 +113,25 @@ fn aplicar_central(
     ))
 }
 
+/// Rótulo da linha de procedência: o número da proposta e, nas do sono,
+/// as evidências que a sustentam.
+fn rotulo_de(proposta: &Proposta) -> String {
+    let evidencias: Vec<String> = proposta
+        .evidencias
+        .as_deref()
+        .and_then(|e| serde_json::from_str(e).ok())
+        .unwrap_or_default();
+    if evidencias.is_empty() {
+        format!("proposta #{}", proposta.id)
+    } else {
+        format!(
+            "proposta #{}; evidências: {}",
+            proposta.id,
+            evidencias.join(", ")
+        )
+    }
+}
+
 /// Aplica uma proposta. Devolve a ação ("criada"/"atualizada") e um resumo.
 fn aplicar(
     cofre: &Cofre,
@@ -152,7 +171,7 @@ fn aplicar(
         tipo,
         origem_externa: proposta.origem_externa.clone(),
         criado: None,
-        rotulo: format!("proposta #{}", proposta.id),
+        rotulo: rotulo_de(proposta),
     };
     let gravacao = cofre.gravar(&proposta.caminho, &doc, &procedencia)?;
     let mut detalhe = format!(

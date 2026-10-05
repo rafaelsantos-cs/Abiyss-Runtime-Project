@@ -261,7 +261,13 @@ impl Heartbeat {
         let texto = resposta.mensagem.texto().to_string();
         let tokens = resposta.uso.total_tokens as i64;
 
-        // A chamada deu certo: os eventos foram "vistos".
+        // A chamada deu certo: os eventos foram "vistos". Se algum deles era
+        // externo, o ciclo inteiro conta como externo.
+        let origens: Vec<&str> = novos
+            .iter()
+            .filter_map(|e| e.origem_externa.as_deref())
+            .collect();
+        let origem_externa = (!origens.is_empty()).then(|| origens.join(", "));
         let ids: Vec<i64> = novos.iter().map(|e| e.id).collect();
         eventos::marcar_consumidos(&self.banco, &ids)?;
 
@@ -297,13 +303,14 @@ impl Heartbeat {
             }
             Err(e) => Some(format!("resposta fora do formato: {e:#}")),
         };
-        registrar_ciclo(
+        registrar_ciclo_com_origem(
             &self.banco,
             inicio,
             &resultado,
             Some(&texto),
             erro.as_deref(),
             tokens,
+            origem_externa.as_deref(),
         )?;
         resultado.erro = erro;
         Ok(resultado)
@@ -651,6 +658,20 @@ fn registrar_ciclo(
     erro: Option<&str>,
     tokens: i64,
 ) -> anyhow::Result<()> {
+    registrar_ciclo_com_origem(banco, inicio, resultado, resposta, erro, tokens, None)
+}
+
+/// Como `registrar_ciclo`, marcando se o contexto do ciclo tinha conteúdo
+/// externo (o sono não usa decisões desses ciclos como material interno).
+fn registrar_ciclo_com_origem(
+    banco: &Banco,
+    inicio: i64,
+    resultado: &ResultadoCiclo,
+    resposta: Option<&str>,
+    erro: Option<&str>,
+    tokens: i64,
+    origem_externa: Option<&str>,
+) -> anyhow::Result<()> {
     let resumo = if resultado.resultados.is_empty() {
         None
     } else {
@@ -658,8 +679,8 @@ fn registrar_ciclo(
     };
     banco.conexao().execute(
         "INSERT INTO ciclos (inicio_ms, fim_ms, chamou_modelo, motivo, goal_foco,
-                             resposta, resultado, erro, tokens)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                             resposta, resultado, erro, tokens, origem_externa)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             inicio,
             agora_ms(),
@@ -669,7 +690,8 @@ fn registrar_ciclo(
             resposta,
             resumo,
             erro,
-            tokens
+            tokens,
+            origem_externa
         ],
     )?;
     Ok(())

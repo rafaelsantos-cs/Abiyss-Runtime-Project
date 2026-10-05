@@ -256,6 +256,34 @@ const MIGRACOES: &[&str] = &[
     UPDATE fila_eventos SET origem_externa = 'subagente:' || origem
         WHERE tipo = 'subagente';
     "#,
+    // 11 (E5) — sono de verdade. `ciclos.origem_externa`: o ciclo consumiu
+    // evento externo (o sono não usa o que ele decidiu como material
+    // interno). `propostas_memoria.evidencias`: IDs citáveis (m:12, c:40...)
+    // que sustentam uma proposta do sono. `sonos`: uma linha por sono, com
+    // fase e resultado. `marcas_sono`: até onde cada fonte já foi revisada,
+    // por passada (interno/externo) — rodar de novo nunca repete material.
+    r#"
+    ALTER TABLE ciclos ADD COLUMN origem_externa TEXT;
+    ALTER TABLE propostas_memoria ADD COLUMN evidencias TEXT;
+    CREATE TABLE sonos (
+        id        INTEGER PRIMARY KEY,
+        dia       TEXT    NOT NULL,
+        gatilho   TEXT    NOT NULL,
+        inicio_ms INTEGER NOT NULL,
+        fim_ms    INTEGER,
+        estado    TEXT    NOT NULL,
+        fase      TEXT    NOT NULL,
+        chamadas  INTEGER NOT NULL DEFAULT 0,
+        tokens    INTEGER NOT NULL DEFAULT 0,
+        resumo    TEXT,
+        erro      TEXT
+    );
+    CREATE INDEX idx_sonos_dia ON sonos(dia, id);
+    CREATE TABLE marcas_sono (
+        chave  TEXT    PRIMARY KEY,
+        ate_id INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

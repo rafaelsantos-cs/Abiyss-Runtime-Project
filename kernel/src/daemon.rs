@@ -8,6 +8,9 @@
 //!   a manutenção ficam guardados como "trabalhos em andamento" e são
 //!   acompanhados pelo mesmo `select!` que dispara os crons. Um ciclo tem
 //!   tempo máximo e um pânico dentro dele não derruba o daemon.
+//! - Uma vez por dia, na janela de `[sono]` (ou por `abiyss sleep
+//!   --completo`): o sono. Enquanto ele roda, o heartbeat fica pausado; o
+//!   primeiro ciclo depois dele vê o evento `sono` (ver `sono`).
 //! - A cada `retencao.checkpoint_minutos`: checkpoint do WAL.
 //! - A cada `retencao.manutencao_minutos`: retenção (detalhe antigo vira
 //!   agregado diário) e vacuum incremental.
@@ -38,6 +41,7 @@ use crate::heartbeat::{self, Heartbeat};
 use crate::manutencao;
 use crate::orquestrador::Orquestrador;
 use crate::ritmo;
+use crate::sono::{self, Gatilho, Sono};
 use crate::subagentes::{self, ExecutorSubagentes};
 use crate::tempo::agora_ms;
 
@@ -252,6 +256,7 @@ pub struct Daemon {
     pub banco: Banco,
     pub heartbeat: Heartbeat,
     pub executor: Arc<ExecutorSubagentes>,
+    pub sono: Sono,
     /// O último ciclo pediu continuação (ex.: consultou uma skill).
     continuacao_pedida: AtomicBool,
 }
@@ -271,6 +276,7 @@ impl Daemon {
             orquestrador.clone(),
             ferramentas,
         );
+        let sono = Sono::novo(config.clone(), banco.clone(), orquestrador.clone());
         let heartbeat = Heartbeat::novo(config.clone(), banco.clone(), orquestrador)
             .com_subagentes(executor.controle());
         Daemon {
@@ -278,6 +284,7 @@ impl Daemon {
             banco,
             heartbeat,
             executor,
+            sono,
             continuacao_pedida: AtomicBool::new(false),
         }
     }
@@ -371,6 +378,47 @@ impl Daemon {
         }
     }
 
+    /// É hora de dormir? (Janela, recuperação ou pedido manual.)
+    fn decidir_sono(&self) -> Option<(chrono::NaiveDate, Gatilho)> {
+        let pedido = match sono::tomar_pedido(&self.banco) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("não consegui ler o pedido de sono: {e:#}");
+                false
+            }
+        };
+        let agora = chrono::Local::now().naive_local();
+        sono::decidir(
+            &self.config.sono,
+            agora,
+            // Erro ao consultar = "já dormiu": melhor perder uma noite que
+            // dormir em loop.
+            |dia| sono::ja_dormiu(&self.banco, dia).unwrap_or(true),
+            pedido,
+        )
+    }
+
+    /// O sono com tempo máximo e pânico isolado. Nunca derruba o daemon.
+    async fn sono_supervisionado(&self, dia: chrono::NaiveDate, gatilho: Gatilho) {
+        let limite = Duration::from_secs(self.config.sono.max_duracao_minutos * 60);
+        let erro = match supervisionar(limite, self.sono.dormir(dia, gatilho)).await {
+            Desfecho::Ok(Ok(r)) => {
+                tracing::info!("sono {}: {}", r.estado, r.dia);
+                return;
+            }
+            Desfecho::Ok(Err(e)) => format!("o sono falhou: {e:#}"),
+            Desfecho::TempoEsgotado => format!(
+                "tempo esgotado: o sono passou de {} min e foi interrompido",
+                limite.as_secs() / 60
+            ),
+            Desfecho::Panico(mensagem) => format!("pânico no sono: {mensagem}"),
+        };
+        tracing::error!("{erro}");
+        if let Err(e) = sono::registrar_falha(&self.banco, &erro) {
+            tracing::warn!("não consegui registrar a falha do sono: {e:#}");
+        }
+    }
+
     /// Loop principal. Volta quando receber SIGTERM ou Ctrl+C.
     pub async fn rodar(&self, opcoes: &OpcoesDaemon) -> anyhow::Result<()> {
         let mut parada = SinalDeParada::novo()?;
@@ -386,6 +434,12 @@ impl Daemon {
     {
         gravar_estado(&self.banco, CHAVE_PID, &std::process::id().to_string())?;
         gravar_estado(&self.banco, CHAVE_INICIADO, &agora_ms().to_string())?;
+        let interrompidos = sono::marcar_interrompidos(&self.banco)?;
+        if interrompidos > 0 {
+            tracing::warn!(
+                "um sono foi interrompido pela última parada; será refeito se der tempo"
+            );
+        }
 
         if opcoes.uma_vez {
             subagentes::recuperar_interrompidos(&self.banco)?;
@@ -446,18 +500,28 @@ impl Daemon {
         // de vida e watchdog continuam andando enquanto um ciclo pensa.
         let mut ciclo: Option<Trabalho<'_>> = None;
         let mut manutencao: Option<Trabalho<'_>> = None;
+        // O sono é exclusivo com o heartbeat: espera o ciclo em andamento
+        // terminar e, enquanto dorme, nenhum ciclo começa.
+        let mut sono: Option<Trabalho<'_>> = None;
+        let mut sono_pendente: Option<(chrono::NaiveDate, Gatilho)> = None;
         // O primeiro ciclo roda logo ao subir (como antes).
         let mut proximo_ciclo = Instant::now();
         let mut continuacoes_seguidas = 0;
         loop {
             tokio::select! {
-                _ = tique_cron.tick() => self.tique_de_cron(),
+                _ = tique_cron.tick() => {
+                    self.tique_de_cron();
+                    if sono.is_none() && sono_pendente.is_none() {
+                        sono_pendente = self.decidir_sono();
+                    }
+                }
                 _ = tique_checkpoint.tick() => self.checkpoint(),
                 _ = tique_manutencao.tick(), if manutencao.is_none() => {
                     manutencao = Some(Box::pin(self.manutencao()));
                 }
                 _ = esperar_trabalho(&mut manutencao) => manutencao = None,
-                _ = tokio::time::sleep_until(proximo_ciclo), if ciclo.is_none() => {
+                _ = tokio::time::sleep_until(proximo_ciclo),
+                    if ciclo.is_none() && sono.is_none() && sono_pendente.is_none() => {
                     ciclo = Some(Box::pin(self.um_ciclo_supervisionado()));
                 }
                 _ = esperar_trabalho(&mut ciclo) => {
@@ -478,7 +542,17 @@ impl Daemon {
                     );
                     proximo_ciclo = Instant::now() + espera;
                 }
+                _ = esperar_trabalho(&mut sono) => {
+                    sono = None;
+                    // Acordou: o primeiro ciclo vem já (e vê o evento `sono`).
+                    proximo_ciclo = Instant::now();
+                }
                 _ = &mut parar => {
+                    if sono.is_some() {
+                        // Marcado como interrompido ao subir de novo; o que
+                        // já foi gravado (propostas + marcas) não se repete.
+                        tracing::info!("parada pedida no meio do sono");
+                    }
                     if ciclo.is_some() {
                         // O ciclo é largado no próximo ponto de espera: os
                         // eventos dele continuam pendentes para a próxima vez.
@@ -487,10 +561,21 @@ impl Daemon {
                     break;
                 }
             }
+            if ciclo.is_none()
+                && sono.is_none()
+                && let Some((dia, gatilho)) = sono_pendente.take()
+            {
+                tracing::info!(
+                    "hora de dormir (revisão de {dia}, {})",
+                    gatilho.como_texto()
+                );
+                sono = Some(Box::pin(self.sono_supervisionado(dia, gatilho)));
+            }
             ultima_volta_ms.store(agora_ms(), Ordering::Relaxed);
         }
         drop(ciclo);
         drop(manutencao);
+        drop(sono);
         avisar_systemd("STOPPING=1\nSTATUS=parando");
         if let Some(vigia) = vigia {
             vigia.abort();

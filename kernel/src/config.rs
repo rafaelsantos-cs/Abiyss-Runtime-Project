@@ -46,6 +46,8 @@ pub struct Config {
     pub orcamento: crate::orcamento::ConfigOrcamento,
     #[serde(default)]
     pub backup: crate::backup::ConfigBackup,
+    #[serde(default)]
+    pub sono: crate::sono::ConfigSono,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -579,6 +581,7 @@ impl Config {
         }
         self.ritmo.validar()?;
         self.orcamento.validar()?;
+        self.sono.validar()?;
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
@@ -733,6 +736,10 @@ pub fn config_de_teste(base_url: &str, raiz: &Path) -> Config {
         # Testes não podem depender da hora em que rodam: sempre vigília.
         [ritmo]
         horas_ativas = "00:00-00:00"
+
+        # Nem o sono pela janela: o teste que quer dormir pede.
+        [sono]
+        ativo = false
         "#
     );
     let mut config = Config::de_texto(&texto).expect("config de teste inválida");

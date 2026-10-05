@@ -340,6 +340,37 @@ disco_minimo_gb = 2.0
 max_megabytes_cofre = 2048
 
 # ---------------------------------------------------------------------------
+# Sono: uma vez por dia o daemon pausa o heartbeat e consolida a memória
+# (backup → aplica a fila → revisão do dia pelo modelo em DUAS passadas
+# separadas por origem: interna e externa → aplica → relatório em
+# <dados>/sono/ e um evento `sono` para o primeiro ciclo depois).
+# Toda proposta do sono cita evidências; o kernel descarta o resto.
+# `abiyss sleep --completo` dorme na hora; `abiyss sleep --relatorio` mostra
+# o último relatório. Detalhes em docs/SONO.md.
+# ---------------------------------------------------------------------------
+
+[sono]
+ativo = true
+# Início da janela (fuso local). Um sono antes do meio-dia revisa o dia anterior.
+inicio = "03:00"
+janela_minutos = 120
+# Perdeu a janela (VM desligada)? Dorme assim que subir, até este limite.
+recuperar_ate_horas = 12
+# Tempo máximo do sono inteiro (o daemon interrompe e registra a falha).
+max_duracao_minutos = 60
+# Modo da tabela de esforço do cérebro em cada passada.
+modo_esforco = "profundo"
+modo_esforco_externo = "raso"
+# Teto de chamadas ao modelo por noite (uma fica para a passada externa
+# quando há material externo). O que não couber fica para a próxima noite.
+max_chamadas = 4
+max_caracteres_por_chamada = 120000
+# Teto de propostas por noite (as duas passadas juntas).
+max_propostas = 30
+# Notas internas relacionadas ao material do dia mandadas junto (replay).
+max_notas_relacionadas = 8
+
+# ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).

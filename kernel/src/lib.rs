@@ -35,6 +35,7 @@ pub mod orquestrador;
 pub mod processos;
 pub mod ritmo;
 pub mod skills;
+pub mod sono;
 pub mod status;
 pub mod subagentes;
 #[cfg(unix)]

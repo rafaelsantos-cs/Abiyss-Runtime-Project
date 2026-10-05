@@ -227,6 +227,23 @@ impl Memoria {
     /// Valida e coloca uma proposta na fila. NÃO grava no cofre.
     /// Escopos: "interno", "externo" ou "central" (memória central).
     pub fn propor(&self, pedido: &PedidoProposta) -> anyhow::Result<PropostaRegistrada> {
+        let (nova, aviso) = self.preparar(pedido)?;
+        let id = propostas::enfileirar(&self.banco, &nova)?;
+        Ok(PropostaRegistrada {
+            id,
+            caminho: nova.caminho,
+            aviso,
+        })
+    }
+
+    /// Valida um pedido e devolve a proposta pronta para a fila (caminho
+    /// normalizado) e o aviso para o modelo, se houver. NÃO grava nada:
+    /// quem precisa gravar junto com outras coisas (o sono) enfileira numa
+    /// transação própria.
+    pub fn preparar(
+        &self,
+        pedido: &PedidoProposta,
+    ) -> anyhow::Result<(NovaProposta, Option<String>)> {
         let central = pedido.escopo.trim().eq_ignore_ascii_case(ESCOPO_CENTRAL);
         let escopo = if central {
             None
@@ -268,17 +285,14 @@ impl Memoria {
             }
         };
 
-        let id = propostas::enfileirar(
-            &self.banco,
-            &NovaProposta {
-                escopo: texto_escopo.to_string(),
-                caminho: caminho.clone(),
-                conteudo: conteudo.to_string(),
-                tipo,
-                fonte: pedido.fonte,
-                origem_externa: pedido.origem_externa.clone(),
-            },
-        )?;
+        let nova = NovaProposta {
+            escopo: texto_escopo.to_string(),
+            caminho,
+            conteudo: conteudo.to_string(),
+            tipo,
+            fonte: pedido.fonte,
+            origem_externa: pedido.origem_externa.clone(),
+        };
         let interna = central || escopo == Some(Escopo::Interno);
         let mut aviso = match &pedido.origem_externa {
             Some(origem) if interna => Some(format!(
@@ -299,7 +313,7 @@ impl Memoria {
                 ));
             }
         }
-        Ok(PropostaRegistrada { id, caminho, aviso })
+        Ok((nova, aviso))
     }
 
     /// Aplica as propostas pendentes (`abiyss sleep`).

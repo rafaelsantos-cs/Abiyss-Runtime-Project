@@ -15,6 +15,7 @@ use crate::interocepcao::Interocepcao;
 use crate::latencia;
 use crate::memoria::central::MemoriaCentral;
 use crate::memoria::propostas;
+use crate::sono;
 use crate::tempo::{agora_ms, formatar_ms};
 
 /// Resultado de `abiyss status --verificar`, para monitor externo
@@ -81,14 +82,35 @@ pub fn verificar(config: &Config, banco: &Banco) -> anyhow::Result<Verificacao> 
         sinal_de_vida_ms: sinal,
         agora_ms: agora_ms(),
         cron_verificacao_segundos: config.daemon.cron_verificacao_segundos,
-        problemas: problemas_conhecidos(banco)?,
+        problemas: problemas_conhecidos(config, banco, agora_ms())?,
     }))
 }
 
-/// Problemas registrados por outras partes do kernel (preenchido à medida
-/// que elas existem).
-fn problemas_conhecidos(_banco: &Banco) -> anyhow::Result<Vec<String>> {
-    Ok(Vec::new())
+/// Sem sono há mais que isto (com o sono ligado e já tendo dormido uma
+/// vez) = degradado.
+const SONO_ATRASADO_MS: i64 = 50 * 3_600_000;
+
+/// Problemas registrados por outras partes do kernel.
+fn problemas_conhecidos(config: &Config, banco: &Banco, agora: i64) -> anyhow::Result<Vec<String>> {
+    let mut problemas = Vec::new();
+    if let Some(s) = sono::ultimo(banco)? {
+        if s.estado == "falhou" {
+            problemas.push(format!(
+                "o último sono (revisão de {}) falhou: {}",
+                s.dia,
+                s.erro.as_deref().unwrap_or("sem detalhe")
+            ));
+        } else if config.sono.ativo
+            && s.estado != "rodando"
+            && agora - s.fim_ms.unwrap_or(s.inicio_ms) > SONO_ATRASADO_MS
+        {
+            problemas.push(format!(
+                "sem dormir há {} h",
+                (agora - s.fim_ms.unwrap_or(s.inicio_ms)) / 3_600_000
+            ));
+        }
+    }
+    Ok(problemas)
 }
 
 /// Monta o relatório em texto.
@@ -161,6 +183,37 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         "Propostas de memória pendentes: {} (aplique com `abiyss sleep`)",
         propostas::pendentes(banco)?.len()
     )?;
+
+    // Sono
+    match sono::ultimo(banco)? {
+        None => writeln!(
+            t,
+            "Último sono: nenhum ainda{}",
+            if config.sono.ativo {
+                format!(" (janela às {})", config.sono.inicio)
+            } else {
+                " (sono automático desligado)".to_string()
+            }
+        )?,
+        Some(s) => {
+            writeln!(
+                t,
+                "Último sono: revisão de {} — {} ({}, {}), {} chamada(s); {}",
+                s.dia,
+                s.estado,
+                s.gatilho,
+                formatar_ms(s.inicio_ms),
+                s.chamadas,
+                s.resumo.as_deref().unwrap_or("sem resumo")
+            )?;
+            if let Some(e) = s.erro {
+                writeln!(t, "  problemas: {e}")?;
+            }
+        }
+    }
+    for p in problemas_conhecidos(config, banco, agora)? {
+        writeln!(t, "ATENÇÃO: {p}")?;
+    }
 
     // Goals
     let contagem = goals::contar_por_estado(banco)?;

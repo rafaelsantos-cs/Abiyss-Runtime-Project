@@ -74,8 +74,21 @@ enum Comando {
     Ferramentas,
     /// Lista as skills (nome + descrição) e as que não puderam ser lidas.
     Skills,
-    /// Aplica as propostas de memória pendentes (ou rejeita, com motivo).
-    Sleep,
+    /// Sem opções: aplica as propostas de memória pendentes (ou rejeita,
+    /// com motivo). Com --completo: o sono inteiro (backup, revisão do dia
+    /// pelo modelo, aplicação, relatório).
+    Sleep {
+        /// Sono completo. Com o daemon rodando, só pede (ele dorme no
+        /// próximo tique); sem o daemon, dorme aqui (precisa das chaves).
+        #[arg(long, conflicts_with = "relatorio")]
+        completo: bool,
+        /// Mostra o relatório do último sono (ou do --dia).
+        #[arg(long)]
+        relatorio: bool,
+        /// Dia revisado, AAAA-MM-DD (padrão: o da janela mais recente).
+        #[arg(long)]
+        dia: Option<String>,
+    },
     /// Importa a memória do Hermes. Sem --aplicar, só mostra o relatório.
     ImportarHermes {
         /// Pasta do Hermes (ex.: ~/.hermes).
@@ -271,7 +284,20 @@ async fn main() -> anyhow::Result<()> {
             cli::ferramentas::listar(&config).await
         }
         Comando::Skills => cli::ferramentas::skills(&Config::carregar(&caminho_config)?),
-        Comando::Sleep => cli::memoria::sleep(&Config::carregar(&caminho_config)?),
+        Comando::Sleep {
+            completo,
+            relatorio,
+            dia,
+        } => {
+            let config = Config::carregar(&caminho_config)?;
+            if relatorio {
+                cli::memoria::relatorio_sono(&config, dia.as_deref())
+            } else if completo {
+                cli::memoria::sono_completo(&config, dia.as_deref()).await
+            } else {
+                cli::memoria::sleep(&config)
+            }
+        }
         Comando::ImportarHermes { origem, aplicar } => {
             cli::hermes::importar(&Config::carregar(&caminho_config)?, &origem, aplicar)
         }
