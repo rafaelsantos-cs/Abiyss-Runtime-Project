@@ -15,7 +15,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::{Config, ConfigSkillsAutomaticas};
 use crate::dados;
 use crate::db::Banco;
 use crate::diario;
@@ -25,9 +25,14 @@ use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
 use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem};
+use crate::orcamento::{self, Gasto, NivelOrcamento};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
+use crate::pedidos;
+use crate::ritmo::{self, Fase};
+use crate::skills::Skills;
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
 use crate::tempo::{agora_ms, formatar_ms};
+use crate::vigilancia::{self, Situacao};
 
 /// Autor registrado nas transições feitas pelo heartbeat.
 const AUTOR: &str = "abiyss";
@@ -70,12 +75,42 @@ pub enum Acao {
     },
     /// Cancela um sub-agente em andamento.
     CancelarSubagente { id: i64 },
+    /// Pede o texto completo de uma skill. Ele chega como evento no
+    /// PRÓXIMO ciclo (que o daemon antecipa: ciclo de continuação).
+    ConsultarSkill {
+        nome: String,
+        #[serde(default)]
+        referencia: Option<String>,
+        #[serde(default)]
+        motivo: String,
+    },
+    /// Guarda uma pergunta para o dono (caixa de entrada assíncrona).
+    PedirAoUsuario {
+        pergunta: String,
+        #[serde(default)]
+        contexto: String,
+        #[serde(default)]
+        urgencia: String,
+        #[serde(default)]
+        goal_id: Option<i64>,
+    },
     /// Não fazer nada agora.
     Aguardar {
         #[serde(default)]
         motivo: String,
     },
 }
+
+/// Nome (`tipo`) de cada ação, como o modelo escreve no JSON. As skills
+/// citam estes nomes; o teste de coerência confere.
+pub const NOMES_ACOES: [&str; 6] = [
+    "transicionar_goal",
+    "delegar",
+    "cancelar_subagente",
+    "consultar_skill",
+    "pedir_ao_usuario",
+    "aguardar",
+];
 
 fn prazo_padrao() -> u64 {
     600
@@ -86,6 +121,8 @@ struct AcaoFeita {
     texto: String,
     /// Preenchido quando a ação criou um sub-agente.
     subagente_id: Option<i64>,
+    /// A ação deixou algo para o próximo ciclo ler (ex.: uma skill).
+    continuar: bool,
 }
 
 impl AcaoFeita {
@@ -93,9 +130,15 @@ impl AcaoFeita {
         AcaoFeita {
             texto,
             subagente_id: None,
+            continuar: false,
         }
     }
 }
+
+/// Instrução que acompanha o índice de skills no heartbeat (aqui não há
+/// ferramentas: o texto vem pela ação `consultar_skill`).
+pub const INSTRUCAO_INDICE_HEARTBEAT: &str = "Abaixo estão só o nome e a descrição de cada skill. \
+Quando uma for útil para decidir, use a ação consultar_skill: o texto completo chega no ciclo seguinte.";
 
 /// Resumo de um ciclo, devolvido para quem chamou (daemon, testes, CLI).
 #[derive(Debug, Clone, Default)]
@@ -110,6 +153,9 @@ pub struct ResultadoCiclo {
     pub crons_disparados: Vec<String>,
     /// Problema na resposta do modelo (ex.: fora do formato JSON).
     pub erro: Option<String>,
+    /// Alguma ação deixou algo para o próximo ciclo ler: o daemon antecipa
+    /// esse ciclo (ciclo de continuação, com limite).
+    pub pedir_continuacao: bool,
 }
 
 /// Um ciclo como guardado no banco.
@@ -130,16 +176,19 @@ pub struct Heartbeat {
     banco: Banco,
     orquestrador: Orquestrador,
     subagentes: ControleSubagentes,
+    skills: Skills,
 }
 
 impl Heartbeat {
     pub fn novo(config: Config, banco: Banco, orquestrador: Orquestrador) -> Heartbeat {
         let subagentes = ControleSubagentes::novo(config.clone(), banco.clone(), None);
+        let skills = Skills::da_config(&config);
         Heartbeat {
             config,
             banco,
             orquestrador,
             subagentes,
+            skills,
         }
     }
 
@@ -165,24 +214,56 @@ impl Heartbeat {
         let trabalhando = subagentes::ativos(&self.banco)?;
         resultado.goal_foco = foco.as_ref().map(|g| g.id);
 
-        // 2. Precisa mesmo chamar o modelo?
+        // 2. Ritmo e orçamento (código): orçamento esgotado = sem chamada;
+        //    fora das horas ativas ou em alerta = sem revisão periódica.
+        let nivel = self.nivel_orcamento()?;
+        if nivel == NivelOrcamento::Esgotado {
+            resultado.motivo = "orçamento diário de trabalho autônomo esgotado: \
+                                eventos ficam na fila até amanhã"
+                .into();
+            registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
+            return Ok(resultado);
+        }
+        let fase = ritmo::fase_agora(&self.config.ritmo);
+        let permitir_revisao = fase == Fase::Vigilia && nivel == NivelOrcamento::Normal;
+        // Goal estagnado: a revisão periódica dele fica mais espaçada.
+        let estagnacao = vigilancia::ler_estagnacao(&self.banco)?;
+        let multiplicador = foco
+            .as_ref()
+            .map(|g| vigilancia::multiplicador_revisao(estagnacao.as_ref(), g.id, g.atualizado_ms))
+            .unwrap_or(1);
+
+        // 3. Precisa mesmo chamar o modelo?
         let motivo = motivo_para_chamar(
             &novos,
             foco.as_ref(),
             ultimo.as_ref(),
             trabalhando.len(),
             inicio,
-            self.config.daemon.revisao_minima_segundos,
+            self.config.daemon.revisao_minima_segundos * multiplicador as u64,
+            permitir_revisao,
         );
         let Some(motivo) = motivo else {
             resultado.motivo = "nada novo: sem eventos e sem goal que precise de atenção".into();
             registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
             return Ok(resultado);
         };
+        // Disjuntor aberto (o modelo vinha falhando): sem chamada até a
+        // espera passar. Os eventos continuam na fila.
+        if let Situacao::Aberto { ate_ms } =
+            vigilancia::situacao(&vigilancia::ler_disjuntor(&self.banco)?, inicio)
+        {
+            resultado.motivo = format!(
+                "disjuntor aberto até {} (o modelo vinha falhando); adiado: {motivo}",
+                formatar_ms(ate_ms)
+            );
+            registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
+            return Ok(resultado);
+        }
         resultado.motivo = motivo;
         resultado.chamou_modelo = true;
 
-        // 3. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
+        // 4. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
         let corpo = match Interocepcao::medir(&self.config, &self.banco) {
             Ok(i) => i.como_texto(),
             Err(e) => format!(
@@ -190,6 +271,7 @@ impl Heartbeat {
                 interocepcao::agora_formatado()
             ),
         };
+        let procedimentos = self.procedimentos_automaticos(&novos);
         let mensagens = vec![
             Mensagem::sistema(self.prompt_sistema()),
             Mensagem::usuario(montar_contexto(
@@ -199,6 +281,7 @@ impl Heartbeat {
                 &trabalhando,
                 ultimo.as_ref(),
                 &corpo,
+                &procedimentos,
             )),
         ];
         let pedido = nim::montar_pedido(&self.config.modelos.cerebro, mensagens, vec![]);
@@ -213,17 +296,30 @@ impl Heartbeat {
                 // Eventos NÃO são consumidos: serão vistos no próximo ciclo.
                 let erro = format!("{e:#}");
                 registrar_ciclo(&self.banco, inicio, &resultado, None, Some(&erro), 0)?;
+                vigilancia::registrar_no_disjuntor(
+                    &self.banco,
+                    &self.config.vigilancia,
+                    false,
+                    Some(&erro),
+                    agora_ms(),
+                )?;
                 return Err(e.context("heartbeat: chamada ao modelo falhou"));
             }
         };
         let texto = resposta.mensagem.texto().to_string();
         let tokens = resposta.uso.total_tokens as i64;
 
-        // A chamada deu certo: os eventos foram "vistos".
+        // A chamada deu certo: os eventos foram "vistos". Se algum deles era
+        // externo, o ciclo inteiro conta como externo.
+        let origens: Vec<&str> = novos
+            .iter()
+            .filter_map(|e| e.origem_externa.as_deref())
+            .collect();
+        let origem_externa = (!origens.is_empty()).then(|| origens.join(", "));
         let ids: Vec<i64> = novos.iter().map(|e| e.id).collect();
         eventos::marcar_consumidos(&self.banco, &ids)?;
 
-        // 4. Interpreta e executa as ações.
+        // 5. Interpreta e executa as ações.
         let erro = match interpretar_decisao(&texto) {
             Ok(decisao) => {
                 for acao in &decisao.acoes {
@@ -236,10 +332,14 @@ impl Heartbeat {
                         &acao.to_string(),
                         expectativa,
                     )?;
-                    let (linha, subagente) = match self.executar_acao(acao) {
-                        Ok(feito) => (format!("ok: {}", feito.texto), feito.subagente_id),
-                        Err(e) => (format!("erro: {e:#}"), None),
-                    };
+                    let (linha, subagente) =
+                        match self.executar_acao(acao, origem_externa.as_deref()) {
+                            Ok(feito) => {
+                                resultado.pedir_continuacao |= feito.continuar;
+                                (format!("ok: {}", feito.texto), feito.subagente_id)
+                            }
+                            Err(e) => (format!("erro: {e:#}"), None),
+                        };
                     // ...e resultado observado DEPOIS.
                     diario::registrar_resultado(&self.banco, id_diario, &linha)?;
                     if let Some(id) = subagente {
@@ -252,16 +352,122 @@ impl Heartbeat {
             }
             Err(e) => Some(format!("resposta fora do formato: {e:#}")),
         };
-        registrar_ciclo(
+        let impressao = resultado
+            .decisao
+            .as_ref()
+            .and_then(|d| vigilancia::impressao(resultado.goal_foco, &d.acoes));
+        registrar_ciclo_completo(
             &self.banco,
             inicio,
             &resultado,
             Some(&texto),
             erro.as_deref(),
             tokens,
+            origem_externa.as_deref(),
+            impressao.as_deref(),
         )?;
+        vigilancia::registrar_no_disjuntor(
+            &self.banco,
+            &self.config.vigilancia,
+            erro.is_none(),
+            erro.as_deref(),
+            agora_ms(),
+        )?;
+        if let Err(e) = self.vigiar_estagnacao(
+            &resultado,
+            impressao.as_deref(),
+            estagnacao.as_ref(),
+            origem_externa.as_deref(),
+        ) {
+            tracing::warn!("não consegui verificar estagnação: {e:#}");
+        }
         resultado.erro = erro;
         Ok(resultado)
+    }
+
+    /// Depois de um ciclo com modelo: a mesma decisão repetida sem o goal
+    /// mudar, ou a mesma ação falhando seguidas vezes, vira um evento
+    /// `kernel/estagnacao` (com a skill `sair-de-loops` junto) e espaça a
+    /// revisão periódica do goal.
+    fn vigiar_estagnacao(
+        &self,
+        resultado: &ResultadoCiclo,
+        impressao: Option<&str>,
+        anterior: Option<&vigilancia::EstadoEstagnacao>,
+        origem_externa: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let config = &self.config.vigilancia;
+        let agora = agora_ms();
+        let desde = anterior.map(|e| e.desde_ms).unwrap_or(0);
+        let goal_atual = match resultado.goal_foco {
+            Some(id) => goals::obter(&self.banco, id).ok(),
+            None => None,
+        };
+
+        let mut aviso = None;
+        if impressao.is_some() {
+            let n = config.repeticoes_estagnacao as usize;
+            let ultimas = vigilancia::ultimas_impressoes(&self.banco, desde, n)?;
+            let impressoes: Vec<Option<String>> = ultimas.iter().map(|(_, i)| i.clone()).collect();
+            let vezes = vigilancia::repeticoes(&impressoes);
+            let mais_antigo = ultimas.last().map(|(inicio, _)| *inicio).unwrap_or(0);
+            // O goal em foco mudou durante essas repetições? Então não é estagnação.
+            let goal_mudou = goal_atual
+                .as_ref()
+                .is_some_and(|g| g.atualizado_ms >= mais_antigo);
+            if vezes >= n && !goal_mudou {
+                aviso = Some(vigilancia::aviso_repeticao(
+                    vezes,
+                    resultado.goal_foco,
+                    impressao.unwrap_or_default(),
+                ));
+            }
+        }
+        if aviso.is_none() {
+            let n = config.erros_mesma_acao as usize;
+            let tentativas = vigilancia::tentativas_recentes(&self.banco)?;
+            let acoes = resultado
+                .decisao
+                .as_ref()
+                .map(|d| d.acoes.as_slice())
+                .unwrap_or(&[]);
+            for (acao, linha) in acoes.iter().zip(&resultado.resultados) {
+                let Some(chave) = vigilancia::chave_acao(acao) else {
+                    continue;
+                };
+                let vezes = vigilancia::erros_seguidos(&tentativas, &chave);
+                if linha.starts_with("erro:") && vezes >= n && vezes.is_multiple_of(n) {
+                    let erro = linha.trim_start_matches("erro:").trim();
+                    aviso = Some(vigilancia::aviso_erros(vezes, &chave, erro));
+                    break;
+                }
+            }
+        }
+        let Some(aviso) = aviso else {
+            return Ok(());
+        };
+        tracing::warn!("heartbeat estagnado: {aviso}");
+        // Texto escrito a partir de um ciclo externo continua externo.
+        eventos::publicar_com_origem(
+            &self.banco,
+            eventos::TIPO_KERNEL,
+            vigilancia::ORIGEM_ESTAGNACAO,
+            &aviso,
+            origem_externa,
+        )?;
+        let estado = vigilancia::nova_estagnacao(
+            anterior,
+            resultado.goal_foco,
+            goal_atual.map(|g| g.atualizado_ms).unwrap_or(0),
+            agora + 1,
+            config.max_multiplicador_revisao,
+        );
+        crate::daemon::gravar_estado(
+            &self.banco,
+            vigilancia::CHAVE_ESTAGNACAO,
+            &serde_json::to_string(&estado)?,
+        )?;
+        Ok(())
     }
 
     /// System prompt do heartbeat: regras + núcleo + memória central +
@@ -270,6 +476,10 @@ impl Heartbeat {
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
         let blocos = BlocosPrompt {
             memoria_central: MemoriaCentral::da_config(&self.config).bloco_para_prompt(),
+            // Só nome + descrição; o texto vem pela ação `consultar_skill`.
+            skills: self
+                .skills
+                .indice_para_prompt_com(INSTRUCAO_INDICE_HEARTBEAT),
             ..Default::default()
         };
         format!(
@@ -279,12 +489,69 @@ impl Heartbeat {
         )
     }
 
+    /// Como está o orçamento diário do trabalho autônomo.
+    fn nivel_orcamento(&self) -> anyhow::Result<NivelOrcamento> {
+        let uso = orcamento::uso_desde(&self.banco, ritmo::inicio_do_dia_local_ms())?;
+        Ok(orcamento::avaliar(
+            &self.config.orcamento,
+            uso,
+            Gasto::HeartbeatOuSubagentes,
+        ))
+    }
+
+    /// Skills que o kernel põe sozinho no contexto deste ciclo, conforme os
+    /// eventos (estagnação, despertar...). Só skills confiáveis.
+    fn procedimentos_automaticos(&self, novos: &[Evento]) -> Vec<(String, String)> {
+        skills_para_eventos(novos, &self.config.skills.automaticas)
+            .into_iter()
+            .filter_map(|nome| {
+                self.skills
+                    .texto_confiavel(&nome)
+                    .map(|texto| (nome, texto))
+            })
+            .collect()
+    }
+
     /// Executa uma ação já decidida, validando por código.
-    fn executar_acao(&self, bruta: &Value) -> anyhow::Result<AcaoFeita> {
+    /// `origem_externa`: o ciclo consumiu conteúdo externo (o texto escrito
+    /// a partir dele, como uma pergunta ao dono, carrega essa origem).
+    fn executar_acao(
+        &self,
+        bruta: &Value,
+        origem_externa: Option<&str>,
+    ) -> anyhow::Result<AcaoFeita> {
         let acao: Acao = serde_json::from_value(bruta.clone())
             .with_context(|| format!("ação não reconhecida: {bruta}"))?;
         match acao {
             Acao::Aguardar { motivo } => Ok(AcaoFeita::texto(format!("aguardando ({motivo})"))),
+            Acao::PedirAoUsuario {
+                pergunta,
+                contexto,
+                urgencia,
+                goal_id,
+            } => {
+                let urgencia = pedidos::Urgencia::de_texto(&urgencia).with_context(|| {
+                    format!("urgência inválida '{urgencia}' (baixa, normal ou alta)")
+                })?;
+                let novo = pedidos::NovoPedido {
+                    origem: "heartbeat".into(),
+                    goal_id,
+                    pergunta,
+                    contexto,
+                    urgencia,
+                    origem_externa: origem_externa.map(str::to_string),
+                };
+                Ok(AcaoFeita::texto(
+                    match pedidos::criar(&self.banco, &self.config.pedidos, &novo)? {
+                        pedidos::Criacao::Novo(id) => {
+                            format!("pedido #{id} guardado para o usuário")
+                        }
+                        pedidos::Criacao::Duplicado(id) => {
+                            format!("a mesma pergunta já está pendente (pedido #{id}); nada novo")
+                        }
+                    },
+                ))
+            }
             Acao::Delegar {
                 nivel,
                 tarefa,
@@ -292,6 +559,11 @@ impl Heartbeat {
                 prazo_segundos,
                 goal_id,
             } => {
+                if self.nivel_orcamento()? == NivelOrcamento::Esgotado {
+                    anyhow::bail!(
+                        "orçamento diário de trabalho autônomo esgotado: delegação recusada até amanhã"
+                    );
+                }
                 let nivel = Nivel::de_texto(&nivel)
                     .with_context(|| format!("nível inválido '{nivel}' (ultra, medium ou low)"))?;
                 let pedido = PedidoDelegacao {
@@ -305,9 +577,35 @@ impl Heartbeat {
                 Ok(AcaoFeita {
                     texto: format!("sub-agente {id} ({}) delegado", nivel.como_texto()),
                     subagente_id: Some(id),
+                    continuar: false,
                 })
             }
             Acao::CancelarSubagente { id } => Ok(AcaoFeita::texto(self.subagentes.cancelar(id)?)),
+            Acao::ConsultarSkill {
+                nome,
+                referencia,
+                motivo: _,
+            } => {
+                let leitura = self.skills.ler_detalhado(&nome, referencia.as_deref())?;
+                let origem = match referencia.as_deref().map(str::trim) {
+                    Some(r) if !r.is_empty() => format!("{}/{r}", leitura.nome),
+                    _ => leitura.nome.clone(),
+                };
+                // Skill de pasta não confiável é conteúdo externo.
+                let externa = (!leitura.confiavel).then(|| format!("skill:{origem}"));
+                eventos::publicar_com_origem(
+                    &self.banco,
+                    eventos::TIPO_SKILL,
+                    &origem,
+                    &leitura.texto,
+                    externa.as_deref(),
+                )?;
+                Ok(AcaoFeita {
+                    texto: format!("skill '{origem}' chega no próximo ciclo"),
+                    subagente_id: None,
+                    continuar: true,
+                })
+            }
             Acao::TransicionarGoal {
                 goal_id,
                 para,
@@ -351,6 +649,10 @@ Ações possíveis em \"acoes\":\n\
 - {{\"tipo\": \"delegar\", \"nivel\": \"ultra|medium|low\", \"tarefa\": \"...\", \"contexto\": \"...\", \"prazo_segundos\": 600, \"goal_id\": N}}\n\
   (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento)\n\
 - {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
+- {{\"tipo\": \"consultar_skill\", \"nome\": \"...\", \"referencia\": \"(opcional)\", \"motivo\": \"...\"}}\n\
+  (o texto completo da skill chega como evento no ciclo seguinte, logo depois deste)\n\
+- {{\"tipo\": \"pedir_ao_usuario\", \"pergunta\": \"...\", \"contexto\": \"...\", \"urgencia\": \"baixa|normal|alta\", \"goal_id\": N}}\n\
+  (guarda a pergunta para o dono responder quando puder; a resposta chega como evento)\n\
 - {{\"tipo\": \"aguardar\", \"motivo\": \"...\"}}\n\n\
 Em CADA ação, inclua também \"expectativa\": o que você espera que aconteça \
 (o kernel anota no diário e depois compara com o resultado observado).\n\n\
@@ -360,6 +662,8 @@ Toda transição precisa de motivo. Se nada precisa ser feito, use \"acoes\": []
 }
 
 /// Decide, por código, se o ciclo precisa do modelo. `None` = não precisa.
+/// `permitir_revisao = false` (fora das horas ativas ou orçamento em
+/// alerta): só eventos e mudanças de goal acordam o modelo.
 pub fn motivo_para_chamar(
     novos: &[Evento],
     foco: Option<&Goal>,
@@ -367,6 +671,7 @@ pub fn motivo_para_chamar(
     subagentes_ativos: usize,
     agora: i64,
     revisao_minima_segundos: u64,
+    permitir_revisao: bool,
 ) -> Option<String> {
     if !novos.is_empty() {
         return Some(format!("{} evento(s) novo(s) na fila", novos.len()));
@@ -374,7 +679,7 @@ pub fn motivo_para_chamar(
     let goal = foco?;
     // Com sub-agente trabalhando, o resultado chegará como evento:
     // não vale gastar uma chamada só para "ver como está".
-    let revisao_permitida = subagentes_ativos == 0;
+    let revisao_permitida = permitir_revisao && subagentes_ativos == 0;
     match ultimo {
         None => Some(format!("primeiro ciclo com o goal #{}", goal.id)),
         Some(c) if goal.atualizado_ms > c.inicio_ms => {
@@ -390,8 +695,30 @@ pub fn motivo_para_chamar(
     }
 }
 
+/// Que skills automáticas os eventos deste ciclo pedem (em ordem, sem
+/// repetição). Estagnação → `estagnacao`; resumo do sono ou reinício →
+/// `despertar`.
+pub fn skills_para_eventos(novos: &[Evento], auto: &ConfigSkillsAutomaticas) -> Vec<String> {
+    let mut nomes: Vec<String> = Vec::new();
+    for e in novos {
+        let nome = match (e.tipo.as_str(), e.origem.as_str()) {
+            (eventos::TIPO_KERNEL, vigilancia::ORIGEM_ESTAGNACAO) => &auto.estagnacao,
+            (eventos::TIPO_SONO, _) | (eventos::TIPO_KERNEL, eventos::ORIGEM_REINICIO) => {
+                &auto.despertar
+            }
+            _ => continue,
+        };
+        let nome = nome.trim();
+        if !nome.is_empty() && !nomes.iter().any(|n| n == nome) {
+            nomes.push(nome.to_string());
+        }
+    }
+    nomes
+}
+
 /// Monta a mensagem de contexto do ciclo, com o núcleo do goal em foco
 /// no início e repetido no fim (contra o "perdido no meio").
+/// `procedimentos` = (nome, texto) de skills que o kernel pôs no contexto.
 pub fn montar_contexto(
     foco: Option<&Goal>,
     ativos: &[Goal],
@@ -399,6 +726,7 @@ pub fn montar_contexto(
     trabalhando: &[InfoSubagente],
     ultimo: Option<&Ciclo>,
     corpo: &str,
+    procedimentos: &[(String, String)],
 ) -> String {
     let nucleo = match foco {
         Some(g) => format!(
@@ -468,6 +796,14 @@ pub fn montar_contexto(
         texto.push('\n');
     }
 
+    for (nome, procedimento) in procedimentos {
+        texto.push_str(&format!(
+            "\n## Procedimento sugerido pelo kernel (skill {nome})\n"
+        ));
+        texto.push_str(&dados::rotular(&format!("skill:{nome}"), procedimento));
+        texto.push('\n');
+    }
+
     texto.push('\n');
     texto.push_str(&nucleo);
     texto.push_str("\n\nResponda só com o JSON da decisão.");
@@ -514,6 +850,23 @@ fn registrar_ciclo(
     erro: Option<&str>,
     tokens: i64,
 ) -> anyhow::Result<()> {
+    registrar_ciclo_completo(banco, inicio, resultado, resposta, erro, tokens, None, None)
+}
+
+/// Como `registrar_ciclo`, marcando se o contexto do ciclo tinha conteúdo
+/// externo (o sono não usa decisões desses ciclos como material interno) e
+/// a impressão digital das ações (estagnação).
+#[allow(clippy::too_many_arguments)]
+fn registrar_ciclo_completo(
+    banco: &Banco,
+    inicio: i64,
+    resultado: &ResultadoCiclo,
+    resposta: Option<&str>,
+    erro: Option<&str>,
+    tokens: i64,
+    origem_externa: Option<&str>,
+    impressao: Option<&str>,
+) -> anyhow::Result<()> {
     let resumo = if resultado.resultados.is_empty() {
         None
     } else {
@@ -521,8 +874,8 @@ fn registrar_ciclo(
     };
     banco.conexao().execute(
         "INSERT INTO ciclos (inicio_ms, fim_ms, chamou_modelo, motivo, goal_foco,
-                             resposta, resultado, erro, tokens)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                             resposta, resultado, erro, tokens, origem_externa, impressao)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             inicio,
             agora_ms(),
@@ -532,10 +885,26 @@ fn registrar_ciclo(
             resposta,
             resumo,
             erro,
-            tokens
+            tokens,
+            origem_externa,
+            impressao
         ],
     )?;
     Ok(())
+}
+
+/// Registra um ciclo que não terminou (tempo esgotado ou pânico). Conta
+/// como se tivesse chamado o modelo, por segurança: a revisão periódica
+/// seguinte espera o intervalo normal em vez de tentar de novo na hora.
+/// Os eventos do ciclo NÃO foram consumidos (só são marcados depois de uma
+/// chamada bem-sucedida), então serão vistos no próximo ciclo.
+pub fn registrar_ciclo_interrompido(banco: &Banco, inicio: i64, erro: &str) -> anyhow::Result<()> {
+    let resultado = ResultadoCiclo {
+        chamou_modelo: true,
+        motivo: "ciclo interrompido pelo kernel".into(),
+        ..Default::default()
+    };
+    registrar_ciclo(banco, inicio, &resultado, None, Some(erro), 0)
 }
 
 /// Último ciclo registrado (opcionalmente só os que chamaram o modelo).
@@ -574,6 +943,31 @@ pub fn ultimo_ciclo(banco: &Banco, so_com_modelo: bool) -> anyhow::Result<Option
 mod testes {
     use super::*;
 
+    /// Match exaustivo: uma ação nova sem nome em `NOMES_ACOES` não compila
+    /// aqui e falha o teste abaixo.
+    fn nome_da_acao(acao: &Acao) -> &'static str {
+        match acao {
+            Acao::TransicionarGoal { .. } => "transicionar_goal",
+            Acao::Delegar { .. } => "delegar",
+            Acao::CancelarSubagente { .. } => "cancelar_subagente",
+            Acao::ConsultarSkill { .. } => "consultar_skill",
+            Acao::PedirAoUsuario { .. } => "pedir_ao_usuario",
+            Acao::Aguardar { .. } => "aguardar",
+        }
+    }
+
+    #[test]
+    fn nomes_das_acoes_batem_com_o_json() {
+        for nome in NOMES_ACOES {
+            let acao: Acao = serde_json::from_value(serde_json::json!({
+                "tipo": nome, "goal_id": 1, "para": "executando", "motivo": "m",
+                "nivel": "low", "tarefa": "t", "id": 1, "nome": "s", "pergunta": "p"
+            }))
+            .unwrap_or_else(|e| panic!("ação '{nome}' não existe: {e}"));
+            assert_eq!(nome_da_acao(&acao), nome);
+        }
+    }
+
     fn goal(id: i64, atualizado_ms: i64) -> Goal {
         Goal {
             id,
@@ -608,13 +1002,14 @@ mod testes {
             tipo: "cron".into(),
             origem: "x".into(),
             conteudo: "y".into(),
+            origem_externa: None,
         };
         let g = goal(1, 100);
         let mudou = goal(1, 600);
         let anterior = ciclo(500);
         let chama =
             |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>, ativos, agora| {
-                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60)
+                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60, true)
             };
         // Sem goal e sem evento: não chama.
         assert_eq!(chama(&[], None, None, 0, 1000), None);
@@ -630,6 +1025,15 @@ mod testes {
         assert!(chama(&[], Some(&g), Some(&anterior), 0, 60_500).is_some());
         // ...a não ser que haja sub-agente trabalhando (o resultado virá como evento).
         assert_eq!(chama(&[], Some(&g), Some(&anterior), 1, 60_500), None);
+
+        // Descanso ou orçamento em alerta: sem revisão periódica...
+        let sem_revisao = |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>| {
+            motivo_para_chamar(novos, foco, ultimo, 0, 60_500, 60, false)
+        };
+        assert_eq!(sem_revisao(&[], Some(&g), Some(&anterior)), None);
+        // ...mas evento novo e goal que mudou ainda acordam o modelo.
+        assert!(sem_revisao(std::slice::from_ref(&evento), Some(&g), Some(&anterior)).is_some());
+        assert!(sem_revisao(&[], Some(&mudou), Some(&anterior)).is_some());
     }
 
     #[test]
@@ -644,6 +1048,7 @@ mod testes {
             &[],
             None,
             "Data e hora: x",
+            &[],
         );
         assert!(texto.starts_with("### NÚCLEO DO GOAL EM FOCO — #7"));
         assert_eq!(texto.matches("Terminar o capítulo 1 até sexta.").count(), 3);

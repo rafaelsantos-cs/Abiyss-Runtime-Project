@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "No chat, o usuário pede: 'veja quais são os 5 maiores arquivos da pasta de dados e me diga'.",
+    "esperado": "delegar com nivel low, tarefa autocontida com critério de pronto (nome e tamanho dos 5 maiores em workspace/dados), contexto com o caminho, prazo curto; avisa o usuário que o resultado chega depois."
+  },
+  {
+    "situacao": "No heartbeat, o goal #3 precisa de uma comparação de três bibliotecas com prós e contras.",
+    "esperado": "Ação delegar com nivel medium, goal_id 3, contexto com os critérios de comparação e o formato da resposta, prazo_segundos realista e expectativa verificável."
+  },
+  {
+    "situacao": "Um relatório voltou parcial dizendo 'não sei qual projeto é o X'.",
+    "esperado": "Reconhece falta de contexto (não de capacidade); refaz a delegação no mesmo nível com o contexto que faltava."
+  }
+]

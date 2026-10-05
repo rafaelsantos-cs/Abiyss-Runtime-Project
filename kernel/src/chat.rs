@@ -101,10 +101,17 @@ impl SessaoChat {
         // O núcleo é relido a cada turno: editar o arquivo vale na hora.
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
         // Data/hora e estado do "corpo", medidos por código a cada turno.
-        let corpo = match Interocepcao::medir(&self.config, &self.banco) {
+        let mut corpo = match Interocepcao::medir(&self.config, &self.banco) {
             Ok(i) => i.como_texto(),
             Err(_) => format!("Data e hora: {}", interocepcao::agora_formatado()),
         };
+        // Pedidos pendentes ao dono (bloco do kernel, rotulado como dado).
+        if self.ferramentas.responde_pedidos()
+            && let Some(bloco) = crate::pedidos::bloco_para_chat(&self.banco)?
+        {
+            corpo.push_str("\n\n");
+            corpo.push_str(&crate::dados::rotular("kernel:pedidos", &bloco));
+        }
         let blocos = BlocosPrompt {
             // Relida a cada turno, como o núcleo.
             memoria_central: MemoriaCentral::da_config(&self.config).bloco_para_prompt(),

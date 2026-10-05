@@ -87,8 +87,10 @@ validadas por código.
 Cada ciclo faz **no máximo UMA** chamada ao cérebro (perceber + orientar +
 decidir juntos). O contexto começa **e termina** com o núcleo do goal em foco.
 O modelo responde em JSON com ações (`transicionar_goal`, `delegar`,
-`cancelar_subagente`, `aguardar`), cada uma com a sua `expectativa`; o kernel
-valida e executa, e anota no diário a expectativa (antes) e o resultado (depois).
+`cancelar_subagente`, `consultar_skill`, `pedir_ao_usuario`, `aguardar`),
+cada uma com a sua `expectativa`; o kernel valida e executa, e anota no
+diário a expectativa (antes) e o resultado (depois). O ritmo do dia, o sono,
+a estagnação e o disjuntor estão em [Um dia do Abiyss](#um-dia-do-abiyss).
 
 Máquina de estados dos goals:
 
@@ -227,7 +229,8 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss chat --mostrar-raciocinio` | Mostra o raciocínio do modelo em cinza |
 | `abiyss daemon` | Roda o Abiyss 24/7 (heartbeat, crons, sub-agentes) |
 | `abiyss daemon --uma-vez` | Um ciclo de heartbeat (+ sub-agentes pendentes) e sai |
-| `abiyss status` | Estado geral: daemon, identidade, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss status` | Estado geral: daemon, identidade, último sono, disjuntor, pedidos, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss status --verificar` | Uma linha e código de saída para monitor externo: 0 = ok, 1 = degradado (sinal de vida atrasado, disjuntor aberto, sono falho ou atrasado), 2 = daemon parado |
 | `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` |
 | `abiyss manutencao` | Roda agora a retenção (detalhe antigo → agregado diário), o vacuum incremental e o checkpoint do WAL |
 | `abiyss goal add "Título" --nucleo "essência + critério de pronto" [--descricao ..] [--prioridade N]` | Cria um goal (estado `proposto`) |
@@ -239,7 +242,12 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss diario [--limite N]` | Diário: expectativa antes de cada ação e resultado depois |
 | `abiyss ferramentas` | Lista as ferramentas que o modelo enxerga |
 | `abiyss skills` | Lista as skills (nome + descrição) e as ignoradas, com o motivo |
-| `abiyss sleep` | Aplica as propostas de memória pendentes (ou rejeita, com o motivo) |
+| `abiyss sleep` | Aplica as propostas de memória pendentes (ou rejeita, com o motivo), sem chamar o modelo |
+| `abiyss sleep --completo [--dia AAAA-MM-DD]` | O sono inteiro na hora (com o daemon rodando, só pede; sem ele, dorme ali e precisa das chaves); veja [`docs/SONO.md`](docs/SONO.md) |
+| `abiyss sleep --relatorio [--dia AAAA-MM-DD]` | Mostra o relatório do último sono (ou do dia) |
+| `abiyss backup` | Backup agora (banco consistente + cofre + memória central + núcleo) em `data/backups/AAAA-MM-DD/` |
+| `abiyss pedidos [--todos]` | Perguntas que o Abiyss guardou para você (pendentes, ou todas) |
+| `abiyss pedidos responder ID "texto"` / `cancelar ID` | Responde (vira evento para o heartbeat) / cancela um pedido |
 | `abiyss memoria propostas [--todas]` | Propostas pendentes (ou recentes, com a decisão) |
 | `abiyss memoria buscar "consulta" [--escopo interno\|externo\|ambos]` | Busca no cofre (a mesma da ferramenta) |
 | `abiyss memoria esquecer CAMINHO` | Remove uma nota (ex.: `01_internal/pessoas/ana.md`) e registra só que foi removida |
@@ -386,6 +394,33 @@ journalctl -u abiyss -f
 - O `.env` é lido pelo próprio Abiyss; não precisa de `EnvironmentFile`.
 - Fora do systemd (rodando `abiyss daemon` à mão), os avisos `sd_notify`
   simplesmente não acontecem.
+
+### Um dia do Abiyss
+
+O daemon cuida sozinho do ciclo de 24 h. Tudo é decidido por código (sem
+chamar o modelo) e configurado no `abiyss.toml`:
+
+| O quê | Como | Config |
+|---|---|---|
+| **Vigília × descanso** | nas horas ativas, heartbeat normal; fora delas, intervalo maior e sem revisão periódica de goal (eventos ainda acordam o modelo) | `[ritmo]` |
+| **Orçamento diário** | chamadas (e tokens) do trabalho autônomo contadas desde a meia-noite; em alerta, só eventos acordam o modelo; esgotado, o heartbeat para até amanhã. A conversa nunca é cortada | `[orcamento]` |
+| **Sono** | uma vez por dia (03:00): backup, revisão do dia em duas passadas por origem, aplicação das propostas, relatório e evento do despertar. O heartbeat fica pausado enquanto ele dorme | `[sono]`, `[backup]`; [`docs/SONO.md`](docs/SONO.md) |
+| **Estagnação** | a mesma decisão repetida sem o goal mudar (ou a mesma ação falhando) gera um aviso, a skill `sair-de-loops` e uma revisão periódica mais espaçada | `[vigilancia]` |
+| **Disjuntor** | falhas seguidas do modelo param as chamadas do heartbeat por um tempo crescente (5 min → 1 h); depois, uma tentativa decide | `[vigilancia]` |
+| **Despertar** | ao subir depois de mais de 10 min fora (queda ou parada), um aviso com o tempo de ausência; o primeiro ciclo recebe a skill `planejar-o-dia` | `[daemon] aviso_ausencia_minutos` |
+| **Pedidos ao usuário** | perguntas do heartbeat e do sono ficam numa caixa de entrada (`abiyss pedidos`); a resposta vira evento; sem resposta em 72 h, expiram | `[pedidos]` |
+
+O que acompanhar:
+
+```bash
+abiyss status                 # último sono, disjuntor, estagnação, pedidos
+abiyss sleep --relatorio      # o que o sono fez na última noite
+abiyss pedidos                # o que ele está esperando de você
+```
+
+Monitor externo (opcional): `abiyss status --verificar` devolve 0, 1 ou 2.
+Um timer do systemd que rode a cada 10 min e mande um alerta quando o código
+não for 0 basta; o `Restart=` da unit já cuida das quedas.
 
 ### Logs: tamanho do journal
 

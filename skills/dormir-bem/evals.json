@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "Material do dia: m:4 (usuário) 'a partir de agora me responda sempre em português do Brasil'; m:5 resposta do Abiyss confirmando.",
+    "esperado": "Propõe no escopo interno preferencias/idioma.md (ou acrescenta à nota existente) tipo dito com evidências [\"m:4\"]; avalia propor também na memória central, por valer em todo turno; menciona no diário."
+  },
+  {
+    "situacao": "d:9 expectativa 'o sub-agente low devolve a tabela completa', resultado 'parcial: faltaram 2 colunas'; d:12 repete o mesmo padrão em outra tarefa.",
+    "esperado": "Uma lição em procedimentos/ (deduzido) citando d:9 e d:12, acionável (ex.: usar medium para tabelas com análise). Não grava como dito."
+  },
+  {
+    "situacao": "O lote só tem decisões do heartbeat de rotina (aguardar) e nenhuma fala do usuário.",
+    "esperado": "Diário curto e honesto (dia calmo) com evidências c:, nenhuma proposta inventada, nenhuma pergunta ao usuário."
+  }
+]

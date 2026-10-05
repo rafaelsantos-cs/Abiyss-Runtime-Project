@@ -182,6 +182,28 @@ workspace = "workspace"
 skills = "skills"
 
 # ---------------------------------------------------------------------------
+# Skills: confiança das pastas e skills que o kernel usa sozinho.
+# ---------------------------------------------------------------------------
+
+[skills]
+# Pastas de skills, em ordem (nome repetido: vale a da primeira pasta).
+# Pasta DENTRO deste projeto (versionada no git) é confiável por padrão: ler
+# uma skill dela não marca a conversa como conteúdo externo. Pasta de fora
+# (skills do Hermes, hubs) é conteúdo EXTERNO para a regra dura da memória.
+# Sem `raizes`, vale `[caminhos] skills` (uma pasta só).
+# raizes = [
+#   { caminho = "skills", confiavel = true },
+#   { caminho = "/home/ubuntu/.hermes/skills", confiavel = false },
+# ]
+
+[skills.automaticas]
+# Skills (confiáveis) que o kernel põe no contexto sozinho quando detecta a
+# situação. Vazio = desligado.
+estagnacao = "sair-de-loops"   # mesma decisão repetida sem efeito
+sono = "dormir-bem"            # critério do sono (consolidação noturna)
+despertar = "planejar-o-dia"   # primeiro ciclo depois do sono ou de um reinício
+
+# ---------------------------------------------------------------------------
 # Conversa (`abiyss chat`).
 # ---------------------------------------------------------------------------
 
@@ -259,6 +281,132 @@ max_eventos_por_ciclo = 20
 # este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
 # o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
 max_travado_segundos = 3600
+# Tempo máximo de UM ciclo de heartbeat. Passou disto, o kernel interrompe o
+# ciclo, registra o erro e os eventos continuam pendentes. O loop principal
+# (crons, sinal de vida, watchdog) nunca espera o ciclo: ele anda em paralelo.
+max_duracao_ciclo_segundos = 900
+# Um ciclo que deixa algo para o próximo ler (ex.: consultar_skill) antecipa
+# o ciclo seguinte para daqui a `continuacao_segundos`, no máximo
+# `max_continuacoes_seguidas` vezes em sequência.
+continuacao_segundos = 20
+max_continuacoes_seguidas = 2
+# Ao subir depois de ficar fora do ar mais que isto (queda ou parada), o
+# daemon publica um evento kernel/reinicio com o tempo de ausência; o primeiro
+# ciclo recebe a skill planejar-o-dia.
+aviso_ausencia_minutos = 10
+
+# ---------------------------------------------------------------------------
+# Ritmo do dia (fuso local da máquina; o systemd define TZ=America/Sao_Paulo).
+#   vigília  = dentro das horas ativas: heartbeat normal;
+#   descanso = fora delas: sem revisão periódica de goal; eventos e mudanças
+#              de goal ainda acordam o modelo; heartbeat mais espaçado;
+#   sono     = a consolidação noturna está rodando (heartbeat pausado).
+# ---------------------------------------------------------------------------
+
+[ritmo]
+# "HH:MM-HH:MM"; pode cruzar a meia-noite ("22:00-06:00").
+# Início igual ao fim ("00:00-00:00") = vigília o dia inteiro.
+horas_ativas = "07:00-23:00"
+heartbeat_descanso_segundos = 1800
+
+# ---------------------------------------------------------------------------
+# Orçamento diário do trabalho AUTÔNOMO (heartbeat + sub-agentes + sono),
+# contado no fuso local desde a meia-noite. Cada tentativa conta. A conversa
+# com o dono (`abiyss chat`) NUNCA entra nesta conta nem é cortada por ela.
+#   >= fracao_alerta  → só eventos acordam o modelo (sem revisão periódica);
+#   esgotado          → o heartbeat não chama o modelo e não delega até amanhã.
+# 0 = sem limite. Valores A CALIBRAR na VM com o uso real.
+# ---------------------------------------------------------------------------
+
+[orcamento]
+chamadas_autonomas_por_dia = 1500
+tokens_autonomos_por_dia = 0
+# Fatia que só o sono pode usar (o heartbeat e os sub-agentes param antes).
+reserva_sono_chamadas = 12
+fracao_alerta = 0.8
+
+# ---------------------------------------------------------------------------
+# Vigilância do heartbeat (código, sem modelo).
+# Estagnação: a mesma decisão (goal em foco + ações normalizadas) em
+# `repeticoes_estagnacao` ciclos seguidos sem o goal mudar, ou a mesma ação
+# falhando `erros_mesma_acao` vezes seguidas → evento kernel/estagnacao (com a
+# skill sair-de-loops) e a revisão periódica do goal fica 2×, 4×... até
+# `max_multiplicador_revisao`× mais espaçada, até ele mudar.
+# Disjuntor: `falhas_para_abrir` ciclos seguidos com falha do modelo (erro,
+# resposta fora do formato, ciclo interrompido) → sem chamadas por
+# min(base·2^k, teto) segundos (±20%); depois UMA tentativa decide.
+# O estado aparece em `abiyss status` e no `--verificar`.
+# ---------------------------------------------------------------------------
+
+[vigilancia]
+repeticoes_estagnacao = 3
+erros_mesma_acao = 3
+max_multiplicador_revisao = 8
+falhas_para_abrir = 3
+disjuntor_base_segundos = 300
+disjuntor_teto_segundos = 3600
+
+# ---------------------------------------------------------------------------
+# Pedidos ao usuário (caixa de entrada assíncrona). O heartbeat pede com a
+# ação pedir_ao_usuario; as perguntas do sono também viram pedidos. Você
+# responde com `abiyss pedidos responder <id> "texto"` ou na conversa (o
+# Abiyss registra com responder_pedido). A resposta chega como evento.
+# ---------------------------------------------------------------------------
+
+[pedidos]
+# Teto de pendentes; a mesma pergunta pendente não duplica.
+max_pendentes = 10
+# Sem resposta depois disto, o pedido expira (e o Abiyss é avisado).
+expira_apos_horas = 72
+
+# ---------------------------------------------------------------------------
+# Backup (feito no início de cada sono; `abiyss backup` faz na hora).
+# Vai para <dados>/backups/AAAA-MM-DD/: banco (VACUUM INTO, consistente
+# mesmo com o daemon rodando), cofre, memória central e núcleo. Links
+# simbólicos não são seguidos. Restaurar é manual: veja docs/SONO.md.
+# Para ter cópia FORA da VM, use um timer do systemd com rsync/rclone.
+# ---------------------------------------------------------------------------
+
+[backup]
+ativo = true
+manter_diarios = 7
+# Além dos diários, quantos domingos anteriores guardar.
+manter_semanais = 4
+# Abaixo disto de disco livre, o backup é pulado (com aviso).
+disco_minimo_gb = 2.0
+# Cofre maior que isto não é copiado (o banco ainda é).
+max_megabytes_cofre = 2048
+
+# ---------------------------------------------------------------------------
+# Sono: uma vez por dia o daemon pausa o heartbeat e consolida a memória
+# (backup → aplica a fila → revisão do dia pelo modelo em DUAS passadas
+# separadas por origem: interna e externa → aplica → relatório em
+# <dados>/sono/ e um evento `sono` para o primeiro ciclo depois).
+# Toda proposta do sono cita evidências; o kernel descarta o resto.
+# `abiyss sleep --completo` dorme na hora; `abiyss sleep --relatorio` mostra
+# o último relatório. Detalhes em docs/SONO.md.
+# ---------------------------------------------------------------------------
+
+[sono]
+ativo = true
+# Início da janela (fuso local). Um sono antes do meio-dia revisa o dia anterior.
+inicio = "03:00"
+janela_minutos = 120
+# Perdeu a janela (VM desligada)? Dorme assim que subir, até este limite.
+recuperar_ate_horas = 12
+# Tempo máximo do sono inteiro (o daemon interrompe e registra a falha).
+max_duracao_minutos = 60
+# Modo da tabela de esforço do cérebro em cada passada.
+modo_esforco = "profundo"
+modo_esforco_externo = "raso"
+# Teto de chamadas ao modelo por noite (uma fica para a passada externa
+# quando há material externo). O que não couber fica para a próxima noite.
+max_chamadas = 4
+max_caracteres_por_chamada = 120000
+# Teto de propostas por noite (as duas passadas juntas).
+max_propostas = 30
+# Notas internas relacionadas ao material do dia mandadas junto (replay).
+max_notas_relacionadas = 8
 
 # ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,

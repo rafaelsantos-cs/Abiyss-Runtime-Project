@@ -64,10 +64,12 @@ pub struct Proposta {
     pub estado: EstadoProposta,
     pub motivo: Option<String>,
     pub decidido_ms: Option<i64>,
+    /// IDs citáveis que sustentam a proposta (propostas do sono), em JSON.
+    pub evidencias: Option<String>,
 }
 
 const COLUNAS: &str = "id, criado_ms, escopo, caminho, conteudo, tipo, fonte, origem_externa, \
-                       estado, motivo, decidido_ms";
+                       estado, motivo, decidido_ms, evidencias";
 
 fn linha_para_proposta(l: &rusqlite::Row<'_>) -> rusqlite::Result<Proposta> {
     let estado: String = l.get(8)?;
@@ -83,16 +85,27 @@ fn linha_para_proposta(l: &rusqlite::Row<'_>) -> rusqlite::Result<Proposta> {
         estado: EstadoProposta::de_texto(&estado).unwrap_or(EstadoProposta::Pendente),
         motivo: l.get(9)?,
         decidido_ms: l.get(10)?,
+        evidencias: l.get(11)?,
     })
 }
 
 /// Enfileira e devolve o ID.
 pub fn enfileirar(banco: &Banco, nova: &NovaProposta) -> anyhow::Result<i64> {
-    let conexao = banco.conexao();
+    Ok(enfileirar_em(&banco.conexao(), nova, None)?)
+}
+
+/// Enfileira numa conexão (ou transação) que quem chama já tem, com as
+/// evidências (JSON) quando houver. Usado pelo sono, que grava propostas
+/// e marcas de progresso numa transação só.
+pub fn enfileirar_em(
+    conexao: &rusqlite::Connection,
+    nova: &NovaProposta,
+    evidencias: Option<&str>,
+) -> rusqlite::Result<i64> {
     conexao.execute(
         "INSERT INTO propostas_memoria
-           (criado_ms, escopo, caminho, conteudo, tipo, fonte, origem_externa, estado)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pendente')",
+           (criado_ms, escopo, caminho, conteudo, tipo, fonte, origem_externa, estado, evidencias)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pendente', ?8)",
         params![
             agora_ms(),
             nova.escopo,
@@ -100,7 +113,8 @@ pub fn enfileirar(banco: &Banco, nova: &NovaProposta) -> anyhow::Result<i64> {
             nova.conteudo,
             nova.tipo.como_texto(),
             nova.fonte.como_texto(),
-            nova.origem_externa
+            nova.origem_externa,
+            evidencias
         ],
     )?;
     Ok(conexao.last_insert_rowid())

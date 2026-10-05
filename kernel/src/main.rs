@@ -53,7 +53,12 @@ enum Comando {
         uma_vez: bool,
     },
     /// Mostra o estado do Abiyss (não chama o modelo).
-    Status,
+    Status {
+        /// Só verifica a saúde, numa linha, com código de saída para
+        /// monitores: 0 = ok, 1 = degradado, 2 = daemon parado.
+        #[arg(long)]
+        verificar: bool,
+    },
     /// Gerencia goals.
     #[command(subcommand)]
     Goal(ComandoGoal),
@@ -69,8 +74,21 @@ enum Comando {
     Ferramentas,
     /// Lista as skills (nome + descrição) e as que não puderam ser lidas.
     Skills,
-    /// Aplica as propostas de memória pendentes (ou rejeita, com motivo).
-    Sleep,
+    /// Sem opções: aplica as propostas de memória pendentes (ou rejeita,
+    /// com motivo). Com --completo: o sono inteiro (backup, revisão do dia
+    /// pelo modelo, aplicação, relatório).
+    Sleep {
+        /// Sono completo. Com o daemon rodando, só pede (ele dorme no
+        /// próximo tique); sem o daemon, dorme aqui (precisa das chaves).
+        #[arg(long, conflicts_with = "relatorio")]
+        completo: bool,
+        /// Mostra o relatório do último sono (ou do --dia).
+        #[arg(long)]
+        relatorio: bool,
+        /// Dia revisado, AAAA-MM-DD (padrão: o da janela mais recente).
+        #[arg(long)]
+        dia: Option<String>,
+    },
     /// Importa a memória do Hermes. Sem --aplicar, só mostra o relatório.
     ImportarHermes {
         /// Pasta do Hermes (ex.: ~/.hermes).
@@ -83,6 +101,15 @@ enum Comando {
     /// Memória de longo prazo (cofre do Obsidian).
     #[command(subcommand)]
     Memoria(ComandoMemoria),
+    /// Pedidos do Abiyss para você (perguntas do ciclo autônomo e do sono).
+    /// Sem subcomando, lista os pendentes.
+    Pedidos {
+        #[command(subcommand)]
+        acao: Option<ComandoPedidos>,
+        /// Lista também os respondidos, expirados e cancelados.
+        #[arg(long)]
+        todos: bool,
+    },
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -98,6 +125,9 @@ enum Comando {
     /// Roda a manutenção do banco agora (retenção, checkpoint do WAL e
     /// vacuum incremental) — o daemon faz o mesmo periodicamente.
     Manutencao,
+    /// Faz o backup agora (banco, cofre, memória central e núcleo) em
+    /// <dados>/backups/AAAA-MM-DD/. O sono faz isso sozinho toda noite.
+    Backup,
     /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
     /// resolvida a partir do abiyss.toml (não chama o modelo).
     Esforco,
@@ -146,6 +176,18 @@ enum ComandoGoal {
         #[arg(long)]
         motivo: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ComandoPedidos {
+    /// Responde a um pedido (a resposta chega ao heartbeat como evento).
+    Responder {
+        id: i64,
+        /// A resposta, nas suas palavras.
+        resposta: String,
+    },
+    /// Cancela um pedido pendente (você não vai responder).
+    Cancelar { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -214,8 +256,11 @@ async fn main() -> anyhow::Result<()> {
             cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
         }
         Comando::Manutencao => cli::daemon::manutencao(&Config::carregar(&caminho_config)?),
+        Comando::Backup => cli::daemon::backup(&Config::carregar(&caminho_config)?),
         Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
-        Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
+        Comando::Status { verificar } => {
+            cli::daemon::status(&Config::carregar(&caminho_config)?, verificar)
+        }
         Comando::Goal(sub) => {
             let config = Config::carregar(&caminho_config)?;
             match sub {
@@ -260,9 +305,32 @@ async fn main() -> anyhow::Result<()> {
             cli::ferramentas::listar(&config).await
         }
         Comando::Skills => cli::ferramentas::skills(&Config::carregar(&caminho_config)?),
-        Comando::Sleep => cli::memoria::sleep(&Config::carregar(&caminho_config)?),
+        Comando::Sleep {
+            completo,
+            relatorio,
+            dia,
+        } => {
+            let config = Config::carregar(&caminho_config)?;
+            if relatorio {
+                cli::memoria::relatorio_sono(&config, dia.as_deref())
+            } else if completo {
+                cli::memoria::sono_completo(&config, dia.as_deref()).await
+            } else {
+                cli::memoria::sleep(&config)
+            }
+        }
         Comando::ImportarHermes { origem, aplicar } => {
             cli::hermes::importar(&Config::carregar(&caminho_config)?, &origem, aplicar)
+        }
+        Comando::Pedidos { acao, todos } => {
+            let config = Config::carregar(&caminho_config)?;
+            match acao {
+                None => cli::pedidos::listar(&config, todos),
+                Some(ComandoPedidos::Responder { id, resposta }) => {
+                    cli::pedidos::responder(&config, id, &resposta)
+                }
+                Some(ComandoPedidos::Cancelar { id }) => cli::pedidos::cancelar(&config, id),
+            }
         }
         Comando::Memoria(sub) => {
             let config = Config::carregar(&caminho_config)?;

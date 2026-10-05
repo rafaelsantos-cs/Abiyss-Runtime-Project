@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::dados;
+use crate::db::Banco;
 use crate::mcp::PonteMcp;
 use crate::memoria::nota::{Escopo, EscopoBusca, Fonte};
 use crate::memoria::{Memoria, PedidoProposta};
@@ -81,6 +82,9 @@ impl ContextoChamada {
     }
 }
 
+/// Registra a resposta do dono a um pedido (só na conversa).
+pub const RESPONDER_PEDIDO: &str = "responder_pedido";
+
 /// Ferramentas de orquestração: só o Abiyss principal tem acesso.
 pub const DELEGAR: &str = "delegar";
 pub const STATUS: &str = "status";
@@ -101,6 +105,9 @@ pub struct CaixaDeFerramentas {
     /// Ferramentas de sub-agentes (`delegar`, `status`, `cancelar`).
     /// `None` em caixas restritas: sub-agente nunca cria sub-agente.
     subagentes: Option<ControleSubagentes>,
+    /// `responder_pedido` (só na conversa com o dono). `None` em caixas
+    /// restritas: sub-agente nunca responde pelo dono.
+    pedidos: Option<Banco>,
     /// Se `Some`, só estas ferramentas aparecem e podem ser executadas.
     /// Aceita curinga no fim: "exemplo__*".
     permitidas: Option<Vec<String>>,
@@ -124,8 +131,20 @@ impl CaixaDeFerramentas {
             memoria: None,
             mcp: Arc::new(PonteMcp::vazia()),
             subagentes: None,
+            pedidos: None,
             permitidas: None,
         }
+    }
+
+    /// Acrescenta `responder_pedido` (a conversa com o dono).
+    pub fn com_pedidos(mut self, banco: Banco) -> CaixaDeFerramentas {
+        self.pedidos = Some(banco);
+        self
+    }
+
+    /// Esta caixa registra respostas a pedidos?
+    pub fn responde_pedidos(&self) -> bool {
+        self.pedidos.is_some() && self.permitida(RESPONDER_PEDIDO)
     }
 
     /// Acrescenta `delegar`, `status` e `cancelar`.
@@ -160,8 +179,10 @@ impl CaixaDeFerramentas {
             skills: self.skills.clone(),
             memoria: self.memoria.clone(),
             mcp: Arc::clone(&self.mcp),
-            // Regra do kernel: caixa restrita (sub-agente) não delega.
+            // Regra do kernel: caixa restrita (sub-agente) não delega
+            // nem responde pelo dono.
             subagentes: None,
+            pedidos: None,
             permitidas: Some(nomes.to_vec()),
         }
     }
@@ -181,6 +202,15 @@ impl CaixaDeFerramentas {
         self.skills
             .as_ref()
             .filter(|s| s.existe() && self.permitida(LER_SKILL))
+    }
+
+    /// `ler_skill` vai ler uma skill confiável? (Skill inexistente ou de
+    /// pasta não confiável = não; na dúvida, conta como externa.)
+    fn skill_confiavel(&self, args: &Value) -> bool {
+        match (self.skills_ativas(), args["nome"].as_str()) {
+            (Some(skills), Some(nome)) => skills.confiavel(nome) == Some(true),
+            _ => false,
+        }
     }
 
     /// Índice das skills (nome + descrição) para o system prompt.
@@ -243,11 +273,17 @@ impl CaixaDeFerramentas {
         } else {
             vec![]
         };
+        let pedidos = if self.pedidos.is_some() {
+            vec![definicao_responder_pedido()]
+        } else {
+            vec![]
+        };
         todas
             .into_iter()
             .chain(skills)
             .chain(memoria)
             .chain(orquestracao)
+            .chain(pedidos)
             .chain(self.mcp.definicoes())
             .filter(|f| self.permitida(f.nome()))
             .collect()
@@ -279,12 +315,19 @@ impl CaixaDeFerramentas {
                 Err(e) => Err(e),
                 Ok(args) => {
                     origem_externa = classificar_origem(nome, &args, eh_mcp);
+                    // Skill de pasta confiável (versionada no projeto) tem a
+                    // confiança do núcleo: não é conteúdo externo.
+                    if nome == LER_SKILL && self.skill_confiavel(&args) {
+                        origem_externa = None;
+                    }
                     if NATIVAS.contains(&nome) {
                         self.executar_nativa(nome, &args)
                     } else if MEMORIA.contains(&nome) {
                         self.executar_memoria(nome, &args, contexto).await
                     } else if ORQUESTRACAO.contains(&nome) {
                         self.executar_orquestracao(nome, &args)
+                    } else if nome == RESPONDER_PEDIDO {
+                        self.executar_responder_pedido(&args, contexto)
                     } else if eh_mcp {
                         self.mcp.chamar(nome, args).await
                     } else {
@@ -408,6 +451,30 @@ impl CaixaDeFerramentas {
         }
     }
 
+    /// `responder_pedido`: a origem da resposta segue a regra do chat (a
+    /// janela com conteúdo externo marca a resposta como externa).
+    fn executar_responder_pedido(
+        &self,
+        args: &Value,
+        contexto: &ContextoChamada,
+    ) -> anyhow::Result<String> {
+        let Some(banco) = &self.pedidos else {
+            anyhow::bail!("ferramenta '{RESPONDER_PEDIDO}' não está disponível aqui");
+        };
+        let id = args["id"]
+            .as_i64()
+            .ok_or_else(|| anyhow::anyhow!("falta 'id' (número do pedido)"))?;
+        let resposta = args["resposta"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("falta 'resposta'"))?;
+        let pedido =
+            crate::pedidos::responder(banco, id, resposta, contexto.origem_externa.as_deref())?;
+        Ok(format!(
+            "pedido #{} respondido; a resposta chega ao ciclo autônomo como evento",
+            pedido.id
+        ))
+    }
+
     fn executar_orquestracao(&self, nome: &str, args: &Value) -> anyhow::Result<String> {
         let Some(controle) = &self.subagentes else {
             anyhow::bail!("ferramenta '{nome}' não está disponível aqui");
@@ -473,7 +540,7 @@ impl CaixaDeFerramentas {
 fn classificar_origem(nome: &str, args: &Value, eh_mcp: bool) -> Option<String> {
     match nome {
         // Só confirmam o que o kernel fez: não trazem texto de fora.
-        ESCREVER_ARQUIVO | DELEGAR | CANCELAR | MEMORIA_PROPOR => None,
+        ESCREVER_ARQUIVO | DELEGAR | CANCELAR | MEMORIA_PROPOR | RESPONDER_PEDIDO => None,
         // A memória interna é do próprio Abiyss (e só entra lá o que
         // passou pela regra dura); a externa conta como conteúdo externo.
         MEMORIA_BUSCAR => match EscopoBusca::de_texto(args["escopo"].as_str().unwrap_or("ambos")) {
@@ -488,7 +555,8 @@ fn classificar_origem(nome: &str, args: &Value, eh_mcp: bool) -> Option<String> 
             }
         }
         _ if eh_mcp => Some(format!("mcp:{nome}")),
-        // Arquivos do workspace, skills, relatórios de sub-agentes...
+        // Arquivos do workspace, skills (as confiáveis são liberadas por quem
+        // chama), relatórios de sub-agentes...
         _ => Some(nome.to_string()),
     }
 }
@@ -562,6 +630,24 @@ fn definicao_ler_skill() -> Ferramenta {
                 "referencia": {"type": "string", "description": "Opcional: arquivo dentro de references/, ex.: niveis.md"}
             },
             "required": ["nome"]
+        }),
+    )
+}
+
+/// Definição de `responder_pedido`.
+fn definicao_responder_pedido() -> Ferramenta {
+    Ferramenta::nova(
+        RESPONDER_PEDIDO,
+        "Registra a resposta que o dono deu, nesta conversa, a um dos seus pedidos pendentes \
+         (listados no contexto). Use as palavras dele. A resposta chega ao seu ciclo autônomo \
+         como evento.",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Número do pedido"},
+                "resposta": {"type": "string", "description": "O que o dono respondeu"}
+            },
+            "required": ["id", "resposta"]
         }),
     )
 }

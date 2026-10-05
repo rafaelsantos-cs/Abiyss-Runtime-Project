@@ -47,6 +47,13 @@ pub struct Interocepcao {
     pub disco_total_gib: f64,
     pub disco_livre_gib: f64,
     pub pools: Vec<UsoPool>,
+    /// Fase do dia (vigília/descanso) e as horas ativas configuradas.
+    pub fase: String,
+    /// Trabalho autônomo de hoje contra o orçamento diário.
+    pub orcamento: String,
+    /// Situação do próprio kernel (disjuntor, continuidade...), uma linha
+    /// por item; vazio quando não há nada a dizer.
+    pub kernel: Vec<String>,
 }
 
 /// Nome do dia da semana em português.
@@ -84,7 +91,7 @@ fn inicio_do_dia_ms() -> i64 {
 }
 
 /// Disco onde está `caminho` (ponto de montagem mais específico).
-fn disco_de(caminho: &Path) -> (f64, f64) {
+pub fn disco_de(caminho: &Path) -> (f64, f64) {
     let caminho = caminho
         .canonicalize()
         .unwrap_or_else(|_| caminho.to_path_buf());
@@ -153,6 +160,38 @@ fn uso_pool(
     })
 }
 
+/// Continuidade: desde quando o daemon está no ar e como foi o último sono.
+fn continuidade(banco: &Banco, agora: i64) -> anyhow::Result<Vec<String>> {
+    use crate::daemon::{CHAVE_INICIADO, CHAVE_PARADO, ler_estado};
+    use crate::tempo::{formatar_duracao, formatar_ms};
+    let numero = |chave: &str| -> anyhow::Result<Option<i64>> {
+        Ok(ler_estado(banco, chave)?.and_then(|v| v.parse().ok()))
+    };
+    let mut linhas = Vec::new();
+    // No ar = a última execução começou e ainda não parou.
+    if let Some(inicio) = numero(CHAVE_INICIADO)?
+        && numero(CHAVE_PARADO)?.is_none_or(|p| p < inicio)
+    {
+        linhas.push(format!(
+            "No ar desde {} ({})",
+            formatar_ms(inicio),
+            formatar_duracao(agora - inicio)
+        ));
+    }
+    if let Some(s) = crate::sono::ultimo(banco)? {
+        linhas.push(format!(
+            "Último sono: revisão de {}, {} (terminou há {})",
+            s.dia,
+            s.estado,
+            formatar_duracao(agora - s.fim_ms.unwrap_or(s.inicio_ms))
+        ));
+    }
+    if let Some(p) = crate::pedidos::resumo(banco, agora)? {
+        linhas.push(p);
+    }
+    Ok(linhas)
+}
+
 impl Interocepcao {
     /// Mede tudo agora. Não chama o modelo nem a rede.
     pub fn medir(config: &Config, banco: &Banco) -> anyhow::Result<Interocepcao> {
@@ -181,7 +220,23 @@ impl Interocepcao {
             )?,
         ];
 
+        let fase = format!(
+            "{} (horas ativas {})",
+            crate::ritmo::fase_agora(&config.ritmo).como_texto(),
+            config.ritmo.horas_ativas
+        );
+        let uso = crate::orcamento::uso_desde(banco, crate::ritmo::inicio_do_dia_local_ms())?;
+        let orcamento = crate::orcamento::descrever(&config.orcamento, uso);
+        let mut kernel = continuidade(banco, agora_ms())?;
+        let disjuntor = crate::vigilancia::ler_disjuntor(banco)?;
+        if let Some(d) = crate::vigilancia::descrever_disjuntor(&disjuntor, agora_ms()) {
+            kernel.push(format!("Disjuntor do heartbeat: {d}"));
+        }
+
         Ok(Interocepcao {
+            fase,
+            orcamento,
+            kernel,
             agora: agora_formatado(),
             nucleos,
             carga: (carga.one, carga.five, carga.fifteen),
@@ -197,6 +252,15 @@ impl Interocepcao {
     pub fn como_texto(&self) -> String {
         let mut t = String::new();
         let _ = writeln!(t, "Data e hora: {}", self.agora);
+        if !self.fase.is_empty() {
+            let _ = writeln!(t, "Fase do dia: {}", self.fase);
+        }
+        if !self.orcamento.is_empty() {
+            let _ = writeln!(t, "Trabalho autônomo hoje: {}", self.orcamento);
+        }
+        for linha in &self.kernel {
+            let _ = writeln!(t, "{linha}");
+        }
         let _ = writeln!(
             t,
             "CPU: carga {:.2} / {:.2} / {:.2} (1/5/15 min) em {} núcleo(s)",
@@ -278,6 +342,8 @@ mod testes {
         assert!(texto.starts_with("Data e hora: "));
         assert!(texto.contains("Pool cerebro: 2/40 req"));
         assert!(texto.contains("1 limite(s) 429"));
+        assert!(texto.contains("Fase do dia: vigília"));
+        assert!(texto.contains("Trabalho autônomo hoje:"));
     }
 
     #[test]

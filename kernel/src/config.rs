@@ -38,6 +38,20 @@ pub struct Config {
     pub retencao: crate::manutencao::ConfigRetencao,
     #[serde(default)]
     pub banco: ConfigBanco,
+    #[serde(default)]
+    pub skills: ConfigSkills,
+    #[serde(default)]
+    pub ritmo: crate::ritmo::ConfigRitmo,
+    #[serde(default)]
+    pub orcamento: crate::orcamento::ConfigOrcamento,
+    #[serde(default)]
+    pub backup: crate::backup::ConfigBackup,
+    #[serde(default)]
+    pub sono: crate::sono::ConfigSono,
+    #[serde(default)]
+    pub vigilancia: crate::vigilancia::ConfigVigilancia,
+    #[serde(default)]
+    pub pedidos: crate::pedidos::ConfigPedidos,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -277,6 +291,50 @@ impl Default for ConfigBanco {
     }
 }
 
+/// Uma pasta de skills (`[[skills.raizes]]` ou `raizes = [{...}]`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigRaizSkills {
+    pub caminho: String,
+    /// `None` = decide pelo lugar: pasta DENTRO do projeto (versionada no
+    /// git, revisada como o kernel) é confiável; fora dele, externa.
+    #[serde(default)]
+    pub confiavel: Option<bool>,
+}
+
+/// Skills que o kernel coloca no contexto sozinho, em situações que ele
+/// detecta por código. Vazio = desligado. Só skills CONFIÁVEIS entram.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigSkillsAutomaticas {
+    /// Quando o kernel avisar estagnação (mesma decisão repetida sem efeito).
+    pub estagnacao: String,
+    /// Critério do sono (consolidação noturna).
+    pub sono: String,
+    /// Primeiro ciclo depois do sono ou de um reinício.
+    pub despertar: String,
+}
+
+impl Default for ConfigSkillsAutomaticas {
+    fn default() -> Self {
+        ConfigSkillsAutomaticas {
+            estagnacao: "sair-de-loops".to_string(),
+            sono: "dormir-bem".to_string(),
+            despertar: "planejar-o-dia".to_string(),
+        }
+    }
+}
+
+/// `[skills]`: pastas de skills com nível de confiança.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigSkills {
+    /// Em ordem: nome repetido vale o da primeira raiz. Vazio = usa
+    /// `[caminhos] skills` como raiz única.
+    pub raizes: Vec<ConfigRaizSkills>,
+    pub automaticas: ConfigSkillsAutomaticas,
+}
+
 /// Opções do daemon (`abiyss daemon`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -294,6 +352,17 @@ pub struct ConfigDaemon {
     /// tempo sem completar nenhuma volta (ex.: um ciclo travado), o daemon
     /// para de mandar WATCHDOG=1 e o systemd o reinicia.
     pub max_travado_segundos: u64,
+    /// Tempo máximo de um ciclo de heartbeat. Passou disto, o kernel
+    /// interrompe o ciclo, registra o erro e os eventos continuam pendentes.
+    pub max_duracao_ciclo_segundos: u64,
+    /// Quando um ciclo deixa algo para o próximo ler (ex.: `consultar_skill`),
+    /// o próximo ciclo vem depois deste tempo, sem esperar o intervalo inteiro.
+    pub continuacao_segundos: u64,
+    /// Máximo de ciclos de continuação seguidos (depois volta ao intervalo normal).
+    pub max_continuacoes_seguidas: u32,
+    /// Ao subir depois de ficar fora do ar mais que isto, o daemon publica
+    /// um evento `kernel/reinicio` (o primeiro ciclo replaneja o dia).
+    pub aviso_ausencia_minutos: u64,
 }
 
 impl Default for ConfigDaemon {
@@ -304,6 +373,10 @@ impl Default for ConfigDaemon {
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
             max_travado_segundos: 3_600,
+            max_duracao_ciclo_segundos: 900,
+            continuacao_segundos: 20,
+            max_continuacoes_seguidas: 2,
+            aviso_ausencia_minutos: 10,
         }
     }
 }
@@ -511,6 +584,14 @@ impl Config {
         if self.daemon.heartbeat_segundos == 0 || self.daemon.cron_verificacao_segundos == 0 {
             bail!("daemon.heartbeat_segundos e daemon.cron_verificacao_segundos precisam ser > 0");
         }
+        if self.daemon.max_duracao_ciclo_segundos == 0 {
+            bail!("daemon.max_duracao_ciclo_segundos precisa ser > 0");
+        }
+        self.ritmo.validar()?;
+        self.orcamento.validar()?;
+        self.sono.validar()?;
+        self.vigilancia.validar()?;
+        self.pedidos.validar()?;
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
@@ -536,9 +617,47 @@ impl Config {
         self.resolver(&self.caminhos.workspace)
     }
 
-    /// Pasta das skills (só leitura para o Abiyss).
+    /// Pasta das skills (só leitura para o Abiyss). Com várias raízes,
+    /// é a primeira.
     pub fn caminho_skills(&self) -> PathBuf {
-        self.resolver(&self.caminhos.skills)
+        match self.skills.raizes.first() {
+            Some(raiz) => self.resolver(&raiz.caminho),
+            None => self.resolver(&self.caminhos.skills),
+        }
+    }
+
+    /// Todas as pastas de skills, em ordem, com a confiança já decidida.
+    pub fn raizes_skills(&self) -> Vec<crate::skills::RaizSkills> {
+        let configuradas: Vec<(String, Option<bool>)> = if self.skills.raizes.is_empty() {
+            vec![(self.caminhos.skills.clone(), None)]
+        } else {
+            self.skills
+                .raizes
+                .iter()
+                .map(|r| (r.caminho.clone(), r.confiavel))
+                .collect()
+        };
+        configuradas
+            .into_iter()
+            .map(|(caminho, confiavel)| {
+                let caminho = self.resolver(&caminho);
+                let confiavel = confiavel.unwrap_or_else(|| self.dentro_do_projeto(&caminho));
+                crate::skills::RaizSkills { caminho, confiavel }
+            })
+            .collect()
+    }
+
+    /// O caminho fica dentro da pasta do projeto (a do abiyss.toml)?
+    /// Sem `..` e, quando os dois existem, comparando os caminhos reais.
+    pub fn dentro_do_projeto(&self, caminho: &Path) -> bool {
+        if caminho
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        real(caminho).starts_with(real(&self.raiz))
     }
 
     /// Pasta do cofre de memória (Obsidian).
@@ -565,10 +684,11 @@ impl Config {
             self.raiz.join("Cargo.toml"),
             self.resolver(&self.caminhos.dados),
             self.caminho_identidade(),
-            self.caminho_skills(),
             self.caminho_cofre(),
             self.caminho_memoria_central(),
         ];
+        // Todas as pastas de skills são só leitura.
+        areas.extend(self.raizes_skills().into_iter().map(|r| r.caminho));
         // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
         if let Some(pasta) = self.caminho_identidade().parent()
             && pasta != self.raiz
@@ -622,6 +742,14 @@ pub fn config_de_teste(base_url: &str, raiz: &Path) -> Config {
         api_key_env = "ABIYSS_TESTE_CHAVE_CEREBRO"
         [pools.subagentes]
         api_key_env = "ABIYSS_TESTE_CHAVE_SUBAGENTES"
+
+        # Testes não podem depender da hora em que rodam: sempre vigília.
+        [ritmo]
+        horas_ativas = "00:00-00:00"
+
+        # Nem o sono pela janela: o teste que quer dormir pede.
+        [sono]
+        ativo = false
         "#
     );
     let mut config = Config::de_texto(&texto).expect("config de teste inválida");

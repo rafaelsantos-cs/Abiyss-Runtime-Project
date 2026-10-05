@@ -39,7 +39,9 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
         CaixaDeFerramentas::da_config(&config)?
             .com_mcp(mcp.clone())
             .com_memoria(memoria)
-            .com_subagentes(controle),
+            .com_subagentes(controle)
+            // Respostas do dono aos pedidos do ciclo autônomo.
+            .com_pedidos(banco.clone()),
     );
 
     // Qual conversa usar: a pedida, a última, ou uma nova.

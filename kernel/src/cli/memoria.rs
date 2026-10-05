@@ -4,12 +4,15 @@
 use std::sync::Arc;
 
 use abiyss::config::Config;
+use abiyss::daemon;
 use abiyss::db::Banco;
 use abiyss::mcp::PonteMcp;
 use abiyss::memoria::Memoria;
 use abiyss::memoria::central::MemoriaCentral;
 use abiyss::memoria::nota::EscopoBusca;
 use abiyss::memoria::propostas::{self, EstadoProposta};
+use abiyss::orquestrador::Orquestrador;
+use abiyss::sono::{self, Gatilho, Sono};
 use abiyss::tempo::formatar_ms;
 
 fn abrir(config: &Config) -> anyhow::Result<Memoria> {
@@ -35,6 +38,54 @@ pub fn sleep(config: &Config) -> anyhow::Result<()> {
         relatorio.rejeitadas(),
         memoria.cofre().raiz().display()
     );
+    Ok(())
+}
+
+/// `abiyss sleep --completo`: pede ao daemon ou dorme aqui.
+pub async fn sono_completo(config: &Config, dia: Option<&str>) -> anyhow::Result<()> {
+    let banco = Banco::abrir(&config.caminho_banco())?;
+    if daemon::esta_rodando(config) {
+        if dia.is_some() {
+            println!("(com o daemon rodando, o dia revisado é o da janela mais recente)");
+        }
+        sono::pedir(&banco)?;
+        println!(
+            "Pedido registrado: o daemon dorme no próximo tique (até {} s), depois do ciclo em andamento.
+             Acompanhe com `abiyss status` e veja o resultado com `abiyss sleep --relatorio`.",
+            config.daemon.cron_verificacao_segundos
+        );
+        return Ok(());
+    }
+    let dia = match dia {
+        Some(d) => chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .map_err(|_| anyhow::anyhow!("--dia precisa ser AAAA-MM-DD"))?,
+        None => sono::dia_da_janela_atual(&config.sono, chrono::Local::now().naive_local()),
+    };
+    let orquestrador = Orquestrador::da_config(config, banco.clone())?;
+    let sono = Sono::novo(config.clone(), banco, orquestrador);
+    println!("Dormindo (revisão de {dia})...");
+    let relatorio = sono.dormir(dia, Gatilho::Pedido).await?;
+    println!(
+        "Estado: {}\n{}",
+        relatorio.estado,
+        relatorio.resumo_para_evento()
+    );
+    Ok(())
+}
+
+/// `abiyss sleep --relatorio`: o relatório do último sono (ou de um dia).
+pub fn relatorio_sono(config: &Config, dia: Option<&str>) -> anyhow::Result<()> {
+    match sono::ler_relatorio(config, dia)? {
+        Some((caminho, texto)) => {
+            println!("{}\n", caminho.display());
+            print!("{texto}");
+        }
+        None => println!(
+            "Nenhum relatório de sono{} em {}.",
+            dia.map(|d| format!(" de {d}")).unwrap_or_default(),
+            sono::pasta_relatorios(config).display()
+        ),
+    }
     Ok(())
 }
 

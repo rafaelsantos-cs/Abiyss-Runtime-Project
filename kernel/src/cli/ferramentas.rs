@@ -41,9 +41,24 @@ pub async fn listar(config: &Config) -> anyhow::Result<()> {
 
 pub fn skills(config: &Config) -> anyhow::Result<()> {
     let skills = Skills::da_config(config);
-    println!("Pasta de skills: {}", skills.raiz().display());
+    for raiz in skills.raizes() {
+        println!(
+            "Pasta de skills: {} ({}{})",
+            raiz.caminho.display(),
+            if raiz.confiavel {
+                "confiável: ler não marca conteúdo externo"
+            } else {
+                "NÃO confiável: conteúdo externo"
+            },
+            if raiz.caminho.is_dir() {
+                ""
+            } else {
+                "; a pasta não existe"
+            }
+        );
+    }
     if !skills.existe() {
-        println!("(a pasta não existe: nenhuma skill disponível)");
+        println!("(nenhuma pasta existe: nenhuma skill disponível)");
         return Ok(());
     }
     let catalogo = skills.catalogo();
@@ -51,13 +66,15 @@ pub fn skills(config: &Config) -> anyhow::Result<()> {
         println!("Nenhuma skill válida.");
     }
     for skill in &catalogo.skills {
-        let pasta = skill
-            .pasta
-            .strip_prefix(skills.raiz())
+        let pasta = skills
+            .raizes()
+            .iter()
+            .find_map(|r| skill.pasta.strip_prefix(&r.caminho).ok())
             .unwrap_or(&skill.pasta);
         println!(
-            "- {} ({}): {}",
+            "- {}{} ({}): {}",
             skill.nome,
+            if skill.confiavel { "" } else { " [externa]" },
             pasta.display(),
             skill.descricao
         );

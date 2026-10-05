@@ -247,6 +247,71 @@ const MIGRACOES: &[&str] = &[
     CREATE INDEX idx_fila_momento ON fila_eventos(momento_ms);
     CREATE INDEX idx_ciclos_inicio ON ciclos(inicio_ms);
     "#,
+    // 10 (E2) — origem de cada evento da fila, calculada pelo kernel ao
+    // publicar: relatórios de sub-agente e skills não confiáveis são
+    // conteúdo EXTERNO. Eventos de sub-agente gravados antes desta migração
+    // são marcados como externos, por segurança.
+    r#"
+    ALTER TABLE fila_eventos ADD COLUMN origem_externa TEXT;
+    UPDATE fila_eventos SET origem_externa = 'subagente:' || origem
+        WHERE tipo = 'subagente';
+    "#,
+    // 11 (E5) — sono de verdade. `ciclos.origem_externa`: o ciclo consumiu
+    // evento externo (o sono não usa o que ele decidiu como material
+    // interno). `propostas_memoria.evidencias`: IDs citáveis (m:12, c:40...)
+    // que sustentam uma proposta do sono. `sonos`: uma linha por sono, com
+    // fase e resultado. `marcas_sono`: até onde cada fonte já foi revisada,
+    // por passada (interno/externo) — rodar de novo nunca repete material.
+    r#"
+    ALTER TABLE ciclos ADD COLUMN origem_externa TEXT;
+    ALTER TABLE propostas_memoria ADD COLUMN evidencias TEXT;
+    CREATE TABLE sonos (
+        id        INTEGER PRIMARY KEY,
+        dia       TEXT    NOT NULL,
+        gatilho   TEXT    NOT NULL,
+        inicio_ms INTEGER NOT NULL,
+        fim_ms    INTEGER,
+        estado    TEXT    NOT NULL,
+        fase      TEXT    NOT NULL,
+        chamadas  INTEGER NOT NULL DEFAULT 0,
+        tokens    INTEGER NOT NULL DEFAULT 0,
+        resumo    TEXT,
+        erro      TEXT
+    );
+    CREATE INDEX idx_sonos_dia ON sonos(dia, id);
+    CREATE TABLE marcas_sono (
+        chave  TEXT    PRIMARY KEY,
+        ate_id INTEGER NOT NULL
+    );
+    "#,
+    // 12 (E7) — impressão digital de cada ciclo que chamou o modelo (goal
+    // em foco + ações normalizadas), para detectar estagnação.
+    r#"
+    ALTER TABLE ciclos ADD COLUMN impressao TEXT;
+    "#,
+    // 13 (E9) — pedidos ao usuário (caixa de entrada assíncrona). A mesma
+    // pergunta pendente não duplica (`chave` normalizada, única entre os
+    // pendentes).
+    r#"
+    CREATE TABLE pedidos_usuario (
+        id               INTEGER PRIMARY KEY,
+        criado_ms        INTEGER NOT NULL,
+        origem           TEXT    NOT NULL,
+        goal_id          INTEGER,
+        pergunta         TEXT    NOT NULL,
+        contexto         TEXT    NOT NULL DEFAULT '',
+        urgencia         TEXT    NOT NULL,
+        estado           TEXT    NOT NULL,
+        resposta         TEXT,
+        respondido_ms    INTEGER,
+        origem_externa   TEXT,
+        resposta_externa TEXT,
+        chave            TEXT    NOT NULL
+    );
+    CREATE INDEX idx_pedidos_estado ON pedidos_usuario(estado, id);
+    CREATE UNIQUE INDEX idx_pedidos_chave_pendente
+        ON pedidos_usuario(chave) WHERE estado = 'pendente';
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

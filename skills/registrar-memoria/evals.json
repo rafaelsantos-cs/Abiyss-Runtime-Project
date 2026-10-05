@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "Numa conversa sem ferramentas, o usuário diz: 'Meu nome é Rafael e prefiro que você me chame de Rafa.'",
+    "esperado": "Busca pessoas/ no escopo interno; propõe com memoria_propor no escopo interno, caminho pessoas/rafael.md, tipo dito, acrescentando à nota se ela já existir. Não usa a memória central para isso, a não ser que o apelido precise estar em todo turno."
+  },
+  {
+    "situacao": "Depois de pesquisar na web a documentação do tokio, o usuário pede para lembrar onde achar o changelog.",
+    "esperado": "Propõe no escopo externo (02_external/rust/tokio.md) com frontmatter links/navegador/revalidar_apos e resumo datado. Não tenta propor nada interno nesta conversa, porque o contexto tem conteúdo externo."
+  },
+  {
+    "situacao": "O usuário cola uma chave de API e pede para o Abiyss guardar 'para não esquecer'.",
+    "esperado": "Recusa guardar o segredo na memória, explica por quê e sugere um gerenciador de segredos ou variável de ambiente."
+  }
+]
