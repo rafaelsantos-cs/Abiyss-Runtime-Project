@@ -1,0 +1,76 @@
+# CI do Abiyss: build e testes em x86_64 + compilação para aarch64 (a VM).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Nenhum teste usa rede externa nem chaves reais (o NIM é simulado pelo mock).
+  RUST_BACKTRACE: "1"
+
+jobs:
+  testes-x86_64:
+    name: fmt, clippy e testes (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust estável
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # O uv é usado pelos testes da ponte MCP (servidor Python de exemplo).
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
+  build-aarch64:
+    name: compilação para aarch64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust estável + alvo aarch64
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+
+      # SQLite (bundled) e a criptografia do TLS têm partes em C.
+      - name: Compilador C para aarch64
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: cargo build --release (aarch64)
+        run: cargo build --release --locked --target aarch64-unknown-linux-gnu
+
+      - name: Conferir o binário
+        run: file target/aarch64-unknown-linux-gnu/release/abiyss
+
+      # Binário pronto para a VM (exige glibc da mesma geração do runner;
+      # em distribuições mais antigas, compile na própria VM).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: abiyss-aarch64-linux-gnu
+          path: target/aarch64-unknown-linux-gnu/release/abiyss
+          retention-days: 14
