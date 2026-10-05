@@ -12,7 +12,7 @@
 // - nomes de campo em camelCase, espelhando as colunas do runtime;
 // - o escritório só LÊ o runtime; nunca escreve nele.
 
-import { GOAL_ESTADOS, SUBAGENTE_ESTADOS, NIVEIS, FASES, DAEMON_ESTADOS } from '../../shared/states.js';
+import { GOAL_ESTADOS, SUBAGENTE_ESTADOS, NIVEIS, FASES, DAEMON_ESTADOS, EVENTO_TIPOS, RELATORIO_STATUS } from '../../shared/states.js';
 
 export const DSR_SCHEMA = 'abiyss-office/dsr-provisorio@1';
 
@@ -64,6 +64,10 @@ export function validateSnapshot(s) {
   for (const sa of s.subagentes) {
     if (!SUBAGENTE_ESTADOS.includes(sa.estado)) p.push(`subagente ${sa.id}: estado inválido ${sa.estado}`);
     if (!NIVEIS.includes(sa.nivel)) p.push(`subagente ${sa.id}: nível inválido ${sa.nivel}`);
+    if (sa.relatorio && !RELATORIO_STATUS.includes(sa.relatorio.status)) p.push(`subagente ${sa.id}: relatório com status ${sa.relatorio.status}`);
+  }
+  for (const e of s.eventos.recentes) {
+    if (!EVENTO_TIPOS.includes(e.tipo)) p.push(`evento ${e.id}: tipo desconhecido ${e.tipo}`);
   }
   for (const g of s.goals.lista) {
     if (!GOAL_ESTADOS.includes(g.estado)) p.push(`goal ${g.id}: estado inválido ${g.estado}`);

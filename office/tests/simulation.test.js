@@ -114,11 +114,15 @@ test('abertura da demo: entram pela porta, trabalham, e o livre passeia, descans
 });
 
 test('à noite (descanso) os IMMos livres dormem; de dia acordam', () => {
-  const sim = demoSim({ start: '2026-10-05T23:10:00-03:00' });
-  sim.run(1500);
+  const sim = demoSim({ start: '2026-10-06T06:30:00-03:00' });
+  sim.run(1500); // até 06:55, ainda descanso
   const sleeping = sim.world.immos().filter((m) => m.activity === 'sleeping');
   assert.ok(sleeping.length >= 2, `poucos dormindo: ${sim.world.immos().map((m) => m.activity)}`);
   assert.equal(sim.world.runtime.ritmo.fase, 'descanso');
+  sim.run(600); // 07:05: vigília há 5 min (cada um acorda com até 90 s de atraso)
+  assert.equal(sim.world.runtime.ritmo.fase, 'vigília');
+  const still = sim.world.immos().filter((m) => m.activity === 'sleeping');
+  assert.equal(still.length, 0, `ainda dormindo na vigília: ${still.map((m) => m.id)}`);
 });
 
 test('sono do runtime: Abiyss dorme no pedestal e o heartbeat para', () => {

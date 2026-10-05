@@ -15,7 +15,7 @@
 // O "cérebro" (immo.js / abiyss.js) escolhe planos; este arquivo só os
 // executa. Nada aqui depende da renderização.
 
-import { Mover, headingOf } from '../navigation/mover.js';
+import { Mover } from '../navigation/mover.js';
 import { POI_BY_ID } from '../../shared/layout.js';
 import { FREE } from '../navigation/grid.js';
 
@@ -46,7 +46,6 @@ export class Agent {
     this.makeWay = false;
     this.leaving = null;
     this.stats = { replans: 0, stuck: 0, yields: 0, failedSteps: 0 };
-    this.lastActivity = null;
   }
 
   get x() { return this.mover.x; }
@@ -430,10 +429,6 @@ function nearestAhead(world, self, dir) {
     }
   }
   return best;
-}
-
-export function faceToward(agent, x, z) {
-  return headingOf(x - agent.x, z - agent.z);
 }
 
 function round(v) {

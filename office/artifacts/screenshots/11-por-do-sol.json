@@ -1,0 +1,259 @@
+{
+ "note": "fim de tarde em Contagem: luz baixa e quente vinda do oeste",
+ "capturedAt": "2026-10-05T16:38:45.774Z",
+ "state": {
+  "simMs": 34459.199999999255,
+  "clock": {
+   "local": "17:25:34",
+   "iso": "2026-10-05T17:25:34",
+   "tz": "America/Sao_Paulo",
+   "real": false,
+   "hours": 17.426111111111112
+  },
+  "entities": [
+   {
+    "id": "abiyss",
+    "kind": "abiyss",
+    "x": 4.6,
+    "z": 1.5,
+    "act": "moving",
+    "pose": "float",
+    "poi": "pod-a-inspect",
+    "present": true,
+    "mode": "free",
+    "mind": "thinking",
+    "logical": {
+     "daemon": "rodando",
+     "fase": "vigília",
+     "sono": false,
+     "eventosPendentes": 0,
+     "goalFoco": {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "executando"
+     }
+    },
+    "intent": "supervisionar os IMMos"
+   },
+   {
+    "id": "immo-1",
+    "kind": "immo",
+    "x": 3.3,
+    "z": 3.4,
+    "act": "working",
+    "pose": "sit",
+    "poi": "desk-1",
+    "present": true,
+    "mode": "work",
+    "mind": null,
+    "logical": {
+     "subagenteId": 1,
+     "estado": "executando",
+     "nivel": "ultra",
+     "tarefa": "Revisar o diário de ontem e listar lições",
+     "relatorio": null,
+     "goalId": 1
+    },
+    "intent": "trabalhar no sub-agente #1 (ultra)"
+   },
+   {
+    "id": "immo-2",
+    "kind": "immo",
+    "x": 5.9,
+    "z": 3.4,
+    "act": "working",
+    "pose": "sit",
+    "poi": "desk-2",
+    "present": true,
+    "mode": "work",
+    "mind": null,
+    "logical": {
+     "subagenteId": 2,
+     "estado": "executando",
+     "nivel": "medium",
+     "tarefa": "Resumir o changelog do qmd",
+     "relatorio": null,
+     "goalId": 1
+    },
+    "intent": "trabalhar no sub-agente #2 (medium)"
+   },
+   {
+    "id": "immo-3",
+    "kind": "immo",
+    "x": 9.019799999999814,
+    "z": 3.4602000000001865,
+    "act": "walking",
+    "pose": "stand",
+    "poi": null,
+    "present": true,
+    "mode": "work",
+    "mind": null,
+    "logical": {
+     "subagenteId": 3,
+     "estado": "executando",
+     "nivel": "low",
+     "tarefa": "Contar palavras dos relatórios da semana",
+     "relatorio": null,
+     "goalId": 1
+    },
+    "intent": "trabalhar no sub-agente #3 (low)"
+   },
+   {
+    "id": "immo-4",
+    "kind": "immo",
+    "x": 9.842040000000036,
+    "z": 11.968999999999069,
+    "act": "wandering",
+    "pose": "stand",
+    "poi": null,
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "passear"
+   }
+  ],
+  "meta": {
+   "runtime": {
+    "source": "demo",
+    "ok": true,
+    "error": null,
+    "capturedAtMs": 1791231934000,
+    "runtimeSchemaVersion": null,
+    "daemon": "rodando",
+    "fase": "vigília",
+    "horasAtivas": "07:00-23:00",
+    "sono": false,
+    "subagentes": {
+     "executando": 3
+    },
+    "goalFoco": {
+     "id": 1,
+     "titulo": "Migrar a memória do Hermes",
+     "estado": "executando"
+    },
+    "goals": [
+     {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "executando",
+      "prioridade": 2
+     },
+     {
+      "id": 2,
+      "titulo": "Calibrar o orçamento diário",
+      "estado": "comprometido",
+      "prioridade": 1
+     },
+     {
+      "id": 3,
+      "titulo": "Organizar as skills de pesquisa",
+      "estado": "proposto",
+      "prioridade": 0
+     }
+    ],
+    "goalsContagem": {
+     "executando": 1,
+     "comprometido": 1,
+     "proposto": 1
+    },
+    "eventosPendentes": 0,
+    "eventosRecentes": [],
+    "ultimoCiclo": {
+     "id": 2,
+     "fimMs": 1791231928200,
+     "chamouModelo": true,
+     "motivo": "primeiro ciclo com o goal #1",
+     "erro": null
+    },
+    "conversaMs": null,
+    "status": {
+     "source": "demo",
+     "connected": true,
+     "lastError": null,
+     "polls": 35,
+     "seed": 7
+    },
+    "overflow": []
+   },
+   "stats": {
+    "entities": 5,
+    "tickMsAvg": 0.195,
+    "violations": 0,
+    "overlaps": 0,
+    "recoveries": 0,
+    "replans": 1,
+    "stuck": 0,
+    "reservations": {
+     "desk-1": "immo-1",
+     "desk-2": "immo-2",
+     "pod-a-inspect": "abiyss",
+     "wander-8": "immo-4",
+     "wander-4": "immo-4",
+     "desk-3": "immo-3"
+    }
+   },
+   "env": {
+    "location": {
+     "name": "Contagem, MG",
+     "latitude": -19.9317,
+     "longitude": -44.0536,
+     "timezone": "America/Sao_Paulo"
+    },
+    "local": {
+     "hhmm": "17:25",
+     "hours": 17.426,
+     "date": "5/10/2026"
+    },
+    "sun": {
+     "elevation": 6.28,
+     "azimuth": 266.91,
+     "sunrise": "05:34",
+     "sunset": "17:55",
+     "isDay": true
+    },
+    "weather": {
+     "source": "manual",
+     "estimated": true,
+     "observedAtMs": 1791231934000,
+     "weatherCode": 0,
+     "condition": "clear",
+     "label": "céu limpo",
+     "temperatureC": 26.9,
+     "apparentC": null,
+     "humidity": null,
+     "cloudCover": 5,
+     "precipitationMm": 0,
+     "windKmh": 10.7,
+     "windDirDeg": 118,
+     "isDay": null,
+     "rain": 0,
+     "thunder": false,
+     "fog": 0,
+     "stale": false,
+     "error": null
+    },
+    "light": {
+     "phase": "sol baixo",
+     "day": 0.877,
+     "skyTop": 3958440,
+     "skyHorizon": 15378045,
+     "sunIntensity": 2.302,
+     "sunColor": 16755562,
+     "ambient": 0.958,
+     "ambientSky": 12308203,
+     "ambientGround": 6313802,
+     "lampsOn": true,
+     "lampLevel": 0.65,
+     "fogDensity": 0.004,
+     "fogColor": 15378045
+    }
+   }
+  }
+ }
+}

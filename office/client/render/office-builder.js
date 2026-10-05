@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-import { BUILDING, FURNITURE, ROOMS, WALLS, DOORS, SIDEWALK, wallPoint } from '../../shared/layout.js';
+import { BUILDING, FURNITURE, ROOMS, WALLS, SIDEWALK, wallPoint } from '../../shared/layout.js';
 import { PALETTE as P, mat, glassMat, canvasTexture } from './materials.js';
 import { FURNITURE_BUILDERS, kit, frostedBand } from './furniture.js';
 
@@ -159,7 +159,6 @@ export function buildOffice(scene) {
     exteriorWalls: [],
     nightLights: [],
     streetLamps: [],
-    trees: [],
   };
   const batch = new StaticBatcher();
   const furnitureRoot = new THREE.Group();
@@ -371,5 +370,3 @@ function buildOutside(root, batch, dyn) {
   for (const m of statics) batch.take(m);
 }
 
-export const OFFICE_CENTER = new THREE.Vector3(BUILDING.width / 2, 0, BUILDING.depth / 2);
-export { DOORS };

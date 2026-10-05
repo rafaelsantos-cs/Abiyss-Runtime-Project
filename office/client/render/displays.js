@@ -3,7 +3,7 @@
 // TV da área de descanso (hora e clima de Contagem), relógio de parede,
 // monitores e LEDs das mesas, bandeja de entrada do console.
 
-import { COLORS, IMMO_ACTIVITIES } from '../../shared/states.js';
+import { COLORS } from '../../shared/states.js';
 import { FONT, hex } from './materials.js';
 import { immoStateColor } from './characters/views.js';
 
@@ -210,8 +210,4 @@ export class Displays {
     if (dyn.daisRing) dyn.daisRing.emissiveIntensity = ab?.act === 'offline' ? 0.1 : 0.6 + Math.sin(t * 1.5) * 0.3;
     if (dyn.rackLeds) dyn.rackLeds.forEach((m, i) => { m.emissiveIntensity = Math.sin(t * (3 + i * 2.3)) > 0 ? 1 : 0.2; });
   }
-}
-
-export function activityLabel(act) {
-  return IMMO_ACTIVITIES[act] ?? act;
 }

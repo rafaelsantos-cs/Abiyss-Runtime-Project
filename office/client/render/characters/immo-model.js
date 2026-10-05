@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { mat, uniqueMat, PALETTE as P } from '../materials.js';
 
-export const IMMO_DIMS = { hipY: 0.38, torsoH: 0.42, headR: 0.2 };
+const IMMO_DIMS = { hipY: 0.38, torsoH: 0.42, headR: 0.2 };
 
 export function createImmoModel(def) {
   const root = new THREE.Group();

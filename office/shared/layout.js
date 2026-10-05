@@ -305,11 +305,3 @@ export function wallPoint(wall, t) {
   const k = t / len;
   return [wall.x1 + (wall.x2 - wall.x1) * k, wall.z1 + (wall.z2 - wall.z1) * k];
 }
-
-/** Sala que contém o ponto (ou null fora do prédio). */
-export function roomAt(x, z) {
-  for (const r of ROOMS) {
-    if (x >= r.x0 && x < r.x1 && z >= r.z0 && z < r.z1) return r.id;
-  }
-  return null;
-}

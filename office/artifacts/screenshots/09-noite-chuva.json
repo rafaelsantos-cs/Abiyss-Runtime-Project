@@ -1,0 +1,287 @@
+{
+ "note": "noite chuvosa: lâmpadas acesas, IMMos dormindo",
+ "capturedAt": "2026-10-05T16:38:19.691Z",
+ "state": {
+  "simMs": 295326.7487999982,
+  "clock": {
+   "local": "23:24:59",
+   "iso": "2026-10-05T23:24:59",
+   "tz": "America/Sao_Paulo",
+   "real": false,
+   "hours": 23.41638888888889
+  },
+  "entities": [
+   {
+    "id": "abiyss",
+    "kind": "abiyss",
+    "x": 20,
+    "z": 1.9,
+    "act": "idle",
+    "pose": "float",
+    "poi": "abiyss-home",
+    "present": true,
+    "mode": "console",
+    "mind": "thinking",
+    "logical": {
+     "daemon": "rodando",
+     "fase": "descanso",
+     "sono": false,
+     "eventosPendentes": 0,
+     "goalFoco": {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "validando"
+     }
+    },
+    "intent": "atender no console"
+   },
+   {
+    "id": "immo-1",
+    "kind": "immo",
+    "x": 23.15,
+    "z": 11,
+    "act": "resting",
+    "pose": "sit",
+    "poi": "sofa-b-1",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "descansar no sofá"
+   },
+   {
+    "id": "immo-2",
+    "kind": "immo",
+    "x": 23.15,
+    "z": 11.8,
+    "act": "resting",
+    "pose": "sit",
+    "poi": "sofa-b-2",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "descansar no sofá"
+   },
+   {
+    "id": "immo-3",
+    "kind": "immo",
+    "x": 17.2,
+    "z": 9.7,
+    "act": "sleeping",
+    "pose": "curl",
+    "poi": "beanbag-1",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "dormir"
+   },
+   {
+    "id": "immo-4",
+    "kind": "immo",
+    "x": 20,
+    "z": 15.05,
+    "act": "sleeping",
+    "pose": "lie",
+    "poi": "sofa-a-lie",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "dormir"
+   }
+  ],
+  "meta": {
+   "runtime": {
+    "source": "demo",
+    "ok": true,
+    "error": null,
+    "capturedAtMs": 1791253497000,
+    "runtimeSchemaVersion": null,
+    "daemon": "rodando",
+    "fase": "descanso",
+    "horasAtivas": "07:00-23:00",
+    "sono": false,
+    "subagentes": {
+     "concluido": 3
+    },
+    "goalFoco": {
+     "id": 1,
+     "titulo": "Migrar a memória do Hermes",
+     "estado": "validando"
+    },
+    "goals": [
+     {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "validando",
+      "prioridade": 2
+     },
+     {
+      "id": 2,
+      "titulo": "Calibrar o orçamento diário",
+      "estado": "comprometido",
+      "prioridade": 1
+     },
+     {
+      "id": 3,
+      "titulo": "Organizar as skills de pesquisa",
+      "estado": "proposto",
+      "prioridade": 0
+     },
+     {
+      "id": 4,
+      "titulo": "Escrever a skill de backup",
+      "estado": "proposto",
+      "prioridade": 0
+     }
+    ],
+    "goalsContagem": {
+     "validando": 1,
+     "comprometido": 1,
+     "proposto": 2
+    },
+    "eventosPendentes": 0,
+    "eventosRecentes": [
+     {
+      "id": 4,
+      "momentoMs": 1791253406939,
+      "tipo": "subagente",
+      "origem": "1",
+      "consumido": true
+     },
+     {
+      "id": 3,
+      "momentoMs": 1791253350000,
+      "tipo": "cron",
+      "origem": "revisar-fila",
+      "consumido": true
+     },
+     {
+      "id": 2,
+      "momentoMs": 1791253311426,
+      "tipo": "subagente",
+      "origem": "2",
+      "consumido": true
+     },
+     {
+      "id": 1,
+      "momentoMs": 1791253298500,
+      "tipo": "subagente",
+      "origem": "3",
+      "consumido": true
+     }
+    ],
+    "ultimoCiclo": {
+     "id": 5,
+     "fimMs": 1791253489767,
+     "chamouModelo": true,
+     "motivo": "2 evento(s) novo(s) na fila",
+     "erro": null
+    },
+    "conversaMs": 1791253464600,
+    "status": {
+     "source": "demo",
+     "connected": true,
+     "lastError": null,
+     "polls": 298,
+     "seed": 7
+    },
+    "overflow": []
+   },
+   "stats": {
+    "entities": 5,
+    "tickMsAvg": 0.008,
+    "violations": 0,
+    "overlaps": 0,
+    "recoveries": 0,
+    "replans": 0,
+    "stuck": 0,
+    "reservations": {
+     "sofa-a-lie": "immo-4",
+     "abiyss-home": "abiyss",
+     "beanbag-1": "immo-3",
+     "sofa-b-1": "immo-1",
+     "sofa-b-2": "immo-2"
+    }
+   },
+   "env": {
+    "location": {
+     "name": "Contagem, MG",
+     "latitude": -19.9317,
+     "longitude": -44.0536,
+     "timezone": "America/Sao_Paulo"
+    },
+    "local": {
+     "hhmm": "23:24",
+     "hours": 23.416,
+     "date": "5/10/2026"
+    },
+    "sun": {
+     "elevation": -64.53,
+     "azimuth": 191.35,
+     "sunrise": "05:33",
+     "sunset": "17:55",
+     "isDay": false
+    },
+    "weather": {
+     "source": "manual",
+     "estimated": true,
+     "observedAtMs": 1791253497000,
+     "weatherCode": 63,
+     "condition": "rain",
+     "label": "chuva",
+     "temperatureC": 20.3,
+     "apparentC": null,
+     "humidity": null,
+     "cloudCover": 95,
+     "precipitationMm": 3,
+     "windKmh": 10.7,
+     "windDirDeg": 118,
+     "isDay": null,
+     "rain": 0.7,
+     "thunder": false,
+     "fog": 0,
+     "stale": false,
+     "error": null
+    },
+    "light": {
+     "phase": "noite",
+     "day": 0,
+     "skyTop": 461597,
+     "skyHorizon": 1581373,
+     "sunIntensity": 0,
+     "sunColor": 16774111,
+     "ambient": 0.22,
+     "ambientSky": 2766176,
+     "ambientGround": 1316381,
+     "lampsOn": true,
+     "lampLevel": 1,
+     "fogDensity": 0.0124,
+     "fogColor": 1581373
+    }
+   }
+  }
+ }
+}

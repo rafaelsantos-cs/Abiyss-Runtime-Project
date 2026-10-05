@@ -1,0 +1,287 @@
+{
+ "note": "planta com caminhos e destinos (debug)",
+ "capturedAt": "2026-10-05T16:37:04.302Z",
+ "state": {
+  "simMs": 202726.19999999925,
+  "clock": {
+   "local": "10:43:23",
+   "iso": "2026-10-05T10:43:23",
+   "tz": "America/Sao_Paulo",
+   "real": false,
+   "hours": 10.723055555555556
+  },
+  "entities": [
+   {
+    "id": "abiyss",
+    "kind": "abiyss",
+    "x": 20,
+    "z": 1.9,
+    "act": "idle",
+    "pose": "float",
+    "poi": "abiyss-home",
+    "present": true,
+    "mode": "console",
+    "mind": "conversing",
+    "logical": {
+     "daemon": "rodando",
+     "fase": "vigília",
+     "sono": false,
+     "eventosPendentes": 1,
+     "goalFoco": {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "validando"
+     }
+    },
+    "intent": "atender no console"
+   },
+   {
+    "id": "immo-1",
+    "kind": "immo",
+    "x": 3.3,
+    "z": 3.4,
+    "act": "working",
+    "pose": "sit",
+    "poi": "desk-1",
+    "present": true,
+    "mode": "work",
+    "mind": null,
+    "logical": {
+     "subagenteId": 1,
+     "estado": "executando",
+     "nivel": "ultra",
+     "tarefa": "Revisar o diário de ontem e listar lições",
+     "relatorio": null,
+     "goalId": 1
+    },
+    "intent": "trabalhar no sub-agente #1 (ultra)"
+   },
+   {
+    "id": "immo-2",
+    "kind": "immo",
+    "x": 19.15,
+    "z": 15.05,
+    "act": "resting",
+    "pose": "sit",
+    "poi": "sofa-a-1",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "descansar no sofá"
+   },
+   {
+    "id": "immo-3",
+    "kind": "immo",
+    "x": 9.1,
+    "z": 3.4,
+    "act": "working",
+    "pose": "sit",
+    "poi": "desk-3",
+    "present": true,
+    "mode": "work",
+    "mind": null,
+    "logical": {
+     "subagenteId": 5,
+     "estado": "executando",
+     "nivel": "low",
+     "tarefa": "Comparar a latência p95 dos modelos",
+     "relatorio": null,
+     "goalId": 1
+    },
+    "intent": "trabalhar no sub-agente #5 (low)"
+   },
+   {
+    "id": "immo-4",
+    "kind": "immo",
+    "x": 19.47225000000093,
+    "z": 4.601549999999814,
+    "act": "walking",
+    "pose": "stand",
+    "poi": "report",
+    "present": true,
+    "mode": "free",
+    "mind": null,
+    "logical": {
+     "subagenteId": null,
+     "estado": null,
+     "nivel": null,
+     "tarefa": null
+    },
+    "intent": "descansar no sofá"
+   }
+  ],
+  "meta": {
+   "runtime": {
+    "source": "demo",
+    "ok": true,
+    "error": null,
+    "capturedAtMs": 1791207802000,
+    "runtimeSchemaVersion": null,
+    "daemon": "rodando",
+    "fase": "vigília",
+    "horasAtivas": "07:00-23:00",
+    "sono": false,
+    "subagentes": {
+     "executando": 2,
+     "concluido": 3
+    },
+    "goalFoco": {
+     "id": 1,
+     "titulo": "Migrar a memória do Hermes",
+     "estado": "validando"
+    },
+    "goals": [
+     {
+      "id": 1,
+      "titulo": "Migrar a memória do Hermes",
+      "estado": "validando",
+      "prioridade": 2
+     },
+     {
+      "id": 2,
+      "titulo": "Calibrar o orçamento diário",
+      "estado": "comprometido",
+      "prioridade": 1
+     },
+     {
+      "id": 3,
+      "titulo": "Organizar as skills de pesquisa",
+      "estado": "proposto",
+      "prioridade": 0
+     }
+    ],
+    "goalsContagem": {
+     "validando": 1,
+     "comprometido": 1,
+     "proposto": 1
+    },
+    "eventosPendentes": 1,
+    "eventosRecentes": [
+     {
+      "id": 4,
+      "momentoMs": 1791207787922,
+      "tipo": "subagente",
+      "origem": "4",
+      "consumido": false
+     },
+     {
+      "id": 3,
+      "momentoMs": 1791207750000,
+      "tipo": "cron",
+      "origem": "revisar-fila",
+      "consumido": true
+     },
+     {
+      "id": 2,
+      "momentoMs": 1791207711426,
+      "tipo": "subagente",
+      "origem": "2",
+      "consumido": true
+     },
+     {
+      "id": 1,
+      "momentoMs": 1791207698500,
+      "tipo": "subagente",
+      "origem": "3",
+      "consumido": true
+     }
+    ],
+    "ultimoCiclo": {
+     "id": 6,
+     "fimMs": 1791207772940,
+     "chamouModelo": true,
+     "motivo": "1 evento(s) novo(s) na fila",
+     "erro": null
+    },
+    "conversaMs": 1791207800000,
+    "status": {
+     "source": "demo",
+     "connected": true,
+     "lastError": null,
+     "polls": 203,
+     "seed": 7
+    },
+    "overflow": []
+   },
+   "stats": {
+    "entities": 5,
+    "tickMsAvg": 0.065,
+    "violations": 0,
+    "overlaps": 0,
+    "recoveries": 0,
+    "replans": 1,
+    "stuck": 0,
+    "reservations": {
+     "desk-1": "immo-1",
+     "desk-3": "immo-3",
+     "sofa-a-1": "immo-2",
+     "report": "immo-4",
+     "abiyss-home": "abiyss",
+     "sofa-a-2": "immo-4"
+    }
+   },
+   "env": {
+    "location": {
+     "name": "Contagem, MG",
+     "latitude": -19.9317,
+     "longitude": -44.0536,
+     "timezone": "America/Sao_Paulo"
+    },
+    "local": {
+     "hhmm": "10:43",
+     "hours": 10.723,
+     "date": "5/10/2026"
+    },
+    "sun": {
+     "elevation": 68.82,
+     "azimuth": 46.73,
+     "sunrise": "05:34",
+     "sunset": "17:55",
+     "isDay": true
+    },
+    "weather": {
+     "source": "climatologia",
+     "estimated": true,
+     "observedAtMs": 1791207802000,
+     "weatherCode": 2,
+     "condition": "cloudy",
+     "label": "parcialmente nublado",
+     "temperatureC": 25.2,
+     "apparentC": null,
+     "humidity": null,
+     "cloudCover": 63,
+     "precipitationMm": 0,
+     "windKmh": 10.7,
+     "windDirDeg": 118,
+     "isDay": null,
+     "rain": 0,
+     "thunder": false,
+     "fog": 0,
+     "stale": false,
+     "error": "HTTP 403"
+    },
+    "light": {
+     "phase": "dia",
+     "day": 1,
+     "skyTop": 5998521,
+     "skyHorizon": 12703722,
+     "sunIntensity": 1.16,
+     "sunColor": 16774111,
+     "ambient": 0.963,
+     "ambientSky": 13819629,
+     "ambientGround": 7037008,
+     "lampsOn": false,
+     "lampLevel": 0,
+     "fogDensity": 0.004,
+     "fogColor": 12703722
+    }
+   }
+  }
+ }
+}

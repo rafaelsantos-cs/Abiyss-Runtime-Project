@@ -9,7 +9,8 @@
 //      - goal:       kernel/src/goals.rs (EstadoGoal::como_texto)
 //      - fase:       kernel/src/ritmo.rs (Fase::como_texto)
 //      - eventos:    kernel/src/eventos.rs (TIPO_*)
-//      - origem:     kernel/src/orquestrador/mod.rs (Origem::como_texto)
+//      - origem das chamadas ao modelo: kernel/src/orquestrador/mod.rs
+//        (Origem::como_texto) — usada em runtime-sqlite.js
 //    O escritório NUNCA inventa um valor novo para essas listas.
 //
 // 2. ATIVIDADES FÍSICAS — pertencem só ao escritório (o que o corpo do IMMo
@@ -46,13 +47,15 @@ export const GOAL_TRANSICOES = Object.freeze({
   abandonado: [],
 });
 
-// --- Runtime: ritmo, eventos, origem ---------------------------------------
+// --- Runtime: ritmo, eventos, daemon ---------------------------------------
+// (A origem das chamadas ao modelo — conversa | autonomo | sono — é lida
+// direto em runtime-sqlite.js.)
 
 /** Fase do dia (texto exato do runtime, com acento). */
 export const FASES = Object.freeze(['vigília', 'descanso', 'sono']);
+/** Tipos de evento da fila (eventos.rs, TIPO_*). */
 export const EVENTO_TIPOS = Object.freeze(['cron', 'subagente', 'skill', 'kernel', 'sono', 'usuario']);
-export const ORIGENS_CHAMADA = Object.freeze(['conversa', 'autonomo', 'sono']);
-/** Estado do daemon como o `abiyss status` apresenta. */
+/** Daemon: rodando/parado como em `abiyss status`; "desconhecido" = o escritório ainda não tem dados. */
 export const DAEMON_ESTADOS = Object.freeze(['rodando', 'parado', 'desconhecido']);
 
 // --- Escritório: atividades físicas ----------------------------------------
