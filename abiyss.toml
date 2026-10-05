@@ -310,3 +310,24 @@ timeout_segundos = 30
 # Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
 expor = false
 ativo = true
+
+# ---------------------------------------------------------------------------
+# Retenção e manutenção do banco (feita pelo daemon; `abiyss manutencao`
+# roda na hora). Detalhe mais velho que N dias vira agregado diário (dia
+# UTC) e é apagado: chamadas_modelo → chamadas_modelo_diarias, eventos JÁ
+# consumidos → eventos_diarios (pendentes nunca são apagados), ciclos →
+# ciclos_diarios. Mínimo de 2 dias (status e interocepção leem as últimas 24 h).
+# ---------------------------------------------------------------------------
+
+[retencao]
+chamadas_modelo_dias = 30
+eventos_dias = 30
+ciclos_dias = 30
+# Retenção + vacuum incremental.
+manutencao_minutos = 360
+# Checkpoint do WAL (o arquivo -wal é truncado; teto de 64 MiB entre checkpoints).
+checkpoint_minutos = 15
+vacuum_max_paginas = 2000
+# Bancos criados antes desta versão precisam de UM VACUUM completo para
+# ligar o vacuum incremental; o daemon faz isso sozinho na 1ª manutenção.
+converter_auto_vacuum = true

@@ -34,6 +34,8 @@ pub struct Config {
     pub subagentes: ConfigSubagentes,
     #[serde(default)]
     pub memoria: crate::memoria::ConfigMemoria,
+    #[serde(default)]
+    pub retencao: crate::manutencao::ConfigRetencao,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -462,6 +464,7 @@ impl Config {
             }
         }
         crate::esforco::validar(&self.modelos)?;
+        self.retencao.validar()?;
         Ok(())
     }
 

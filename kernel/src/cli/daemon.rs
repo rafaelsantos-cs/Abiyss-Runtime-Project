@@ -10,6 +10,7 @@ use abiyss::mcp::PonteMcp;
 use abiyss::memoria::Memoria;
 use abiyss::orquestrador::Orquestrador;
 use abiyss::status;
+use abiyss::{manutencao, tempo};
 
 pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()> {
     // Primeiro a trava: se já houver um daemon, nem abrimos nada.
@@ -38,5 +39,23 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
 pub fn status(config: &Config) -> anyhow::Result<()> {
     let banco = Banco::abrir(&config.caminho_banco())?;
     print!("{}", status::relatorio(config, &banco)?);
+    Ok(())
+}
+
+/// `abiyss manutencao`: uma rodada de manutenção do banco, na hora.
+pub fn manutencao(config: &Config) -> anyhow::Result<()> {
+    let banco = Banco::abrir(&config.caminho_banco())?;
+    let resumo = manutencao::rodada_completa(&banco, &config.retencao, tempo::agora_ms())?;
+    println!("Retenção e vacuum: {resumo}");
+    let checkpoint = manutencao::checkpoint_wal(&banco)?;
+    println!(
+        "Checkpoint do WAL: {} página(s) copiada(s){}",
+        checkpoint.paginas_copiadas,
+        if checkpoint.ocupado {
+            " (parcial: outro processo usando o banco)"
+        } else {
+            ""
+        }
+    );
     Ok(())
 }

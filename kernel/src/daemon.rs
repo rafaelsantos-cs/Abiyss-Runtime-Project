@@ -4,6 +4,9 @@
 //! - A cada `cron_verificacao_segundos`: dispara crons vencidos e grava
 //!   um "sinal de vida" (código puro, sem modelo).
 //! - A cada `heartbeat_segundos`: um ciclo de heartbeat.
+//! - A cada `retencao.checkpoint_minutos`: checkpoint do WAL.
+//! - A cada `retencao.manutencao_minutos`: retenção (detalhe antigo vira
+//!   agregado diário) e vacuum incremental.
 //! - Em paralelo: o executor de sub-agentes.
 //! - SIGTERM (systemd) ou Ctrl+C: para com educação, mesmo no meio de um ciclo.
 
@@ -20,6 +23,7 @@ use crate::cron;
 use crate::db::Banco;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::Heartbeat;
+use crate::manutencao;
 use crate::orquestrador::Orquestrador;
 use crate::subagentes::{self, ExecutorSubagentes};
 use crate::tempo::agora_ms;
@@ -29,6 +33,8 @@ pub const CHAVE_PID: &str = "pid";
 pub const CHAVE_INICIADO: &str = "iniciado_ms";
 pub const CHAVE_SINAL_DE_VIDA: &str = "sinal_de_vida_ms";
 pub const CHAVE_PARADO: &str = "parado_ms";
+pub const CHAVE_MANUTENCAO: &str = "manutencao_ms";
+pub const CHAVE_MANUTENCAO_RESUMO: &str = "manutencao_resumo";
 
 /// Trava de instância única. Enquanto este valor existir, nenhum outro
 /// daemon consegue iniciar. O sistema operacional solta a trava sozinho
@@ -172,6 +178,37 @@ impl Daemon {
         }
     }
 
+    /// Retenção + vacuum, fora das threads do tokio (pode demorar no
+    /// primeiro dia de um banco grande).
+    async fn manutencao(&self) {
+        let banco = self.banco.clone();
+        let config = self.config.retencao.clone();
+        let rodada = tokio::task::spawn_blocking(move || {
+            manutencao::rodada_completa(&banco, &config, agora_ms())
+        })
+        .await;
+        match rodada {
+            Ok(Ok(resumo)) => {
+                tracing::info!("manutenção do banco: {resumo}");
+                let _ = gravar_estado(&self.banco, CHAVE_MANUTENCAO, &agora_ms().to_string());
+                let _ = gravar_estado(&self.banco, CHAVE_MANUTENCAO_RESUMO, &resumo);
+            }
+            Ok(Err(e)) => tracing::error!("manutenção do banco falhou: {e:#}"),
+            Err(e) => tracing::error!("tarefa de manutenção morreu: {e}"),
+        }
+    }
+
+    /// Checkpoint do WAL (rápido; ocupado = tenta no próximo intervalo).
+    fn checkpoint(&self) {
+        match manutencao::checkpoint_wal(&self.banco) {
+            Ok(r) if r.ocupado => {
+                tracing::debug!("checkpoint do WAL parcial (banco ocupado): {r:?}")
+            }
+            Ok(r) => tracing::debug!("checkpoint do WAL: {r:?}"),
+            Err(e) => tracing::warn!("checkpoint do WAL falhou: {e:#}"),
+        }
+    }
+
     async fn um_ciclo(&self) {
         match self.heartbeat.ciclo().await {
             Ok(r) if r.chamou_modelo => {
@@ -217,9 +254,20 @@ impl Daemon {
         ));
         let mut tique_heartbeat =
             tokio::time::interval(Duration::from_secs(self.config.daemon.heartbeat_segundos));
+        let retencao = &self.config.retencao;
+        let mut tique_manutencao =
+            tokio::time::interval(Duration::from_secs(retencao.manutencao_minutos * 60));
+        let mut tique_checkpoint =
+            tokio::time::interval(Duration::from_secs(retencao.checkpoint_minutos * 60));
         // Se um ciclo demorar mais que o intervalo, não "compensa" depois.
-        tique_cron.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        tique_heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        for tique in [
+            &mut tique_cron,
+            &mut tique_heartbeat,
+            &mut tique_manutencao,
+            &mut tique_checkpoint,
+        ] {
+            tique.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        }
 
         tracing::info!(
             "daemon do Abiyss no ar (heartbeat a cada {} s)",
@@ -228,6 +276,8 @@ impl Daemon {
         loop {
             tokio::select! {
                 _ = tique_cron.tick() => self.tique_de_cron(),
+                _ = tique_checkpoint.tick() => self.checkpoint(),
+                _ = tique_manutencao.tick() => self.manutencao().await,
                 _ = tique_heartbeat.tick() => {
                     // O ciclo pode demorar (raciocínio longo); a parada não espera ele terminar.
                     tokio::select! {

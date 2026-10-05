@@ -41,6 +41,15 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         )?;
     }
 
+    if let Some(ms) = ler(daemon::CHAVE_MANUTENCAO).and_then(|v| v.parse::<i64>().ok()) {
+        writeln!(
+            t,
+            "  última manutenção do banco: {} — {}",
+            formatar_ms(ms),
+            ler(daemon::CHAVE_MANUTENCAO_RESUMO).unwrap_or_default()
+        )?;
+    }
+
     // Identidade
     let identidade = Identidade::ler(&config.caminho_identidade());
     if !identidade.encontrado {

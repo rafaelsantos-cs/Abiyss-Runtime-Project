@@ -95,6 +95,9 @@ enum Comando {
         #[arg(default_value = "Responda apenas: ok")]
         mensagem: String,
     },
+    /// Roda a manutenção do banco agora (retenção, checkpoint do WAL e
+    /// vacuum incremental) — o daemon faz o mesmo periodicamente.
+    Manutencao,
     /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
     /// resolvida a partir do abiyss.toml (não chama o modelo).
     Esforco,
@@ -199,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
             let config = Config::carregar(&caminho_config)?;
             cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
         }
+        Comando::Manutencao => cli::daemon::manutencao(&Config::carregar(&caminho_config)?),
         Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
         Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
         Comando::Goal(sub) => {
