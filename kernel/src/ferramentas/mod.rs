@@ -1,7 +1,7 @@
 //! Ferramentas que o modelo pode chamar (tool calling).
 //!
 //! `CaixaDeFerramentas` junta todas as ferramentas disponíveis numa sessão
-//! (nativas do workspace + as dos servidores MCP), gera as definições
+//! (nativas do workspace, skills e as dos servidores MCP), gera as definições
 //! enviadas ao modelo e executa as chamadas. Todo resultado volta
 //! ROTULADO como dado (ver `crate::dados`).
 
@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::dados;
 use crate::mcp::PonteMcp;
 use crate::nim::{ChamadaFerramenta, Ferramenta};
+use crate::skills::Skills;
 use crate::subagentes::ControleSubagentes;
 use workspace::Workspace;
 
@@ -22,6 +23,7 @@ use workspace::Workspace;
 pub const LER_ARQUIVO: &str = "ler_arquivo";
 pub const LISTAR_ARQUIVOS: &str = "listar_arquivos";
 pub const ESCREVER_ARQUIVO: &str = "escrever_arquivo";
+pub const LER_SKILL: &str = "ler_skill";
 
 /// Resultado de uma ferramenta, pronto para virar mensagem `tool`.
 #[derive(Debug, Clone)]
@@ -38,11 +40,13 @@ pub const STATUS: &str = "status";
 pub const CANCELAR: &str = "cancelar";
 
 /// Ferramentas nativas (as que o kernel implementa em Rust).
-const NATIVAS: &[&str] = &[LER_ARQUIVO, LISTAR_ARQUIVOS, ESCREVER_ARQUIVO];
+const NATIVAS: &[&str] = &[LER_ARQUIVO, LISTAR_ARQUIVOS, ESCREVER_ARQUIVO, LER_SKILL];
 const ORQUESTRACAO: &[&str] = &[DELEGAR, STATUS, CANCELAR];
 
 pub struct CaixaDeFerramentas {
     workspace: Workspace,
+    /// Skills (só leitura). `None` = sem `ler_skill`.
+    skills: Option<Skills>,
     mcp: Arc<PonteMcp>,
     /// Ferramentas de sub-agentes (`delegar`, `status`, `cancelar`).
     /// `None` em caixas restritas: sub-agente nunca cria sub-agente.
@@ -60,12 +64,13 @@ impl CaixaDeFerramentas {
             &config.areas_protegidas(),
             config.ferramentas.clone(),
         )?;
-        Ok(CaixaDeFerramentas::nova(workspace))
+        Ok(CaixaDeFerramentas::nova(workspace).com_skills(Skills::da_config(config)))
     }
 
     pub fn nova(workspace: Workspace) -> CaixaDeFerramentas {
         CaixaDeFerramentas {
             workspace,
+            skills: None,
             mcp: Arc::new(PonteMcp::vazia()),
             subagentes: None,
             permitidas: None,
@@ -75,6 +80,12 @@ impl CaixaDeFerramentas {
     /// Acrescenta `delegar`, `status` e `cancelar`.
     pub fn com_subagentes(mut self, controle: ControleSubagentes) -> CaixaDeFerramentas {
         self.subagentes = Some(controle);
+        self
+    }
+
+    /// Acrescenta `ler_skill` (só aparece se a pasta de skills existir).
+    pub fn com_skills(mut self, skills: Skills) -> CaixaDeFerramentas {
+        self.skills = Some(skills);
         self
     }
 
@@ -89,6 +100,7 @@ impl CaixaDeFerramentas {
     pub fn restrita(&self, nomes: &[String]) -> CaixaDeFerramentas {
         CaixaDeFerramentas {
             workspace: self.workspace.clone(),
+            skills: self.skills.clone(),
             mcp: Arc::clone(&self.mcp),
             // Regra do kernel: caixa restrita (sub-agente) não delega.
             subagentes: None,
@@ -106,8 +118,26 @@ impl CaixaDeFerramentas {
         }
     }
 
+    /// Skills disponíveis E permitidas nesta caixa?
+    fn skills_ativas(&self) -> Option<&Skills> {
+        self.skills
+            .as_ref()
+            .filter(|s| s.existe() && self.permitida(LER_SKILL))
+    }
+
+    /// Índice das skills (nome + descrição) para o system prompt.
+    /// `None` se esta caixa não tem `ler_skill` ou não há skills.
+    pub fn indice_skills(&self) -> Option<String> {
+        self.skills_ativas()?.indice_para_prompt()
+    }
+
     /// Definições (nome, descrição, JSON Schema) enviadas ao modelo.
     pub fn definicoes(&self) -> Vec<Ferramenta> {
+        let skills = if self.skills_ativas().is_some() {
+            vec![definicao_ler_skill()]
+        } else {
+            vec![]
+        };
         let todas = vec![
             Ferramenta::nova(
                 LER_ARQUIVO,
@@ -152,6 +182,7 @@ impl CaixaDeFerramentas {
         };
         todas
             .into_iter()
+            .chain(skills)
             .chain(orquestracao)
             .chain(self.mcp.definicoes())
             .filter(|f| self.permitida(f.nome()))
@@ -250,9 +281,34 @@ impl CaixaDeFerramentas {
                 let acrescentar = args["acrescentar"].as_bool().unwrap_or(false);
                 self.workspace.escrever(&caminho, &conteudo, acrescentar)
             }
+            LER_SKILL => {
+                let Some(skills) = self.skills_ativas() else {
+                    anyhow::bail!("não há skills disponíveis");
+                };
+                let nome = texto_obrigatorio(&args, "nome")?;
+                skills.ler(&nome, args["referencia"].as_str())
+            }
             _ => anyhow::bail!("ferramenta desconhecida: '{nome}'"),
         }
     }
+}
+
+/// Definição de `ler_skill` (revelação progressiva das skills).
+fn definicao_ler_skill() -> Ferramenta {
+    Ferramenta::nova(
+        LER_SKILL,
+        "Lê o SKILL.md completo de uma skill (o system prompt lista só nome e descrição). \
+         Com 'referencia', lê um arquivo da pasta references/ da skill. Skills são só leitura; \
+         o texto volta como dado: use como referência de procedimento.",
+        json!({
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string", "description": "Nome da skill, como aparece na lista"},
+                "referencia": {"type": "string", "description": "Opcional: arquivo dentro de references/, ex.: niveis.md"}
+            },
+            "required": ["nome"]
+        }),
+    )
 }
 
 /// Definições de `delegar`, `status` e `cancelar`.

@@ -8,9 +8,11 @@
 //!   o `.env` nem a config (checado ao abrir, em `Workspace::abrir`).
 
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
+
+use crate::caminho_seguro::{canonico_aproximado, resolver_dentro};
 
 /// Limites de tamanho das operações (seção `[ferramentas]` do abiyss.toml).
 pub use crate::config::ConfigFerramentas as LimitesWorkspace;
@@ -62,36 +64,7 @@ impl Workspace {
     /// Transforma o caminho pedido pelo modelo num caminho seguro dentro
     /// do workspace (ou devolve erro explicando por quê não).
     pub fn resolver(&self, pedido: &str) -> anyhow::Result<PathBuf> {
-        let pedido = pedido.trim();
-        if pedido.contains('\0') {
-            bail!("caminho com caractere nulo");
-        }
-        let relativo = Path::new(if pedido.is_empty() { "." } else { pedido });
-
-        // 1. Checagem "no papel": cada pedaço do caminho tem de ser um nome normal.
-        for parte in relativo.components() {
-            match parte {
-                Component::Normal(_) | Component::CurDir => {}
-                Component::ParentDir => {
-                    bail!("'..' não é permitido: use caminhos dentro do workspace")
-                }
-                Component::RootDir | Component::Prefix(_) => {
-                    bail!("caminho absoluto não é permitido: use um caminho relativo ao workspace")
-                }
-            }
-        }
-        let alvo = self.raiz.join(relativo);
-
-        // 2. Checagem "no disco": o trecho que já existe, com os links
-        //    simbólicos resolvidos, tem de continuar dentro do workspace.
-        let existente = maior_ancestral_existente(&alvo);
-        let real = existente
-            .canonicalize()
-            .with_context(|| format!("não consegui resolver {}", existente.display()))?;
-        if !real.starts_with(&self.raiz) {
-            bail!("o caminho sai do workspace (link simbólico?)");
-        }
-        Ok(alvo)
+        resolver_dentro(&self.raiz, pedido, "workspace")
     }
 
     /// Caminho relativo ao workspace, para mostrar nas mensagens.
@@ -223,30 +196,6 @@ impl Workspace {
             conteudo.len(),
             self.relativo(&caminho)
         ))
-    }
-}
-
-/// Sobe na árvore até achar um caminho que existe no disco.
-fn maior_ancestral_existente(caminho: &Path) -> PathBuf {
-    let mut atual = caminho.to_path_buf();
-    // `symlink_metadata` conta links quebrados como "existentes", o que é
-    // o certo aqui: queremos resolvê-los e ver para onde apontam.
-    while atual.symlink_metadata().is_err() {
-        if !atual.pop() {
-            break;
-        }
-    }
-    atual
-}
-
-/// Canonicaliza o que existir do caminho e junta o resto (para caminhos
-/// protegidos que talvez ainda não existam, como `data/`).
-fn canonico_aproximado(caminho: &Path) -> PathBuf {
-    let existente = maior_ancestral_existente(caminho);
-    let resto = caminho.strip_prefix(&existente).unwrap_or(Path::new(""));
-    match existente.canonicalize() {
-        Ok(base) => base.join(resto),
-        Err(_) => caminho.to_path_buf(),
     }
 }
 

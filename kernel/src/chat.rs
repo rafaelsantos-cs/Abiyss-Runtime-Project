@@ -2,8 +2,8 @@
 //!
 //! A cada mensagem do usuário:
 //! 1. grava a mensagem no histórico;
-//! 2. monta o contexto: system prompt (regras + núcleo + interocepção)
-//!    + histórico recente;
+//! 2. monta o contexto: system prompt (regras + núcleo + índice das skills
+//!    + interocepção) + histórico recente;
 //! 3. chama o cérebro pelo pool, com origem `Conversa` (fatia reservada);
 //! 4. se o modelo pedir ferramentas, executa, grava os resultados
 //!    (rotulados como dado) e volta ao passo 2 — até `max_rodadas_ferramentas`;
@@ -17,7 +17,7 @@ use crate::config::Config;
 use crate::db::Banco;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::historico;
-use crate::identidade::Identidade;
+use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
 use crate::nim::{self, Mensagem, Uso};
 use crate::orquestrador::{AoReceber, Origem, Orquestrador, reemprestar};
@@ -91,7 +91,12 @@ impl SessaoChat {
             Ok(i) => i.como_texto(),
             Err(_) => format!("Data e hora: {}", interocepcao::agora_formatado()),
         };
-        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema(Some(&corpo)))];
+        let blocos = BlocosPrompt {
+            // Só nome + descrição; o texto completo vem por `ler_skill`.
+            skills: self.ferramentas.indice_skills(),
+            contexto: Some(corpo),
+        };
+        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema_com(&blocos))];
         mensagens.extend(historico::carregar(
             &self.banco,
             self.conversa,

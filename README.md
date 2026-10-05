@@ -34,6 +34,7 @@ comando (`abiyss ...`); não há painel web.
 ```
 abiyss.toml  .env            ← configuração (sem segredos) + chaves (fora do git)
 identity/nucleo.md           ← núcleo de identidade (o Abiyss NÃO edita)
+skills/                      ← skills (SKILL.md); só leitura para o Abiyss
 kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/nim/                   ← cliente NIM (SSE, tool calling) + mock para testes
   src/orquestrador/          ← dois pools, token bucket, fila de prioridade
@@ -44,6 +45,7 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/goals.rs cron.rs       ← máquina de estados dos goals, crons
   src/subagentes.rs          ← sub-agentes assíncronos
   src/diario.rs interocepcao.rs ← base da metacognição
+  src/skills.rs frontmatter.rs ← skills com revelação progressiva
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
 data/abiyss.db               ← SQLite (criado sozinho)
@@ -225,17 +227,27 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss cron list` / `abiyss cron remover NOME` | Lista / remove crons |
 | `abiyss diario [--limite N]` | Diário: expectativa antes de cada ação e resultado depois |
 | `abiyss ferramentas` | Lista as ferramentas que o modelo enxerga |
+| `abiyss skills` | Lista as skills (nome + descrição) e as ignoradas, com o motivo |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
 | `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
-`escrever_arquivo` (só em `workspace/`), as dos servidores MCP
+`escrever_arquivo` (só em `workspace/`), `ler_skill` (veja abaixo), as dos servidores MCP
 (`exemplo__contar_palavras`, ...) e `delegar` / `status` / `cancelar`
 (sub-agentes). **Os sub-agentes são executados pelo daemon**: delegar pelo
 chat só registra o pedido; com o daemon rodando, ele começa em segundos e o
 relatório chega como evento na fila do Abiyss.
 
 Logs vão para o stderr; controle com `RUST_LOG` (ex.: `RUST_LOG=abiyss=debug`).
+
+### Skills
+
+Cada skill é uma pasta em `skills/` com um `SKILL.md` (frontmatter YAML com
+`name` e `description`) e, opcionalmente, `references/`. **Revelação
+progressiva:** só nome + descrição entram no system prompt (rotulados como
+dado); o texto completo vem pela ferramenta `ler_skill(nome)` e cada
+referência por `ler_skill(nome, referencia)`. As skills são só leitura para o
+Abiyss. Detalhes em [`skills/README.md`](skills/README.md).
 
 ---
 
@@ -317,7 +329,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test                    # os testes MCP precisam do uv no PATH (sem ele, são pulados)
 ```
 
-Os testes ficam em `kernel/tests/` (um arquivo por fase, `f1_` a `f8_`) e em
+Os testes ficam em `kernel/tests/` (um arquivo por fase: `f1_` a `f8_` e
+`a1_` em diante) e em
 módulos `#[cfg(test)]` dentro de `kernel/src/`. O CI
 (`.github/workflows/ci.yml`) roda fmt, clippy e testes em x86_64 e compila o
 binário para `aarch64-unknown-linux-gnu`.
@@ -335,7 +348,7 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
 - **Ferramentas de arquivo** só dentro de `workspace/`: sem caminho absoluto,
   sem `..`, links simbólicos não escapam, nunca escreve através de link. O
   kernel recusa iniciar se o workspace contiver (ou estiver dentro de)
-  `kernel/`, `identity/`, `recursos/`, `data/`, `.git`, `.env` ou `abiyss.toml`.
+  `kernel/`, `identity/`, `recursos/`, `skills/`, `data/`, `.git`, `.env` ou `abiyss.toml`.
 - **Conteúdo externo é dado, não instrução**: todo resultado de ferramenta,
   servidor MCP, evento e relatório de sub-agente entra no contexto dentro de
   `<dados origem="...">...</dados>`; marcas que tentem fechar o bloco são

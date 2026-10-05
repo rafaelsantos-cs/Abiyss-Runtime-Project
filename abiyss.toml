@@ -91,8 +91,13 @@ dados = "data"
 identidade = "identity/nucleo.md"
 # ÚNICA pasta onde as ferramentas de arquivo leem e escrevem. O kernel
 # recusa iniciar se ela contiver kernel/, identity/, recursos/, data/,
-# .env, .git ou o abiyss.toml.
+# .env, .git, skills/ ou o abiyss.toml.
 workspace = "workspace"
+# Skills: cada subpasta com um SKILL.md (frontmatter `name` + `description`).
+# Só nome e descrição vão para o system prompt; o texto completo é lido
+# pela ferramenta `ler_skill`. Só leitura para o Abiyss. Pode apontar para
+# uma pasta de skills do Hermes (pastas de categoria são aceitas).
+skills = "skills"
 
 # ---------------------------------------------------------------------------
 # Conversa (`abiyss chat`).

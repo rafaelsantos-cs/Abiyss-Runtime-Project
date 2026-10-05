@@ -194,6 +194,8 @@ pub struct ConfigCaminhos {
     pub identidade: String,
     /// Única pasta onde as ferramentas de arquivo podem ler e escrever.
     pub workspace: String,
+    /// Pasta das skills (cada skill é uma subpasta com SKILL.md). Só leitura.
+    pub skills: String,
 }
 
 impl Default for ConfigCaminhos {
@@ -202,6 +204,7 @@ impl Default for ConfigCaminhos {
             dados: "data".to_string(),
             identidade: "identity/nucleo.md".to_string(),
             workspace: "workspace".to_string(),
+            skills: "skills".to_string(),
         }
     }
 }
@@ -453,8 +456,14 @@ impl Config {
         self.resolver(&self.caminhos.workspace)
     }
 
+    /// Pasta das skills (só leitura para o Abiyss).
+    pub fn caminho_skills(&self) -> PathBuf {
+        self.resolver(&self.caminhos.skills)
+    }
+
     /// Áreas que o workspace NUNCA pode conter nem ficar dentro:
-    /// código do kernel, identidade, dados, segredos, config, git e recursos.
+    /// código do kernel, identidade, dados, segredos, config, git, recursos
+    /// e skills (só leitura).
     pub fn areas_protegidas(&self) -> Vec<PathBuf> {
         let mut areas = vec![
             self.raiz.join("kernel"),
@@ -465,6 +474,7 @@ impl Config {
             self.raiz.join("Cargo.toml"),
             self.resolver(&self.caminhos.dados),
             self.caminho_identidade(),
+            self.caminho_skills(),
         ];
         // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
         if let Some(pasta) = self.caminho_identidade().parent()

@@ -67,6 +67,8 @@ enum Comando {
     },
     /// Lista as ferramentas disponíveis (nativas + servidores MCP).
     Ferramentas,
+    /// Lista as skills (nome + descrição) e as que não puderam ser lidas.
+    Skills,
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -199,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
             let config = Config::carregar(&caminho_config)?;
             cli::ferramentas::listar(&config).await
         }
+        Comando::Skills => cli::ferramentas::skills(&Config::carregar(&caminho_config)?),
         Comando::Chat {
             continuar,
             conversa,
