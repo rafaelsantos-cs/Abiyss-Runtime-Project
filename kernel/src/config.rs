@@ -22,6 +22,8 @@ pub struct Config {
     pub pools: ConfigPools,
     #[serde(default)]
     pub caminhos: ConfigCaminhos,
+    #[serde(default)]
+    pub chat: ConfigChat,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -176,15 +178,35 @@ fn padrao_reserva_conversa() -> u32 {
 
 /// Onde ficam os arquivos do Abiyss (relativos à raiz do projeto).
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ConfigCaminhos {
     /// Pasta dos dados locais (o banco SQLite fica aqui).
     pub dados: String,
+    /// Núcleo de identidade injetado no system prompt.
+    pub identidade: String,
 }
 
 impl Default for ConfigCaminhos {
     fn default() -> Self {
         ConfigCaminhos {
             dados: "data".to_string(),
+            identidade: "identity/nucleo.md".to_string(),
+        }
+    }
+}
+
+/// Opções da conversa (`abiyss chat`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConfigChat {
+    /// Quantas mensagens antigas entram no contexto a cada turno.
+    pub historico_max_mensagens: usize,
+}
+
+impl Default for ConfigChat {
+    fn default() -> Self {
+        ConfigChat {
+            historico_max_mensagens: 40,
         }
     }
 }
@@ -280,6 +302,11 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Caminho do núcleo de identidade.
+    pub fn caminho_identidade(&self) -> PathBuf {
+        self.resolver(&self.caminhos.identidade)
     }
 
     /// Caminho do banco SQLite.

@@ -87,3 +87,13 @@ backoff_maximo_ms = 60000
 [caminhos]
 # Dados locais; o banco SQLite fica em <dados>/abiyss.db.
 dados = "data"
+# Núcleo de identidade injetado no system prompt (o Abiyss não pode editá-lo).
+identidade = "identity/nucleo.md"
+
+# ---------------------------------------------------------------------------
+# Conversa (`abiyss chat`).
+# ---------------------------------------------------------------------------
+
+[chat]
+# Quantas mensagens anteriores entram no contexto a cada turno.
+historico_max_mensagens = 40

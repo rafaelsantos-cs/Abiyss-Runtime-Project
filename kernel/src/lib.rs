@@ -5,8 +5,11 @@
 //! ferramentas e o loop do daemon. O que o Abiyss poderá editar no futuro
 //! fica fora daqui, em `recursos/` (servidores MCP em Python).
 
+pub mod chat;
 pub mod config;
 pub mod db;
+pub mod historico;
+pub mod identidade;
 pub mod nim;
 pub mod orquestrador;
 pub mod tempo;

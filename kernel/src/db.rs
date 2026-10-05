@@ -41,6 +41,25 @@ const MIGRACOES: &[&str] = &[
     );
     CREATE INDEX idx_chamadas_momento ON chamadas_modelo(momento_ms);
     "#,
+    // 2 (F3) — histórico de conversa.
+    r#"
+    CREATE TABLE conversas (
+        id        INTEGER PRIMARY KEY,
+        criada_ms INTEGER NOT NULL
+    );
+    CREATE TABLE mensagens (
+        id              INTEGER PRIMARY KEY,
+        conversa_id     INTEGER NOT NULL REFERENCES conversas(id),
+        momento_ms      INTEGER NOT NULL,
+        papel           TEXT    NOT NULL,
+        conteudo        TEXT,
+        raciocinio      TEXT,
+        chamadas_json   TEXT,
+        id_chamada      TEXT,
+        nome_ferramenta TEXT
+    );
+    CREATE INDEX idx_mensagens_conversa ON mensagens(conversa_id, id);
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

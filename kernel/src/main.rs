@@ -1,16 +1,16 @@
 //! Ponto de entrada da CLI `abiyss`.
+//!
+//! Aqui ficam só a definição dos comandos (clap) e o despacho; a
+//! implementação de cada comando está em `cli/`.
 
-use std::io::Write;
+mod cli;
+
 use std::path::PathBuf;
 
-use anyhow::Context;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 use abiyss::config::Config;
-use abiyss::db::Banco;
-use abiyss::nim::mock::MockNim;
-use abiyss::nim::{self, EventoStream, Mensagem};
-use abiyss::orquestrador::{AoReceber, Nivel, Origem, Orquestrador};
+use cli::nim::QualModelo;
 
 #[derive(Parser)]
 #[command(
@@ -29,6 +29,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Comando {
+    /// Conversa com o Abiyss (histórico salvo no SQLite).
+    Chat {
+        /// Continua a conversa mais recente em vez de começar outra.
+        #[arg(long)]
+        continuar: bool,
+        /// Continua uma conversa específica.
+        #[arg(long)]
+        conversa: Option<i64>,
+        /// Envia só esta mensagem, mostra a resposta e sai.
+        #[arg(short, long)]
+        mensagem: Option<String>,
+        /// Mostra o raciocínio do modelo (em cinza, no stderr).
+        #[arg(long)]
+        mostrar_raciocinio: bool,
+    },
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -48,28 +63,36 @@ enum Comando {
     },
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum QualModelo {
-    Cerebro,
-    Ultra,
-    Medium,
-    Low,
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     iniciar_logs();
     let cli = Cli::parse();
+    let caminho_config = Config::caminho_padrao(cli.config.as_deref());
 
     match cli.comando {
-        Comando::MockNim { porta } => rodar_mock(porta).await,
+        Comando::MockNim { porta } => cli::nim::rodar_mock(porta).await,
         Comando::TestarNim {
             modelo,
             sem_stream,
             mensagem,
         } => {
-            let config = carregar_config(cli.config.as_deref())?;
-            testar_nim(&config, modelo, !sem_stream, &mensagem).await
+            let config = Config::carregar(&caminho_config)?;
+            cli::nim::testar_nim(&config, modelo, !sem_stream, &mensagem).await
+        }
+        Comando::Chat {
+            continuar,
+            conversa,
+            mensagem,
+            mostrar_raciocinio,
+        } => {
+            let config = Config::carregar(&caminho_config)?;
+            let opcoes = cli::chat::OpcoesChat {
+                continuar,
+                conversa,
+                mensagem,
+                mostrar_raciocinio,
+            };
+            cli::chat::executar(config, opcoes).await
         }
     }
 }
@@ -82,86 +105,4 @@ fn iniciar_logs() {
         .with_env_filter(filtro)
         .with_writer(std::io::stderr)
         .init();
-}
-
-fn carregar_config(explicito: Option<&std::path::Path>) -> anyhow::Result<Config> {
-    let caminho = Config::caminho_padrao(explicito);
-    Config::carregar(&caminho)
-}
-
-async fn rodar_mock(porta: u16) -> anyhow::Result<()> {
-    let mock = MockNim::iniciar_em(&format!("127.0.0.1:{porta}"))
-        .await
-        .with_context(|| format!("não consegui abrir a porta {porta}"))?;
-    println!("Mock do NIM ouvindo em {}", mock.base_url());
-    println!("Use esse valor em nim.base_url (num abiyss.toml separado) e qualquer chave.");
-    println!("Ctrl+C para parar.");
-    tokio::signal::ctrl_c().await?;
-    Ok(())
-}
-
-async fn testar_nim(
-    config: &Config,
-    qual: QualModelo,
-    stream: bool,
-    mensagem: &str,
-) -> anyhow::Result<()> {
-    // Passa pelo orquestrador: respeita o rate limit e fica registrado no banco.
-    let banco = Banco::abrir(&config.caminho_banco())?;
-    let orquestrador = Orquestrador::da_config(config, banco)?;
-    let modelo = match qual {
-        QualModelo::Cerebro => &config.modelos.cerebro,
-        QualModelo::Ultra => &config.modelos.sub_ultra,
-        QualModelo::Medium => &config.modelos.sub_medium,
-        QualModelo::Low => &config.modelos.sub_low,
-    };
-    let pedido = nim::montar_pedido(modelo, vec![Mensagem::usuario(mensagem)], vec![]);
-
-    let mut mostrar = |evento: EventoStream| match evento {
-        EventoStream::Texto(t) => {
-            print!("{t}");
-            let _ = std::io::stdout().flush();
-        }
-        EventoStream::Raciocinio(r) => eprint!("\x1b[2m{r}\x1b[0m"),
-        EventoStream::InicioFerramenta(_) => {}
-    };
-    let ao_receber: AoReceber<'_> = if stream { Some(&mut mostrar) } else { None };
-
-    eprintln!("→ {} em {}", modelo.id, config.nim.base_url);
-    let resposta = match qual {
-        QualModelo::Cerebro => {
-            orquestrador
-                .cerebro
-                .chamar(Origem::Conversa, &pedido, ao_receber)
-                .await?
-        }
-        QualModelo::Ultra => {
-            orquestrador
-                .subagentes
-                .chamar(Nivel::Ultra, &pedido, ao_receber)
-                .await?
-        }
-        QualModelo::Medium => {
-            orquestrador
-                .subagentes
-                .chamar(Nivel::Medium, &pedido, ao_receber)
-                .await?
-        }
-        QualModelo::Low => {
-            orquestrador
-                .subagentes
-                .chamar(Nivel::Low, &pedido, ao_receber)
-                .await?
-        }
-    };
-    if stream {
-        println!();
-    } else {
-        println!("{}", resposta.mensagem.texto());
-    }
-    eprintln!(
-        "← fim: {:?} | tokens: {} entrada + {} saída",
-        resposta.motivo_fim, resposta.uso.prompt_tokens, resposta.uso.completion_tokens
-    );
-    Ok(())
 }

@@ -1,0 +1,96 @@
+//! `abiyss chat`: conversa interativa no terminal.
+
+use std::io::Write;
+
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+use abiyss::chat::SessaoChat;
+use abiyss::config::Config;
+use abiyss::db::Banco;
+use abiyss::historico;
+use abiyss::nim::EventoStream;
+use abiyss::orquestrador::Orquestrador;
+
+pub struct OpcoesChat {
+    pub continuar: bool,
+    pub conversa: Option<i64>,
+    pub mensagem: Option<String>,
+    pub mostrar_raciocinio: bool,
+}
+
+const AJUDA: &str = "Comandos: /nova (nova conversa), /sair (encerra), /ajuda";
+
+pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> {
+    let banco = Banco::abrir(&config.caminho_banco())?;
+    let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
+
+    // Qual conversa usar: a pedida, a última, ou uma nova.
+    let existente = match opcoes.conversa {
+        Some(id) => Some(id),
+        None if opcoes.continuar => historico::ultima_conversa(&banco)?,
+        None => None,
+    };
+    let mut sessao = match existente {
+        Some(id) => SessaoChat::retomar(config.clone(), orquestrador.clone(), banco.clone(), id)?,
+        None => SessaoChat::nova(config.clone(), orquestrador.clone(), banco.clone())?,
+    };
+
+    // Modo "uma mensagem só" (bom para scripts).
+    if let Some(texto) = opcoes.mensagem {
+        return turno(&mut sessao, &texto, opcoes.mostrar_raciocinio).await;
+    }
+
+    println!("Conversa {} com o Abiyss. {AJUDA}", sessao.conversa);
+    let mut linhas = BufReader::new(tokio::io::stdin()).lines();
+    loop {
+        print!("\nvocê> ");
+        std::io::stdout().flush()?;
+        // `None` = fim da entrada (Ctrl+D).
+        let Some(linha) = linhas.next_line().await? else {
+            println!();
+            break;
+        };
+        let linha = linha.trim();
+        match linha {
+            "" => continue,
+            "/sair" | "/exit" => break,
+            "/ajuda" | "/help" => println!("{AJUDA}"),
+            "/nova" => {
+                sessao = SessaoChat::nova(config.clone(), orquestrador.clone(), banco.clone())?;
+                println!("Nova conversa: {}", sessao.conversa);
+            }
+            texto => {
+                // Um erro num turno não encerra o chat.
+                if let Err(e) = turno(&mut sessao, texto, opcoes.mostrar_raciocinio).await {
+                    eprintln!("\n[erro] {e:#}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Envia uma mensagem e mostra a resposta em streaming.
+async fn turno(
+    sessao: &mut SessaoChat,
+    texto: &str,
+    mostrar_raciocinio: bool,
+) -> anyhow::Result<()> {
+    print!("abiyss> ");
+    std::io::stdout().flush()?;
+    let mut mostrar = |evento: EventoStream| match evento {
+        EventoStream::Texto(t) => {
+            print!("{t}");
+            let _ = std::io::stdout().flush();
+        }
+        EventoStream::Raciocinio(r) => {
+            if mostrar_raciocinio {
+                eprint!("\x1b[2m{r}\x1b[0m");
+            }
+        }
+        EventoStream::InicioFerramenta(nome) => eprint!("\n[ferramenta: {nome}] "),
+    };
+    sessao.enviar(texto, Some(&mut mostrar)).await?;
+    println!();
+    Ok(())
+}
