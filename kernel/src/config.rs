@@ -272,6 +272,10 @@ pub struct ConfigDaemon {
     pub revisao_minima_segundos: u64,
     /// Máximo de eventos da fila colocados no contexto de um ciclo.
     pub max_eventos_por_ciclo: usize,
+    /// Com o watchdog do systemd ligado: se o loop principal ficar este
+    /// tempo sem completar nenhuma volta (ex.: um ciclo travado), o daemon
+    /// para de mandar WATCHDOG=1 e o systemd o reinicia.
+    pub max_travado_segundos: u64,
 }
 
 impl Default for ConfigDaemon {
@@ -281,6 +285,7 @@ impl Default for ConfigDaemon {
             cron_verificacao_segundos: 30,
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
+            max_travado_segundos: 3_600,
         }
     }
 }

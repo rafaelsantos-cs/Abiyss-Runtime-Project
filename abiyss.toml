@@ -255,6 +255,10 @@ cron_verificacao_segundos = 30
 revisao_minima_segundos = 1800
 # Máximo de eventos da fila colocados no contexto de um ciclo.
 max_eventos_por_ciclo = 20
+# Watchdog do systemd (WatchdogSec= na unit): se o loop principal ficar
+# este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
+# o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
+max_travado_segundos = 3600
 
 # ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,

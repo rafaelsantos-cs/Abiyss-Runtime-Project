@@ -34,4 +34,6 @@ pub mod processos;
 pub mod skills;
 pub mod status;
 pub mod subagentes;
+#[cfg(unix)]
+pub mod systemd;
 pub mod tempo;
