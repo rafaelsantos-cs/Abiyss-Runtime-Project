@@ -259,6 +259,10 @@ max_eventos_por_ciclo = 20
 # este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
 # o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
 max_travado_segundos = 3600
+# Tempo máximo de UM ciclo de heartbeat. Passou disto, o kernel interrompe o
+# ciclo, registra o erro e os eventos continuam pendentes. O loop principal
+# (crons, sinal de vida, watchdog) nunca espera o ciclo: ele anda em paralelo.
+max_duracao_ciclo_segundos = 900
 
 # ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,

@@ -538,6 +538,20 @@ fn registrar_ciclo(
     Ok(())
 }
 
+/// Registra um ciclo que não terminou (tempo esgotado ou pânico). Conta
+/// como se tivesse chamado o modelo, por segurança: a revisão periódica
+/// seguinte espera o intervalo normal em vez de tentar de novo na hora.
+/// Os eventos do ciclo NÃO foram consumidos (só são marcados depois de uma
+/// chamada bem-sucedida), então serão vistos no próximo ciclo.
+pub fn registrar_ciclo_interrompido(banco: &Banco, inicio: i64, erro: &str) -> anyhow::Result<()> {
+    let resultado = ResultadoCiclo {
+        chamou_modelo: true,
+        motivo: "ciclo interrompido pelo kernel".into(),
+        ..Default::default()
+    };
+    registrar_ciclo(banco, inicio, &resultado, None, Some(erro), 0)
+}
+
 /// Último ciclo registrado (opcionalmente só os que chamaram o modelo).
 pub fn ultimo_ciclo(banco: &Banco, so_com_modelo: bool) -> anyhow::Result<Option<Ciclo>> {
     let filtro = if so_com_modelo {

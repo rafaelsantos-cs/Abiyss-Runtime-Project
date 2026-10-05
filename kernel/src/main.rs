@@ -53,7 +53,12 @@ enum Comando {
         uma_vez: bool,
     },
     /// Mostra o estado do Abiyss (não chama o modelo).
-    Status,
+    Status {
+        /// Só verifica a saúde, numa linha, com código de saída para
+        /// monitores: 0 = ok, 1 = degradado, 2 = daemon parado.
+        #[arg(long)]
+        verificar: bool,
+    },
     /// Gerencia goals.
     #[command(subcommand)]
     Goal(ComandoGoal),
@@ -204,7 +209,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Comando::Manutencao => cli::daemon::manutencao(&Config::carregar(&caminho_config)?),
         Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
-        Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
+        Comando::Status { verificar } => {
+            cli::daemon::status(&Config::carregar(&caminho_config)?, verificar)
+        }
         Comando::Goal(sub) => {
             let config = Config::carregar(&caminho_config)?;
             match sub {

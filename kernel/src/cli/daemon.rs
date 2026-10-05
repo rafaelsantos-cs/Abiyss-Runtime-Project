@@ -40,8 +40,14 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
     resultado
 }
 
-pub fn status(config: &Config) -> anyhow::Result<()> {
+pub fn status(config: &Config, verificar: bool) -> anyhow::Result<()> {
     let banco = Banco::abrir(&config.caminho_banco())?;
+    if verificar {
+        let v = status::verificar(config, &banco)?;
+        println!("{}", v.linha);
+        drop(banco);
+        std::process::exit(v.codigo);
+    }
     print!("{}", status::relatorio(config, &banco)?);
     Ok(())
 }

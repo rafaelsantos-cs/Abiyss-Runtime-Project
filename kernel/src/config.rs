@@ -276,6 +276,9 @@ pub struct ConfigDaemon {
     /// tempo sem completar nenhuma volta (ex.: um ciclo travado), o daemon
     /// para de mandar WATCHDOG=1 e o systemd o reinicia.
     pub max_travado_segundos: u64,
+    /// Tempo máximo de um ciclo de heartbeat. Passou disto, o kernel
+    /// interrompe o ciclo, registra o erro e os eventos continuam pendentes.
+    pub max_duracao_ciclo_segundos: u64,
 }
 
 impl Default for ConfigDaemon {
@@ -286,6 +289,7 @@ impl Default for ConfigDaemon {
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
             max_travado_segundos: 3_600,
+            max_duracao_ciclo_segundos: 900,
         }
     }
 }
@@ -489,6 +493,9 @@ impl Config {
         }
         if self.daemon.heartbeat_segundos == 0 || self.daemon.cron_verificacao_segundos == 0 {
             bail!("daemon.heartbeat_segundos e daemon.cron_verificacao_segundos precisam ser > 0");
+        }
+        if self.daemon.max_duracao_ciclo_segundos == 0 {
+            bail!("daemon.max_duracao_ciclo_segundos precisa ser > 0");
         }
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {

@@ -4,6 +4,10 @@
 //! - A cada `cron_verificacao_segundos`: dispara crons vencidos e grava
 //!   um "sinal de vida" (código puro, sem modelo).
 //! - A cada `heartbeat_segundos`: um ciclo de heartbeat.
+//! - O loop principal NUNCA espera trabalho longo: o ciclo do heartbeat e
+//!   a manutenção ficam guardados como "trabalhos em andamento" e são
+//!   acompanhados pelo mesmo `select!` que dispara os crons. Um ciclo tem
+//!   tempo máximo e um pânico dentro dele não derruba o daemon.
 //! - A cada `retencao.checkpoint_minutos`: checkpoint do WAL.
 //! - A cada `retencao.manutencao_minutos`: retenção (detalhe antigo vira
 //!   agregado diário) e vacuum incremental.
@@ -14,19 +18,23 @@
 //!   estiver andando (ver `vigiar`).
 
 use std::fs::{File, OpenOptions};
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use futures::FutureExt;
 use rusqlite::{OptionalExtension, params};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::config::Config;
 use crate::cron;
 use crate::db::Banco;
 use crate::ferramentas::CaixaDeFerramentas;
-use crate::heartbeat::Heartbeat;
+use crate::heartbeat::{self, Heartbeat};
 use crate::manutencao;
 use crate::orquestrador::Orquestrador;
 use crate::subagentes::{self, ExecutorSubagentes};
@@ -166,6 +174,51 @@ async fn vigiar(ultima_volta_ms: Arc<AtomicI64>, max_travado_segundos: u64, inte
     }
 }
 
+/// Como terminou um trabalho supervisionado.
+#[derive(Debug, PartialEq)]
+pub enum Desfecho<T> {
+    Ok(T),
+    /// Passou do tempo máximo e foi interrompido.
+    TempoEsgotado,
+    /// Entrou em pânico; a mensagem do pânico (quando é texto).
+    Panico(String),
+}
+
+/// Roda `futuro` com tempo máximo, capturando pânico. Nada que aconteça
+/// dentro dele derruba quem chamou.
+pub async fn supervisionar<F, T>(limite: Duration, futuro: F) -> Desfecho<T>
+where
+    F: Future<Output = T>,
+{
+    match AssertUnwindSafe(tokio::time::timeout(limite, futuro))
+        .catch_unwind()
+        .await
+    {
+        Ok(Ok(valor)) => Desfecho::Ok(valor),
+        Ok(Err(_)) => Desfecho::TempoEsgotado,
+        Err(panico) => {
+            let mensagem = panico
+                .downcast_ref::<&str>()
+                .map(|t| t.to_string())
+                .or_else(|| panico.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "pânico sem mensagem".to_string());
+            Desfecho::Panico(mensagem)
+        }
+    }
+}
+
+/// Um trabalho longo em andamento, acompanhado pelo loop principal.
+type Trabalho<'a> = Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+/// Espera o trabalho terminar; sem trabalho, espera para sempre (assim o
+/// braço do `select!` simplesmente nunca dispara).
+async fn esperar_trabalho(trabalho: &mut Option<Trabalho<'_>>) {
+    match trabalho {
+        Some(futuro) => futuro.as_mut().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Opções de linha de comando do daemon.
 #[derive(Debug, Clone, Default)]
 pub struct OpcoesDaemon {
@@ -273,15 +326,45 @@ impl Daemon {
         }
     }
 
-    /// Loop principal. Volta quando receber o sinal de parada.
+    /// Um ciclo com tempo máximo e pânico isolado. Ciclo interrompido fica
+    /// registrado na tabela `ciclos` com o motivo.
+    async fn um_ciclo_supervisionado(&self) {
+        let inicio = agora_ms();
+        let limite = Duration::from_secs(self.config.daemon.max_duracao_ciclo_segundos);
+        let erro = match supervisionar(limite, self.um_ciclo()).await {
+            Desfecho::Ok(()) => return,
+            Desfecho::TempoEsgotado => format!(
+                "tempo esgotado: o ciclo passou de {} s e foi interrompido",
+                limite.as_secs()
+            ),
+            Desfecho::Panico(mensagem) => format!("pânico no ciclo: {mensagem}"),
+        };
+        tracing::error!("heartbeat: {erro}");
+        if let Err(e) = heartbeat::registrar_ciclo_interrompido(&self.banco, inicio, &erro) {
+            tracing::warn!("não consegui registrar o ciclo interrompido: {e:#}");
+        }
+    }
+
+    /// Loop principal. Volta quando receber SIGTERM ou Ctrl+C.
     pub async fn rodar(&self, opcoes: &OpcoesDaemon) -> anyhow::Result<()> {
+        let mut parada = SinalDeParada::novo()?;
+        self.rodar_ate(opcoes, async move { parada.esperar().await })
+            .await
+    }
+
+    /// Loop principal. Volta quando `parar` terminar (o sinal de parada;
+    /// nos testes, um canal).
+    pub async fn rodar_ate<P>(&self, opcoes: &OpcoesDaemon, parar: P) -> anyhow::Result<()>
+    where
+        P: Future<Output = ()>,
+    {
         gravar_estado(&self.banco, CHAVE_PID, &std::process::id().to_string())?;
         gravar_estado(&self.banco, CHAVE_INICIADO, &agora_ms().to_string())?;
 
         if opcoes.uma_vez {
             subagentes::recuperar_interrompidos(&self.banco)?;
             self.tique_de_cron();
-            self.um_ciclo().await;
+            self.um_ciclo_supervisionado().await;
             // Sub-agentes delegados neste ciclo rodam até o fim antes de sair.
             self.executor.executar_pendentes_e_esperar().await?;
             gravar_estado(&self.banco, CHAVE_PARADO, &agora_ms().to_string())?;
@@ -291,21 +374,19 @@ impl Daemon {
         // O executor de sub-agentes roda numa tarefa separada.
         let executor = tokio::spawn(Arc::clone(&self.executor).rodar());
 
-        let mut parada = SinalDeParada::novo()?;
+        tokio::pin!(parar);
         let mut tique_cron = tokio::time::interval(Duration::from_secs(
             self.config.daemon.cron_verificacao_segundos,
         ));
-        let mut tique_heartbeat =
-            tokio::time::interval(Duration::from_secs(self.config.daemon.heartbeat_segundos));
+        let intervalo_heartbeat = Duration::from_secs(self.config.daemon.heartbeat_segundos);
         let retencao = &self.config.retencao;
         let mut tique_manutencao =
             tokio::time::interval(Duration::from_secs(retencao.manutencao_minutos * 60));
         let mut tique_checkpoint =
             tokio::time::interval(Duration::from_secs(retencao.checkpoint_minutos * 60));
-        // Se um ciclo demorar mais que o intervalo, não "compensa" depois.
+        // Se uma volta demorar mais que o intervalo, não "compensa" depois.
         for tique in [
             &mut tique_cron,
-            &mut tique_heartbeat,
             &mut tique_manutencao,
             &mut tique_checkpoint,
         ] {
@@ -334,25 +415,42 @@ impl Daemon {
             "READY=1\nSTATUS=no ar (heartbeat a cada {} s)",
             self.config.daemon.heartbeat_segundos
         ));
+
+        // Trabalhos longos em andamento. Ficam guardados aqui e são
+        // acompanhados pelo mesmo `select!` dos tiques baratos: crons, sinal
+        // de vida e watchdog continuam andando enquanto um ciclo pensa.
+        let mut ciclo: Option<Trabalho<'_>> = None;
+        let mut manutencao: Option<Trabalho<'_>> = None;
+        // O primeiro ciclo roda logo ao subir (como antes).
+        let mut proximo_ciclo = Instant::now();
         loop {
             tokio::select! {
                 _ = tique_cron.tick() => self.tique_de_cron(),
                 _ = tique_checkpoint.tick() => self.checkpoint(),
-                _ = tique_manutencao.tick() => self.manutencao().await,
-                _ = tique_heartbeat.tick() => {
-                    // O ciclo pode demorar (raciocínio longo); a parada não espera ele terminar.
-                    tokio::select! {
-                        _ = self.um_ciclo() => {}
-                        _ = parada.esperar() => {
-                            tracing::info!("parada pedida no meio de um ciclo");
-                            break;
-                        }
-                    }
+                _ = tique_manutencao.tick(), if manutencao.is_none() => {
+                    manutencao = Some(Box::pin(self.manutencao()));
                 }
-                _ = parada.esperar() => break,
+                _ = esperar_trabalho(&mut manutencao) => manutencao = None,
+                _ = tokio::time::sleep_until(proximo_ciclo), if ciclo.is_none() => {
+                    ciclo = Some(Box::pin(self.um_ciclo_supervisionado()));
+                }
+                _ = esperar_trabalho(&mut ciclo) => {
+                    ciclo = None;
+                    proximo_ciclo = Instant::now() + intervalo_heartbeat;
+                }
+                _ = &mut parar => {
+                    if ciclo.is_some() {
+                        // O ciclo é largado no próximo ponto de espera: os
+                        // eventos dele continuam pendentes para a próxima vez.
+                        tracing::info!("parada pedida no meio de um ciclo");
+                    }
+                    break;
+                }
             }
             ultima_volta_ms.store(agora_ms(), Ordering::Relaxed);
         }
+        drop(ciclo);
+        drop(manutencao);
         avisar_systemd("STOPPING=1\nSTATUS=parando");
         if let Some(vigia) = vigia {
             vigia.abort();
@@ -386,6 +484,28 @@ mod testes {
         drop(trava);
         assert!(!esta_rodando(&config));
         assert!(TravaDaemon::adquirir(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn supervisao_isola_tempo_e_panico() {
+        let curto = Duration::from_millis(200);
+        assert_eq!(supervisionar(curto, async { 7 }).await, Desfecho::Ok(7));
+        assert_eq!(
+            supervisionar(curto, tokio::time::sleep(Duration::from_secs(5))).await,
+            Desfecho::TempoEsgotado
+        );
+        let panico = supervisionar(curto, async {
+            if curto.as_millis() > 0 {
+                panic!("explodiu de propósito");
+            }
+        })
+        .await;
+        assert_eq!(panico, Desfecho::Panico("explodiu de propósito".into()));
+        // Pânico com String formatada também vira mensagem.
+        let n = 3;
+        let formatado: Desfecho<()> =
+            supervisionar(curto, async move { panic!("falha {n}") }).await;
+        assert_eq!(formatado, Desfecho::Panico("falha 3".into()));
     }
 
     #[test]
