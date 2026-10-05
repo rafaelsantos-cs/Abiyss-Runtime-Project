@@ -19,8 +19,11 @@ axum = "0.8"
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "env"] }
 dotenvy = "0.15"
+fastrand = "2"
 futures = "0.3"
 reqwest = { version = "0.13", features = ["json", "stream"] }
+# "bundled": compila o SQLite junto, sem depender da versão instalada na VM.
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

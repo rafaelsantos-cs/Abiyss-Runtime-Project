@@ -41,11 +41,49 @@ id = "nvidia/nemotron-3-super-120b-a12b"
 max_tokens = 8192
 
 # ---------------------------------------------------------------------------
-# Pools de chamadas. Cada pool tem a SUA chave (nome da variável no .env).
+# Pools de chamadas. Cada pool tem a SUA chave (nome da variável no .env)
+# e o SEU limite; um pool nunca usa a capacidade do outro.
+#
+# ATENÇÃO: ainda não está confirmado se o limite do NIM (40 req/min) é por
+# CHAVE ou por CONTA. Relatos no fórum da NVIDIA indicam que é por conta.
+# Se as duas chaves forem da mesma conta, divida o limite entre os pools
+# (ex.: 25 + 15) para não tomar 429.
 # ---------------------------------------------------------------------------
 
 [pools.cerebro]
 api_key_env = "NIM_API_KEY_CEREBRO"
+requisicoes_por_minuto = 40
+# 1 = sem rajadas: no máximo uma requisição a cada 60/40 = 1,5 s.
+rajada = 1
+# Fatia reservada para conversa com o usuário: o trabalho autônomo do
+# daemon usa no máximo 40 - 10 = 30 req/min.
+reserva_conversa_por_minuto = 10
+
+[pools.cerebro.retentativas]
+max_tentativas = 5
+backoff_inicial_ms = 2000
+backoff_maximo_ms = 60000
 
 [pools.subagentes]
 api_key_env = "NIM_API_KEY_SUBAGENTES"
+requisicoes_por_minuto = 40
+rajada = 1
+
+# Fila com prioridade Ultra > Medium > Low; máximo de chamadas simultâneas por nível.
+[pools.subagentes.concorrencia]
+ultra = 1
+medium = 2
+low = 3
+
+[pools.subagentes.retentativas]
+max_tentativas = 5
+backoff_inicial_ms = 2000
+backoff_maximo_ms = 60000
+
+# ---------------------------------------------------------------------------
+# Caminhos (relativos a esta pasta).
+# ---------------------------------------------------------------------------
+
+[caminhos]
+# Dados locais; o banco SQLite fica em <dados>/abiyss.db.
+dados = "data"

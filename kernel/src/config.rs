@@ -20,6 +20,8 @@ pub struct Config {
     pub nim: ConfigNim,
     pub modelos: ConfigModelos,
     pub pools: ConfigPools,
+    #[serde(default)]
+    pub caminhos: ConfigCaminhos,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -92,12 +94,99 @@ pub struct ConfigPools {
 pub struct ConfigPoolCerebro {
     /// Nome da variável de ambiente que guarda a chave deste pool.
     pub api_key_env: String,
+    /// Limite de requisições por minuto deste pool (padrão 40).
+    #[serde(default = "padrao_rpm")]
+    pub requisicoes_por_minuto: u32,
+    /// Quantas requisições podem sair "de uma vez" depois de um tempo parado.
+    /// 1 = sem rajadas: no máximo uma a cada 60/rpm segundos.
+    #[serde(default = "padrao_rajada")]
+    pub rajada: u32,
+    /// Fatia por minuto reservada para conversa com o usuário. As chamadas
+    /// autônomas (daemon) só podem usar `requisicoes_por_minuto - reserva`.
+    #[serde(default = "padrao_reserva_conversa")]
+    pub reserva_conversa_por_minuto: u32,
+    #[serde(default)]
+    pub retentativas: ConfigRetentativas,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigPoolSubagentes {
     /// Nome da variável de ambiente que guarda a chave deste pool.
     pub api_key_env: String,
+    #[serde(default = "padrao_rpm")]
+    pub requisicoes_por_minuto: u32,
+    #[serde(default = "padrao_rajada")]
+    pub rajada: u32,
+    /// Máximo de chamadas simultâneas por nível de sub-agente.
+    #[serde(default)]
+    pub concorrencia: ConfigConcorrencia,
+    #[serde(default)]
+    pub retentativas: ConfigRetentativas,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfigConcorrencia {
+    pub ultra: u32,
+    pub medium: u32,
+    pub low: u32,
+}
+
+impl Default for ConfigConcorrencia {
+    fn default() -> Self {
+        ConfigConcorrencia {
+            ultra: 1,
+            medium: 2,
+            low: 3,
+        }
+    }
+}
+
+/// Política de novas tentativas em erros temporários (429, 5xx, rede).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfigRetentativas {
+    /// Total de tentativas (a primeira conta). 1 = nunca repete.
+    pub max_tentativas: u32,
+    /// Espera antes da 2ª tentativa; dobra a cada nova falha.
+    pub backoff_inicial_ms: u64,
+    /// Teto da espera.
+    pub backoff_maximo_ms: u64,
+}
+
+impl Default for ConfigRetentativas {
+    fn default() -> Self {
+        ConfigRetentativas {
+            max_tentativas: 5,
+            backoff_inicial_ms: 2_000,
+            backoff_maximo_ms: 60_000,
+        }
+    }
+}
+
+fn padrao_rpm() -> u32 {
+    40
+}
+
+fn padrao_rajada() -> u32 {
+    1
+}
+
+fn padrao_reserva_conversa() -> u32 {
+    10
+}
+
+/// Onde ficam os arquivos do Abiyss (relativos à raiz do projeto).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfigCaminhos {
+    /// Pasta dos dados locais (o banco SQLite fica aqui).
+    pub dados: String,
+}
+
+impl Default for ConfigCaminhos {
+    fn default() -> Self {
+        ConfigCaminhos {
+            dados: "data".to_string(),
+        }
+    }
 }
 
 /// Valor de exemplo do `.env.example`. Se a chave ainda for esta,
@@ -164,6 +253,22 @@ impl Config {
         if !self.nim.base_url.starts_with("http://") && !self.nim.base_url.starts_with("https://") {
             bail!("nim.base_url precisa começar com http:// ou https://");
         }
+        let cerebro = &self.pools.cerebro;
+        if cerebro.requisicoes_por_minuto == 0 || self.pools.subagentes.requisicoes_por_minuto == 0
+        {
+            bail!("requisicoes_por_minuto precisa ser maior que zero");
+        }
+        if cerebro.reserva_conversa_por_minuto >= cerebro.requisicoes_por_minuto {
+            bail!(
+                "pools.cerebro.reserva_conversa_por_minuto ({}) precisa ser menor que requisicoes_por_minuto ({})",
+                cerebro.reserva_conversa_por_minuto,
+                cerebro.requisicoes_por_minuto
+            );
+        }
+        let c = &self.pools.subagentes.concorrencia;
+        if c.ultra == 0 || c.medium == 0 || c.low == 0 {
+            bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
+        }
         for (nome, modelo) in [
             ("cerebro", &self.modelos.cerebro),
             ("sub_ultra", &self.modelos.sub_ultra),
@@ -175,6 +280,11 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Caminho do banco SQLite.
+    pub fn caminho_banco(&self) -> PathBuf {
+        self.resolver(&self.caminhos.dados).join("abiyss.db")
     }
 
     /// Resolve um caminho da configuração relativo à raiz do projeto.
@@ -276,6 +386,24 @@ mod testes {
     #[test]
     fn rejeita_url_sem_esquema() {
         let texto = MINIMA.replace("http://127.0.0.1:9/v1/", "integrate.api.nvidia.com/v1");
+        assert!(Config::de_texto(&texto).is_err());
+    }
+
+    #[test]
+    fn padroes_dos_pools() {
+        let config = Config::de_texto(MINIMA).unwrap();
+        assert_eq!(config.pools.cerebro.requisicoes_por_minuto, 40);
+        assert_eq!(config.pools.cerebro.reserva_conversa_por_minuto, 10);
+        assert_eq!(config.pools.subagentes.concorrencia.ultra, 1);
+        assert_eq!(config.pools.subagentes.retentativas.max_tentativas, 5);
+    }
+
+    #[test]
+    fn reserva_maior_que_limite_e_recusada() {
+        let texto = MINIMA.replace(
+            "api_key_env = \"TESTE_CHAVE_CEREBRO\"",
+            "api_key_env = \"TESTE_CHAVE_CEREBRO\"\nrequisicoes_por_minuto = 10\nreserva_conversa_por_minuto = 10",
+        );
         assert!(Config::de_texto(&texto).is_err());
     }
 

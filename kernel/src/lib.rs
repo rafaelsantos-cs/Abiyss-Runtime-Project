@@ -6,4 +6,7 @@
 //! fica fora daqui, em `recursos/` (servidores MCP em Python).
 
 pub mod config;
+pub mod db;
 pub mod nim;
+pub mod orquestrador;
+pub mod tempo;
