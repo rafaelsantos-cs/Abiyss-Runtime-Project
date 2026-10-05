@@ -412,6 +412,52 @@ fn eventos_stream(
     eventos
 }
 
+/// Roteiro do teste de resistência (`abiyss mock-nim --roteiro resistencia`):
+/// o mock responde como um Abiyss bem-comportado, para o daemon exercitar
+/// o caminho completo (heartbeat → ações → sub-agentes → eventos).
+///
+/// - modelo com "cerebro" no ID: decisão válida do heartbeat; a cada 4
+///   chamadas delega um sub-agente `low`, nas outras aguarda;
+/// - qualquer outro modelo (sub-agentes): relatório final "concluido".
+///
+/// As respostas têm alguns KB (texto + raciocínio) para os buffers
+/// trabalharem, e chegam depois de `atraso` (latência de mentira).
+pub fn roteiro_resistencia(atraso: Duration) -> impl Fn(&Value) -> RespostaMock + Send + Sync {
+    let contador = AtomicU64::new(0);
+    move |corpo: &Value| {
+        let n = contador.fetch_add(1, Ordering::Relaxed);
+        let modelo = corpo["model"].as_str().unwrap_or("");
+        let enchimento = "observação de teste ".repeat(80);
+        let texto = if modelo.contains("cerebro") {
+            let acao = if n.is_multiple_of(4) {
+                json!({"tipo": "delegar", "nivel": "low",
+                       "tarefa": format!("tarefa de resistência {n}"), "prazo_segundos": 60})
+            } else {
+                json!({"tipo": "aguardar", "motivo": "nada novo"})
+            };
+            json!({
+                "percepcao": enchimento,
+                "orientacao": "seguir o goal",
+                "decisao": "uma ação por ciclo",
+                "acoes": [acao]
+            })
+        } else {
+            json!({
+                "status": "concluido",
+                "resumo": enchimento,
+                "artefatos": [],
+                "confianca": 0.8,
+                "duvidas": []
+            })
+        };
+        RespostaMock::TextoComRaciocinio {
+            raciocinio: "pensando no teste de resistência ".repeat(40),
+            texto: texto.to_string(),
+        }
+        .atrasada(atraso)
+    }
+}
+
 /// Divide um texto em pedaços de `n` caracteres (sem quebrar UTF-8).
 fn picar(texto: &str, n: usize) -> Vec<String> {
     let caracteres: Vec<char> = texto.chars().collect();

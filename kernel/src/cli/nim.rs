@@ -1,12 +1,13 @@
 //! Comandos de diagnóstico do NIM: `testar-nim` e `mock-nim`.
 
 use std::io::Write;
+use std::time::Duration;
 
 use anyhow::Context;
 
 use abiyss::config::Config;
 use abiyss::db::Banco;
-use abiyss::nim::mock::MockNim;
+use abiyss::nim::mock::{MockNim, roteiro_resistencia};
 use abiyss::nim::{self, EventoStream, Mensagem};
 use abiyss::orquestrador::{AoReceber, Nivel, Origem, Orquestrador};
 
@@ -31,10 +32,20 @@ pub fn esforco(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn rodar_mock(porta: u16) -> anyhow::Result<()> {
+/// O que o `mock-nim` responde.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum RoteiroMock {
+    Eco,
+    Resistencia,
+}
+
+pub async fn rodar_mock(porta: u16, roteiro: RoteiroMock, atraso_ms: u64) -> anyhow::Result<()> {
     let mock = MockNim::iniciar_em(&format!("127.0.0.1:{porta}"))
         .await
         .with_context(|| format!("não consegui abrir a porta {porta}"))?;
+    if let RoteiroMock::Resistencia = roteiro {
+        mock.definir_roteiro(roteiro_resistencia(Duration::from_millis(atraso_ms)));
+    }
     println!("Mock do NIM ouvindo em {}", mock.base_url());
     println!("Use esse valor em nim.base_url (num abiyss.toml separado) e qualquer chave.");
     println!("Ctrl+C para parar.");

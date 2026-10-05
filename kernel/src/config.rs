@@ -36,6 +36,8 @@ pub struct Config {
     pub memoria: crate::memoria::ConfigMemoria,
     #[serde(default)]
     pub retencao: crate::manutencao::ConfigRetencao,
+    #[serde(default)]
+    pub banco: ConfigBanco,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -255,6 +257,22 @@ impl Default for ConfigCaminhos {
             identidade: "identity/nucleo.md".to_string(),
             workspace: "workspace".to_string(),
             skills: "skills".to_string(),
+        }
+    }
+}
+
+/// Seção `[banco]`: o SQLite em memória.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigBanco {
+    /// Teto do cache de páginas do SQLite na conexão do daemon, em KiB.
+    pub cache_kib: u32,
+}
+
+impl Default for ConfigBanco {
+    fn default() -> Self {
+        ConfigBanco {
+            cache_kib: crate::db::CACHE_PADRAO_KIB,
         }
     }
 }
@@ -480,6 +498,9 @@ impl Config {
                 cerebro.reserva_conversa_por_minuto,
                 cerebro.requisicoes_por_minuto
             );
+        }
+        if self.banco.cache_kib < 64 {
+            bail!("banco.cache_kib precisa ser pelo menos 64");
         }
         if self.nim.max_bytes_resposta < 64 * 1024 {
             bail!("nim.max_bytes_resposta precisa ser pelo menos 65536");
