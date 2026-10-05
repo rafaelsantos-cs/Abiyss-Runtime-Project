@@ -12,6 +12,7 @@ pub mod db;
 pub mod ferramentas;
 pub mod historico;
 pub mod identidade;
+pub mod mcp;
 pub mod nim;
 pub mod orquestrador;
 pub mod tempo;

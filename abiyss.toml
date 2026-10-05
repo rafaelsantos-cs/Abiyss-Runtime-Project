@@ -112,3 +112,21 @@ max_rodadas_ferramentas = 8
 max_bytes_leitura = 200000
 max_bytes_escrita = 1000000
 max_itens_listagem = 500
+
+# ---------------------------------------------------------------------------
+# Servidores MCP (recursos em Python, em recursos/). O kernel sobe cada um
+# como processo filho (stdio) e expõe as ferramentas como <nome>__<ferramenta>.
+# Os processos recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# ---------------------------------------------------------------------------
+
+[mcp]
+# Na primeira execução o uv pode precisar baixar dependências.
+timeout_inicio_segundos = 120
+
+[[mcp.servidores]]
+nome = "exemplo"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "servidor.py"]
+diretorio = "recursos/mcp/exemplo"
+timeout_segundos = 60
+ativo = true

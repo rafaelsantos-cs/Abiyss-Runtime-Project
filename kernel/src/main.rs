@@ -44,6 +44,8 @@ enum Comando {
         #[arg(long)]
         mostrar_raciocinio: bool,
     },
+    /// Lista as ferramentas disponíveis (nativas + servidores MCP).
+    Ferramentas,
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -78,6 +80,10 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let config = Config::carregar(&caminho_config)?;
             cli::nim::testar_nim(&config, modelo, !sem_stream, &mensagem).await
+        }
+        Comando::Ferramentas => {
+            let config = Config::carregar(&caminho_config)?;
+            cli::ferramentas::listar(&config).await
         }
         Comando::Chat {
             continuar,

@@ -26,6 +26,8 @@ pub struct Config {
     pub chat: ConfigChat,
     #[serde(default)]
     pub ferramentas: ConfigFerramentas,
+    #[serde(default)]
+    pub mcp: crate::mcp::ConfigMcp,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.

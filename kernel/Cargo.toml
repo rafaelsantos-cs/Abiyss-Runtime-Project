@@ -22,6 +22,8 @@ dotenvy = "0.15"
 fastrand = "2"
 futures = "0.3"
 reqwest = { version = "0.13", features = ["json", "stream"] }
+# SDK oficial do MCP em Rust: só a parte de CLIENTE com transporte por processo filho.
+rmcp = { version = "3.5", default-features = false, features = ["client", "transport-child-process"] }
 # "bundled": compila o SQLite junto, sem depender da versão instalada na VM.
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

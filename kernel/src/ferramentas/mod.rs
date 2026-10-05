@@ -1,17 +1,19 @@
 //! Ferramentas que o modelo pode chamar (tool calling).
 //!
-//! `CaixaDeFerramentas` junta todas as ferramentas disponíveis numa sessão,
-//! gera as definições enviadas ao modelo e executa as chamadas. Todo
-//! resultado volta ROTULADO como dado (ver `crate::dados`).
+//! `CaixaDeFerramentas` junta todas as ferramentas disponíveis numa sessão
+//! (nativas do workspace + as dos servidores MCP), gera as definições
+//! enviadas ao modelo e executa as chamadas. Todo resultado volta
+//! ROTULADO como dado (ver `crate::dados`).
 
 pub mod workspace;
 
-use std::collections::HashSet;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::dados;
+use crate::mcp::PonteMcp;
 use crate::nim::{ChamadaFerramenta, Ferramenta};
 use workspace::Workspace;
 
@@ -29,10 +31,15 @@ pub struct ResultadoFerramenta {
     pub erro: bool,
 }
 
+/// Ferramentas nativas (as que o kernel implementa em Rust).
+const NATIVAS: &[&str] = &[LER_ARQUIVO, LISTAR_ARQUIVOS, ESCREVER_ARQUIVO];
+
 pub struct CaixaDeFerramentas {
     workspace: Workspace,
+    mcp: Arc<PonteMcp>,
     /// Se `Some`, só estas ferramentas aparecem e podem ser executadas.
-    permitidas: Option<HashSet<String>>,
+    /// Aceita curinga no fim: "exemplo__*".
+    permitidas: Option<Vec<String>>,
 }
 
 impl CaixaDeFerramentas {
@@ -49,19 +56,34 @@ impl CaixaDeFerramentas {
     pub fn nova(workspace: Workspace) -> CaixaDeFerramentas {
         CaixaDeFerramentas {
             workspace,
+            mcp: Arc::new(PonteMcp::vazia()),
             permitidas: None,
         }
     }
 
-    /// Restringe as ferramentas a uma lista (usado pelos sub-agentes).
-    pub fn restringir(&mut self, nomes: &[String]) {
-        self.permitidas = Some(nomes.iter().cloned().collect());
+    /// Acrescenta as ferramentas dos servidores MCP.
+    pub fn com_mcp(mut self, mcp: Arc<PonteMcp>) -> CaixaDeFerramentas {
+        self.mcp = mcp;
+        self
+    }
+
+    /// Cópia desta caixa só com as ferramentas da lista (usado pelos
+    /// sub-agentes). Aceita curinga no fim do nome: "exemplo__*".
+    pub fn restrita(&self, nomes: &[String]) -> CaixaDeFerramentas {
+        CaixaDeFerramentas {
+            workspace: self.workspace.clone(),
+            mcp: Arc::clone(&self.mcp),
+            permitidas: Some(nomes.to_vec()),
+        }
     }
 
     fn permitida(&self, nome: &str) -> bool {
         match &self.permitidas {
-            Some(lista) => lista.contains(nome),
             None => true,
+            Some(lista) => lista.iter().any(|padrao| match padrao.strip_suffix('*') {
+                Some(prefixo) => nome.starts_with(prefixo),
+                None => nome == padrao,
+            }),
         }
     }
 
@@ -106,6 +128,7 @@ impl CaixaDeFerramentas {
         ];
         todas
             .into_iter()
+            .chain(self.mcp.definicoes())
             .filter(|f| self.permitida(f.nome()))
             .collect()
     }
@@ -114,22 +137,37 @@ impl CaixaDeFerramentas {
     /// viram texto para o modelo ler e se corrigir.
     pub async fn executar(&self, chamada: &ChamadaFerramenta) -> ResultadoFerramenta {
         let nome = chamada.function.name.as_str();
-        let resultado = if self.permitida(nome) {
-            self.executar_nativa(nome, &chamada.function.arguments)
-        } else {
+        let eh_mcp = self.mcp.tem(nome);
+        let resultado = if !self.permitida(nome) {
             Err(anyhow::anyhow!(
                 "ferramenta '{nome}' não está disponível aqui"
             ))
+        } else if NATIVAS.contains(&nome) {
+            self.executar_nativa(nome, &chamada.function.arguments)
+        } else if eh_mcp {
+            match interpretar_argumentos(&chamada.function.arguments) {
+                Ok(args) => self.mcp.chamar(nome, args).await,
+                Err(e) => Err(e),
+            }
+        } else {
+            Err(anyhow::anyhow!("ferramenta desconhecida: '{nome}'"))
+        };
+
+        // Resultados de MCP levam o prefixo "mcp:" na origem do rótulo.
+        let origem = if eh_mcp {
+            format!("mcp:{nome}")
+        } else {
+            nome.to_string()
         };
         match resultado {
             Ok(texto) => ResultadoFerramenta {
-                texto: dados::rotular(nome, &texto),
+                texto: dados::rotular(&origem, &texto),
                 erro: false,
             },
             Err(e) => {
                 tracing::debug!("ferramenta {nome} falhou: {e:#}");
                 ResultadoFerramenta {
-                    texto: dados::rotular(nome, &format!("ERRO: {e:#}")),
+                    texto: dados::rotular(&origem, &format!("ERRO: {e:#}")),
                     erro: true,
                 }
             }
@@ -230,8 +268,8 @@ mod testes {
 
     #[tokio::test]
     async fn restricao_esconde_e_bloqueia() {
-        let (_p, mut caixa) = caixa();
-        caixa.restringir(&[LER_ARQUIVO.to_string()]);
+        let (_p, caixa) = caixa();
+        let caixa = caixa.restrita(&[LER_ARQUIVO.to_string()]);
         let nomes: Vec<String> = caixa
             .definicoes()
             .iter()
@@ -246,5 +284,15 @@ mod testes {
             .await;
         assert!(r.erro);
         assert!(r.texto.contains("não está disponível"));
+    }
+
+    #[test]
+    fn curinga_no_fim_do_nome() {
+        let (_p, caixa) = caixa();
+        let caixa = caixa.restrita(&["exemplo__*".to_string(), LER_ARQUIVO.to_string()]);
+        assert!(caixa.permitida("exemplo__somar"));
+        assert!(caixa.permitida(LER_ARQUIVO));
+        assert!(!caixa.permitida(ESCREVER_ARQUIVO));
+        assert!(!caixa.permitida("outro__somar"));
     }
 }

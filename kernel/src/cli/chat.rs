@@ -10,6 +10,7 @@ use abiyss::config::Config;
 use abiyss::db::Banco;
 use abiyss::ferramentas::CaixaDeFerramentas;
 use abiyss::historico;
+use abiyss::mcp::PonteMcp;
 use abiyss::nim::EventoStream;
 use abiyss::orquestrador::Orquestrador;
 
@@ -25,7 +26,9 @@ const AJUDA: &str = "Comandos: /nova (nova conversa), /sair (encerra), /ajuda";
 pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> {
     let banco = Banco::abrir(&config.caminho_banco())?;
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
-    let ferramentas = Arc::new(CaixaDeFerramentas::da_config(&config)?);
+    // Sobe os servidores MCP (os que falharem são ignorados, com aviso no log).
+    let mcp = Arc::new(PonteMcp::iniciar(&config).await);
+    let ferramentas = Arc::new(CaixaDeFerramentas::da_config(&config)?.com_mcp(mcp.clone()));
 
     // Qual conversa usar: a pedida, a última, ou uma nova.
     let existente = match opcoes.conversa {
@@ -51,7 +54,9 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
 
     // Modo "uma mensagem só" (bom para scripts).
     if let Some(texto) = opcoes.mensagem {
-        return turno(&mut sessao, &texto, opcoes.mostrar_raciocinio).await;
+        let resultado = turno(&mut sessao, &texto, opcoes.mostrar_raciocinio).await;
+        encerrar(sessao, ferramentas, mcp).await;
+        return resultado;
     }
 
     println!("Conversa {} com o Abiyss. {AJUDA}", sessao.conversa);
@@ -86,7 +91,17 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
             }
         }
     }
+    encerrar(sessao, ferramentas, mcp).await;
     Ok(())
+}
+
+/// Solta a sessão e fecha os servidores MCP com educação.
+async fn encerrar(sessao: SessaoChat, ferramentas: Arc<CaixaDeFerramentas>, mcp: Arc<PonteMcp>) {
+    drop(sessao);
+    drop(ferramentas);
+    if let Ok(ponte) = Arc::try_unwrap(mcp) {
+        ponte.encerrar().await;
+    }
 }
 
 /// Envia uma mensagem e mostra a resposta em streaming.
