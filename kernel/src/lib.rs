@@ -7,12 +7,18 @@
 
 pub mod chat;
 pub mod config;
+pub mod cron;
 pub mod dados;
+pub mod daemon;
 pub mod db;
+pub mod eventos;
 pub mod ferramentas;
+pub mod goals;
+pub mod heartbeat;
 pub mod historico;
 pub mod identidade;
 pub mod mcp;
 pub mod nim;
 pub mod orquestrador;
+pub mod status;
 pub mod tempo;

@@ -18,6 +18,8 @@ anyhow = "1"
 axum = "0.8"
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "env"] }
+# Expressões cron (5 campos, padrão Unix).
+croner = "4"
 dotenvy = "0.15"
 fastrand = "2"
 futures = "0.3"

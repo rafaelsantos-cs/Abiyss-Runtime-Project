@@ -114,6 +114,22 @@ max_bytes_escrita = 1000000
 max_itens_listagem = 500
 
 # ---------------------------------------------------------------------------
+# Daemon (`abiyss daemon`): heartbeat e crons.
+# ---------------------------------------------------------------------------
+
+[daemon]
+# Intervalo entre ciclos de heartbeat. Cada ciclo faz no máximo UMA chamada
+# ao modelo — e nenhuma se não houver novidade.
+heartbeat_segundos = 300
+# Verificação de crons (código puro, não chama o modelo).
+cron_verificacao_segundos = 30
+# Sem eventos novos e sem mudança no goal em foco, o modelo só é chamado de
+# novo depois deste tempo.
+revisao_minima_segundos = 1800
+# Máximo de eventos da fila colocados no contexto de um ciclo.
+max_eventos_por_ciclo = 20
+
+# ---------------------------------------------------------------------------
 # Servidores MCP (recursos em Python, em recursos/). O kernel sobe cada um
 # como processo filho (stdio) e expõe as ferramentas como <nome>__<ferramenta>.
 # Os processos recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.

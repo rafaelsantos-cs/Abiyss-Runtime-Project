@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use abiyss::config::Config;
+use abiyss::daemon::OpcoesDaemon;
+use abiyss::goals::NovoGoal;
 use cli::nim::QualModelo;
 
 #[derive(Parser)]
@@ -44,6 +46,20 @@ enum Comando {
         #[arg(long)]
         mostrar_raciocinio: bool,
     },
+    /// Roda o Abiyss 24/7: heartbeat, crons (e sub-agentes).
+    Daemon {
+        /// Roda um único ciclo e sai (bom para testar).
+        #[arg(long)]
+        uma_vez: bool,
+    },
+    /// Mostra o estado do Abiyss (não chama o modelo).
+    Status,
+    /// Gerencia goals.
+    #[command(subcommand)]
+    Goal(ComandoGoal),
+    /// Gerencia lembretes agendados (cron).
+    #[command(subcommand)]
+    Cron(ComandoCron),
     /// Lista as ferramentas disponíveis (nativas + servidores MCP).
     Ferramentas,
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
@@ -65,6 +81,55 @@ enum Comando {
     },
 }
 
+#[derive(Subcommand)]
+enum ComandoGoal {
+    /// Cria um goal (começa como "proposto").
+    Add {
+        /// Título curto.
+        titulo: String,
+        /// Núcleo: a essência do goal e o critério de pronto, em 1-2 frases.
+        #[arg(long)]
+        nucleo: String,
+        #[arg(long, default_value = "")]
+        descricao: String,
+        /// Maior = mais importante.
+        #[arg(long, default_value_t = 0)]
+        prioridade: i64,
+    },
+    /// Lista os goals ativos.
+    List {
+        /// Inclui concluídos e abandonados.
+        #[arg(long)]
+        todos: bool,
+    },
+    /// Mostra um goal e o histórico de transições.
+    Show { id: i64 },
+    /// Muda o estado de um goal (transição validada).
+    Mover {
+        id: i64,
+        /// proposto, comprometido, executando, validando, concluido, bloqueado, abandonado
+        estado: String,
+        #[arg(long)]
+        motivo: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComandoCron {
+    /// Agenda um lembrete. Ex.: abiyss cron add bom-dia "0 9 * * *" "Revise os goals"
+    Add {
+        nome: String,
+        /// 5 campos: minuto hora dia mês dia-da-semana (fuso local).
+        expressao: String,
+        /// Texto que vira evento na fila quando o cron disparar.
+        mensagem: String,
+    },
+    /// Lista os crons.
+    List,
+    /// Remove um cron pelo nome.
+    Remover { nome: String },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     iniciar_logs();
@@ -80,6 +145,47 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let config = Config::carregar(&caminho_config)?;
             cli::nim::testar_nim(&config, modelo, !sem_stream, &mensagem).await
+        }
+        Comando::Daemon { uma_vez } => {
+            let config = Config::carregar(&caminho_config)?;
+            cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
+        }
+        Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
+        Comando::Goal(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoGoal::Add {
+                    titulo,
+                    nucleo,
+                    descricao,
+                    prioridade,
+                } => cli::goal::adicionar(
+                    &config,
+                    NovoGoal {
+                        titulo,
+                        nucleo,
+                        descricao,
+                        prioridade,
+                    },
+                ),
+                ComandoGoal::List { todos } => cli::goal::listar(&config, todos),
+                ComandoGoal::Show { id } => cli::goal::mostrar(&config, id),
+                ComandoGoal::Mover { id, estado, motivo } => {
+                    cli::goal::mover(&config, id, &estado, &motivo)
+                }
+            }
+        }
+        Comando::Cron(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoCron::Add {
+                    nome,
+                    expressao,
+                    mensagem,
+                } => cli::goal::cron_adicionar(&config, &nome, &expressao, &mensagem),
+                ComandoCron::List => cli::goal::cron_listar(&config),
+                ComandoCron::Remover { nome } => cli::goal::cron_remover(&config, &nome),
+            }
         }
         Comando::Ferramentas => {
             let config = Config::carregar(&caminho_config)?;

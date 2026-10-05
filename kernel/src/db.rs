@@ -60,6 +60,64 @@ const MIGRACOES: &[&str] = &[
     );
     CREATE INDEX idx_mensagens_conversa ON mensagens(conversa_id, id);
     "#,
+    // 3 (F6) — goals, fila de eventos, crons, ciclos do heartbeat e estado do daemon.
+    r#"
+    CREATE TABLE goals (
+        id            INTEGER PRIMARY KEY,
+        titulo        TEXT    NOT NULL,
+        nucleo        TEXT    NOT NULL,
+        descricao     TEXT    NOT NULL DEFAULT '',
+        prioridade    INTEGER NOT NULL DEFAULT 0,
+        estado        TEXT    NOT NULL,
+        criado_ms     INTEGER NOT NULL,
+        atualizado_ms INTEGER NOT NULL
+    );
+    CREATE TABLE eventos_goal (
+        id         INTEGER PRIMARY KEY,
+        goal_id    INTEGER NOT NULL REFERENCES goals(id),
+        momento_ms INTEGER NOT NULL,
+        de         TEXT,
+        para       TEXT    NOT NULL,
+        motivo     TEXT    NOT NULL,
+        autor      TEXT    NOT NULL
+    );
+    CREATE INDEX idx_eventos_goal ON eventos_goal(goal_id, id);
+    CREATE TABLE fila_eventos (
+        id           INTEGER PRIMARY KEY,
+        momento_ms   INTEGER NOT NULL,
+        tipo         TEXT    NOT NULL,
+        origem       TEXT    NOT NULL,
+        conteudo     TEXT    NOT NULL,
+        consumido_ms INTEGER
+    );
+    CREATE INDEX idx_fila_pendentes ON fila_eventos(consumido_ms, id);
+    CREATE TABLE crons (
+        id         INTEGER PRIMARY KEY,
+        nome       TEXT    NOT NULL UNIQUE,
+        expressao  TEXT    NOT NULL,
+        mensagem   TEXT    NOT NULL,
+        ativo      INTEGER NOT NULL DEFAULT 1,
+        proximo_ms INTEGER NOT NULL,
+        ultimo_ms  INTEGER,
+        criado_ms  INTEGER NOT NULL
+    );
+    CREATE TABLE ciclos (
+        id             INTEGER PRIMARY KEY,
+        inicio_ms      INTEGER NOT NULL,
+        fim_ms         INTEGER,
+        chamou_modelo  INTEGER NOT NULL,
+        motivo         TEXT    NOT NULL,
+        goal_foco      INTEGER,
+        resposta       TEXT,
+        resultado      TEXT,
+        erro           TEXT,
+        tokens         INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE estado_daemon (
+        chave TEXT PRIMARY KEY,
+        valor TEXT NOT NULL
+    );
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

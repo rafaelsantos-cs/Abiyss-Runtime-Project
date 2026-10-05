@@ -28,6 +28,8 @@ pub struct Config {
     pub ferramentas: ConfigFerramentas,
     #[serde(default)]
     pub mcp: crate::mcp::ConfigMcp,
+    #[serde(default)]
+    pub daemon: ConfigDaemon,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -202,6 +204,32 @@ impl Default for ConfigCaminhos {
     }
 }
 
+/// Opções do daemon (`abiyss daemon`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConfigDaemon {
+    /// Intervalo entre ciclos de heartbeat.
+    pub heartbeat_segundos: u64,
+    /// Intervalo entre verificações de crons (código puro, sem modelo).
+    pub cron_verificacao_segundos: u64,
+    /// Sem eventos novos e sem mudança no goal, o modelo só é chamado de
+    /// novo depois deste tempo (regra de orçamento).
+    pub revisao_minima_segundos: u64,
+    /// Máximo de eventos da fila colocados no contexto de um ciclo.
+    pub max_eventos_por_ciclo: usize,
+}
+
+impl Default for ConfigDaemon {
+    fn default() -> Self {
+        ConfigDaemon {
+            heartbeat_segundos: 300,
+            cron_verificacao_segundos: 30,
+            revisao_minima_segundos: 1800,
+            max_eventos_por_ciclo: 20,
+        }
+    }
+}
+
 /// Limites das ferramentas nativas de arquivo.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -316,6 +344,9 @@ impl Config {
                 cerebro.requisicoes_por_minuto
             );
         }
+        if self.daemon.heartbeat_segundos == 0 || self.daemon.cron_verificacao_segundos == 0 {
+            bail!("daemon.heartbeat_segundos e daemon.cron_verificacao_segundos precisam ser > 0");
+        }
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
@@ -363,6 +394,11 @@ impl Config {
             areas.push(pasta.to_path_buf());
         }
         areas
+    }
+
+    /// Arquivo de trava que garante um único daemon por vez.
+    pub fn caminho_trava_daemon(&self) -> PathBuf {
+        self.resolver(&self.caminhos.dados).join("daemon.lock")
     }
 
     /// Caminho do banco SQLite.

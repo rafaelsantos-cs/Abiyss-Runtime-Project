@@ -45,6 +45,23 @@ pub struct Identidade {
 }
 
 impl Identidade {
+    /// Lê o núcleo sem emitir avisos (usado pelo `abiyss status`, que já
+    /// mostra a situação do arquivo).
+    pub fn ler(caminho: &Path) -> Identidade {
+        match std::fs::read_to_string(caminho) {
+            Ok(texto) => Identidade {
+                placeholders: texto.matches(MARCADOR_PLACEHOLDER).count(),
+                texto,
+                encontrado: true,
+            },
+            Err(_) => Identidade {
+                texto: String::new(),
+                encontrado: false,
+                placeholders: 0,
+            },
+        }
+    }
+
     /// Lê o núcleo. Arquivo ausente NÃO é erro fatal (o daemon não pode
     /// morrer por isso): seguimos só com as regras do kernel e avisamos.
     pub fn carregar(caminho: &Path) -> Identidade {
