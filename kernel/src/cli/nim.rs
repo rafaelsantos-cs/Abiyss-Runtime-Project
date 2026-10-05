@@ -19,6 +19,18 @@ pub enum QualModelo {
     Low,
 }
 
+/// `abiyss esforco`: a tabela de cada modelo, nível por nível.
+pub fn esforco(config: &Config) -> anyhow::Result<()> {
+    println!("Modos: raso = minimal, low, medium; profundo = high, xhigh, ultra.");
+    for papel in abiyss::config::ConfigModelos::PAPEIS {
+        println!("\n[modelos.{papel}]");
+        for linha in abiyss::esforco::descrever(&config.modelos, papel)? {
+            println!("  {linha}");
+        }
+    }
+    Ok(())
+}
+
 pub async fn rodar_mock(porta: u16) -> anyhow::Result<()> {
     let mock = MockNim::iniciar_em(&format!("127.0.0.1:{porta}"))
         .await

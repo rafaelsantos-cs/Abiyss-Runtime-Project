@@ -95,6 +95,9 @@ enum Comando {
         #[arg(default_value = "Responda apenas: ok")]
         mensagem: String,
     },
+    /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
+    /// resolvida a partir do abiyss.toml (não chama o modelo).
+    Esforco,
     /// Sobe um NIM de mentira em 127.0.0.1 (para testar sem gastar cota).
     MockNim {
         #[arg(long, default_value_t = 8089)]
@@ -196,6 +199,7 @@ async fn main() -> anyhow::Result<()> {
             let config = Config::carregar(&caminho_config)?;
             cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
         }
+        Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
         Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
         Comando::Goal(sub) => {
             let config = Config::carregar(&caminho_config)?;

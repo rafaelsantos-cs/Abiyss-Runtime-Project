@@ -93,6 +93,26 @@ pub struct ConfigModelo {
     /// raciocínio (`chat_template_kwargs`), sem precisar recompilar o kernel.
     #[serde(default)]
     pub extra: Map<String, Value>,
+    /// Tabela de esforço: como cada nível abstrato (minimal..ultra) vira
+    /// parâmetros deste modelo. Ver `crate::esforco`.
+    #[serde(default)]
+    pub esforco: crate::esforco::ConfigEsforcoModelo,
+}
+
+impl ConfigModelos {
+    /// Nomes das seções `[modelos.<papel>]`.
+    pub const PAPEIS: [&'static str; 4] = ["cerebro", "sub_ultra", "sub_medium", "sub_low"];
+
+    /// O modelo de um papel, pelo nome da seção.
+    pub fn por_papel(&self, papel: &str) -> Option<&ConfigModelo> {
+        match papel {
+            "cerebro" => Some(&self.cerebro),
+            "sub_ultra" => Some(&self.sub_ultra),
+            "sub_medium" => Some(&self.sub_medium),
+            "sub_low" => Some(&self.sub_low),
+            _ => None,
+        }
+    }
 }
 
 /// Configuração dos dois pools de chamadas ao NIM.
@@ -435,16 +455,13 @@ impl Config {
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
         }
-        for (nome, modelo) in [
-            ("cerebro", &self.modelos.cerebro),
-            ("sub_ultra", &self.modelos.sub_ultra),
-            ("sub_medium", &self.modelos.sub_medium),
-            ("sub_low", &self.modelos.sub_low),
-        ] {
+        for nome in ConfigModelos::PAPEIS {
+            let modelo = self.modelos.por_papel(nome).expect("papel da lista fixa");
             if modelo.id.trim().is_empty() {
                 bail!("modelos.{nome}.id está vazio");
             }
         }
+        crate::esforco::validar(&self.modelos)?;
         Ok(())
     }
 

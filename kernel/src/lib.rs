@@ -13,6 +13,7 @@ pub mod dados;
 pub mod daemon;
 pub mod db;
 pub mod diario;
+pub mod esforco;
 pub mod eventos;
 pub mod ferramentas;
 pub mod frontmatter;
