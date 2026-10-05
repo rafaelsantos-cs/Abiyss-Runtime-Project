@@ -27,6 +27,15 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
 | A4 | Ponte MCP também por HTTP ("streamable"); qmd como motor de `memoria_buscar`, com busca por texto quando falta |
 | Infra | Latência por chamada (1º token e total; p50/p95 no `status`); tabela de esforço por modelo (`minimal`…`ultra`, modos raso/profundo — só config/cliente); retenção com agregados diários, checkpoint do WAL e vacuum incremental; limites explícitos em filas/buffers e supervisão dos processos MCP ([`LIMITES.md`](LIMITES.md)); unit do systemd com `Type=notify` + watchdog; teste de resistência ([`RESISTENCIA.md`](RESISTENCIA.md)) |
 | A5 | `abiyss importar-hermes`: simulação por padrão, idempotente, sem abrir segredos; goals, journal, diário pessoal, identidade (+ rascunho de núcleo) e memórias |
+| E1 | Vigília: o loop do daemon nunca espera um ciclo (crons, sinal de vida e watchdog andam em paralelo); ciclo com tempo máximo e pânico isolado; ciclo de continuação (com limite); `abiyss status --verificar` para monitor externo |
+| E2 | Skills confiáveis (as do projeto têm a confiança do núcleo); o heartbeat vê o índice e pede o texto com `consultar_skill`; skills injetadas pelo kernel em estagnação e no despertar; eventos com origem externa calculada |
+| E3 | Ritmo do dia (vigília × descanso, `[ritmo]`) e orçamento diário do trabalho autônomo (`[orcamento]`, com reserva para o sono); a conversa nunca é cortada |
+| E4 | Backup consistente (`VACUUM INTO` + cofre + identidade) com rotação diária/semanal e piso de disco; `abiyss backup` |
+| E5 | Sono de verdade ([`SONO.md`](SONO.md)): janela diária com recuperação, coleta separada por origem, duas passadas (interna × externa), evidências conferidas pelo kernel, marcas idempotentes, relatório, evento do despertar; `abiyss sleep --completo/--relatorio` |
+| E6 | Skills básicas: `registrar-memoria`, `conduzir-goals`, `dormir-bem`, `planejar-o-dia`, `sair-de-loops` (+ `delegar-bem` revisada), com `evals.json` e teste de coerência contra o kernel |
+| E7 | Estagnação (impressão digital das decisões; aviso + `sair-de-loops` + revisão espaçada) e disjuntor do heartbeat (abre após falhas seguidas, espera exponencial com sorteio, meio-aberto) |
+| E8 | Despertar: aviso `kernel/reinicio` depois de ausência longa (queda × parada limpa), `planejar-o-dia` no primeiro ciclo, interocepção com tempo no ar, último sono e pedidos |
+| E9 | Pedidos ao usuário: ação `pedir_ao_usuario`, `abiyss pedidos`, `responder_pedido` no chat, deduplicação, teto, expiração com aviso; perguntas do sono viram pedidos; skill `pedir-ao-usuario` |
 
 ## Antes das próximas fases: validar na VM
 
@@ -48,8 +57,17 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
    qmd). Criar as coleções `abiyss-interno` e `abiyss-externo`.
 7. Apontar `[memoria] cofre` para o cofre do Obsidian e `[caminhos] skills`
    para a pasta de skills desejada; ajustar `limite_central_caracteres`.
-8. Agendar o `abiyss sleep` (ex.: timer do systemd de madrugada) — hoje ele
-   só roda quando chamado.
+8. **Sono e ritmo**: deixar o daemon dormir às 03:00 locais e ler no dia
+   seguinte `abiyss sleep --relatorio` e `01_internal/diario/AAAA-MM-DD.md`.
+   Calibrar `[ritmo]`, `[orcamento]` e `[sono]` com o uso real (tokens por
+   noite, % de propostas rejeitadas, sobras). O sono substitui o timer do
+   `abiyss sleep` que este item pedia antes.
+9. **Vigilância**: forçar uma estagnação (um goal impossível) e ver o aviso;
+   derrubar o NIM (ou uma chave errada) e ver o disjuntor abrir e fechar em
+   `abiyss status`. Opcional: `abiyss status --verificar` num timer do
+   systemd ou num healthcheck.
+10. **Skills**: rodar os cenários de `skills/*/evals.json` com o GLM e os
+    sub-agentes e ajustar o texto das skills.
 
 ## Próximas sessões
 
@@ -119,11 +137,15 @@ já traz confiança e resultado) e, quando cair, escalar (ex.: subir o nível do
 sub-agente, pedir revisão do plano, avisar o usuário).
 
 ### 2. Memória: consolidação no SLEEP
-A base está pronta (A2–A4). Falta o sono de verdade: o Abiyss revisar o
-diário e a conversa do dia, propor memórias (`fonte: sleep`), promover
-deduções confirmadas, revalidar notas externas vencidas (`revalidar_apos`)
-pelo navegador da sessão C e mandar o relatório das propostas rejeitadas de
-volta para ele (hoje só o usuário vê).
+O sono de verdade entrou no E5 ([`SONO.md`](SONO.md)): revisão do dia em duas
+passadas por origem, propostas com evidência, diário, lições e o resumo das
+rejeitadas de volta para o Abiyss (evento `sono`). Falta:
+- **revalidar** as notas externas vencidas pelo navegador da sessão C (hoje
+  o sono só as lista no relatório);
+- **promover dedução a "dito"** além da regra da evidência (ex.: uma
+  dedução confirmada pelo usuário numa conversa posterior vira `dito`, com
+  as duas evidências), e editar/resumir notas em vez de só acrescentar;
+- **esquecimento ativo** (fase 3): hoje o sono só sugere.
 
 ### 3. Esquecimento ativo
 Política para resumir, arquivar ou descartar memórias e histórico antigos
@@ -172,8 +194,9 @@ chat). Hoje tudo é CLI (e, depois de B, os canais).
 - A retenção cobre `chamadas_modelo`, `ciclos` e os eventos consumidos de
   `fila_eventos` (viram agregados diários). `propostas_memoria`,
   `registro_memoria`, `mensagens` e `diario` continuam crescendo sem limpeza.
-- A tabela de esforço (`abiyss esforco`) ainda não é usada pelo chat, pelo
-  heartbeat nem pelos sub-agentes.
+- A tabela de esforço (`abiyss esforco`) só é usada pelo sono (modo
+  `profundo` na passada interna, `raso` na externa); o chat, o heartbeat e
+  os sub-agentes ainda não a usam.
 - Interocepção usa carga média do sistema (não o uso de CPU do processo).
 - Regra dura da memória: a marca de origem externa vale para resultados de
   ferramentas e para a resposta escrita logo depois deles no mesmo turno, e
@@ -189,3 +212,16 @@ chat). Hoje tudo é CLI (e, depois de B, os canais).
   bater, a busca cai para texto e o relatório mostra `motor: texto (qmd falhou)`.
 - O importador do Hermes não transforma o `history` dos goals em eventos
   (fica preservado em `extras`).
+- Sono: o material é lido por marca de ID; linhas apagadas pela retenção
+  antes do sono (só com `[retencao]` muito curto) não são revistas. Respostas
+  a pedidos dadas pela CLI não entram como material do sono (só o evento que
+  o heartbeat vê); as dadas no chat entram como fala do usuário.
+- `abiyss sleep --completo` sem o daemon roda sem a trava do daemon: não
+  suba o daemon no meio de um sono manual.
+- Estagnação: a impressão digital é uma heurística (tipo, goal, destino ou
+  nível, começo da tarefa). Uma mesma ideia escrita com palavras bem
+  diferentes não é detectada; `aguardar` nunca conta.
+- O disjuntor só olha o heartbeat; o chat e os sub-agentes têm só as
+  retentativas do orquestrador.
+- Pedidos ao usuário só chegam pela CLI e pelo chat; a entrega ativa
+  (WhatsApp, Discord) fica para a sessão B.
