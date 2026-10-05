@@ -5,6 +5,7 @@ import hmac
 import json
 import math
 import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -99,7 +100,9 @@ class QuPsStore:
             assert_not_symlink(path)
         except SecurityError as exc:
             raise PersistenceError(str(exc)) from exc
-        flags = os.O_RDONLY | os.O_CLOEXEC
+        # O_NONBLOCK: opening a FIFO for reading would otherwise block until a
+        # writer appears. Non-regular files are rejected right after open.
+        flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NONBLOCK", 0)
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
@@ -107,6 +110,8 @@ class QuPsStore:
         except OSError as exc:
             raise PersistenceError(f"cannot open QuPs: {path}: {exc}") from exc
         try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise PersistenceError(f"QuPs is not a regular file: {path}")
             chunks: list[bytes] = []
             total = 0
             while total <= MAX_QUPS_BYTES:
