@@ -368,3 +368,21 @@ async fn nao_sobrescreve_rascunho_editado_nem_ressuscita_nota_esquecida() {
             .exists()
     );
 }
+
+#[tokio::test]
+async fn banco_recriado_nao_duplica_notas_ja_importadas() {
+    let amb = Ambiente::novo().await;
+    let (_pasta, origem) = origem_com_segredos();
+    hermes::importar(&amb.config, &origem, true).unwrap();
+    let antes = fotografia(&amb.config.caminho_cofre());
+
+    // Perde as chaves de importação (como num banco recriado), mantém o cofre.
+    amb.banco
+        .conexao()
+        .execute("DELETE FROM importacoes", [])
+        .unwrap();
+    let relatorio = hermes::importar(&amb.config, &origem, true).unwrap();
+    assert!(relatorio.to_string().contains("(já existia, mesma origem)"));
+    // Nenhuma nota "-hermes" duplicada no cofre.
+    assert_eq!(fotografia(&amb.config.caminho_cofre()), antes);
+}

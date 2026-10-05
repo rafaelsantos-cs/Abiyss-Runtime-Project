@@ -15,7 +15,8 @@ levar segredos junto.
 
 - **Simulação por padrão.** Sem `--aplicar`, só mostra o relatório; nada
   importado é gravado (se o banco ou o cofre ainda não existem, a simulação
-  usa um banco em memória e uma pasta temporária).
+  usa um banco em memória e uma pasta temporária). Se o banco já existe, o
+  esquema dele pode ser atualizado (migrações), como em qualquer comando.
 - **Idempotente.** Cada item importado ganha uma chave estável na tabela
   `importacoes` (ex.: `hermes:goal:g-001`). Rodar de novo não duplica nada:
   o relatório mostra tudo como "já importado".
@@ -31,6 +32,8 @@ levar segredos junto.
 - Nunca altera `identity/nucleo.md`. Nunca sobrescreve
   `identity/nucleo.proposto.md` se ele já existir com outro conteúdo.
 - Nunca traz de volta uma nota que o usuário esqueceu (`abiyss memoria esquecer`).
+- Notas importadas guardam `origem: hermes:<arquivo>` no frontmatter: se o
+  banco for recriado, a nota que já existe com essa origem não é duplicada.
 
 | Origem (relativa a `--origem`) | Destino |
 |---|---|

@@ -215,6 +215,29 @@ impl Contexto<'_> {
             ));
             return Ok(());
         }
+        // A nota já existe e veio desta mesma origem (ex.: o banco foi
+        // recriado e a chave se perdeu): é a mesma importação, não duplica.
+        let marca_origem = format!("hermes:{origem}");
+        let mesma_origem = |caminho: &str| {
+            self.cofre
+                .ler(caminho, usize::MAX)
+                .is_ok_and(|n| n.doc.texto("origem").as_deref() == Some(marca_origem.as_str()))
+        };
+        for caminho in [
+            destino.to_string(),
+            format!("{}-hermes.md", destino.trim_end_matches(".md")),
+        ] {
+            if self.cofre.existe(&caminho) && mesma_origem(&caminho) {
+                if self.aplicar {
+                    importacoes::registrar(self.banco, chave, "nota", &caminho, "")?;
+                }
+                secao.ja_importados += 1;
+                secao
+                    .linhas
+                    .push(format!("= {caminho} (já existia, mesma origem)"));
+                return Ok(());
+            }
+        }
         // Nome já usado por outra nota: grava ao lado, com sufixo.
         let mut final_ = destino.to_string();
         if self.cofre.existe(destino) {
@@ -228,7 +251,7 @@ impl Contexto<'_> {
         }
         doc.campos.insert(
             Value::String("origem".into()),
-            Value::String(format!("hermes:{origem}")),
+            Value::String(marca_origem.clone()),
         );
         if self.aplicar {
             self.cofre.gravar(&final_, &doc, procedencia)?;
