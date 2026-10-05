@@ -139,6 +139,21 @@ const MIGRACOES: &[&str] = &[
     );
     CREATE INDEX idx_subagentes_estado ON subagentes(estado, id);
     "#,
+    // 5 (F8) — diário da metacognição (expectativa antes, resultado depois).
+    r#"
+    CREATE TABLE diario (
+        id           INTEGER PRIMARY KEY,
+        momento_ms   INTEGER NOT NULL,
+        origem       TEXT    NOT NULL,
+        goal_id      INTEGER,
+        subagente_id INTEGER,
+        acao         TEXT    NOT NULL,
+        expectativa  TEXT    NOT NULL,
+        resultado    TEXT,
+        resultado_ms INTEGER
+    );
+    CREATE INDEX idx_diario_subagente ON diario(subagente_id);
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

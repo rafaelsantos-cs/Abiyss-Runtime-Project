@@ -4,6 +4,7 @@
 use abiyss::config::Config;
 use abiyss::cron;
 use abiyss::db::Banco;
+use abiyss::diario;
 use abiyss::goals::{self, EstadoGoal, NovoGoal};
 use abiyss::tempo::formatar_ms;
 
@@ -142,6 +143,32 @@ pub fn cron_remover(config: &Config, nome: &str) -> anyhow::Result<()> {
         println!("Cron '{nome}' removido.");
     } else {
         anyhow::bail!("não existe cron chamado '{nome}'");
+    }
+    Ok(())
+}
+
+pub fn diario_listar(config: &Config, limite: usize) -> anyhow::Result<()> {
+    let banco = abrir_banco(config)?;
+    let entradas = diario::recentes(&banco, limite)?;
+    if entradas.is_empty() {
+        println!("Diário vazio.");
+    }
+    // Mostra do mais antigo para o mais novo.
+    for e in entradas.into_iter().rev() {
+        let goal = e.goal_id.map(|g| format!(" goal #{g}")).unwrap_or_default();
+        println!(
+            "#{} {} [{}{}]",
+            e.id,
+            formatar_ms(e.momento_ms),
+            e.origem,
+            goal
+        );
+        println!("  ação:        {}", e.acao);
+        println!("  expectativa: {}", e.expectativa);
+        match e.resultado {
+            Some(r) => println!("  resultado:   {}", r.replace('\n', "\n               ")),
+            None => println!("  resultado:   (ainda não observado)"),
+        }
     }
     Ok(())
 }

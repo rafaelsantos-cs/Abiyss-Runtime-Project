@@ -223,5 +223,5 @@ async fn daemon_uma_vez_e_status() {
     assert!(texto.contains("comprometido: 1"));
     assert!(texto.contains("em foco: #1"));
     assert!(texto.contains("Último ciclo"));
-    assert!(texto.contains("Pool cerebro: 1 requisição"));
+    assert!(texto.contains("Pool cerebro: 1/"), "{texto}");
 }

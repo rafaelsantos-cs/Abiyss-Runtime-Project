@@ -60,6 +60,11 @@ enum Comando {
     /// Gerencia lembretes agendados (cron).
     #[command(subcommand)]
     Cron(ComandoCron),
+    /// Mostra o diário: expectativa antes de cada ação e resultado depois.
+    Diario {
+        #[arg(long, default_value_t = 20)]
+        limite: usize,
+    },
     /// Lista as ferramentas disponíveis (nativas + servidores MCP).
     Ferramentas,
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
@@ -186,6 +191,9 @@ async fn main() -> anyhow::Result<()> {
                 ComandoCron::List => cli::goal::cron_listar(&config),
                 ComandoCron::Remover { nome } => cli::goal::cron_remover(&config, &nome),
             }
+        }
+        Comando::Diario { limite } => {
+            cli::goal::diario_listar(&Config::carregar(&caminho_config)?, limite)
         }
         Comando::Ferramentas => {
             let config = Config::carregar(&caminho_config)?;

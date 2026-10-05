@@ -367,9 +367,19 @@ impl ControleSubagentes {
     }
 }
 
-/// Publica o evento com o resultado final na fila do Abiyss.
+/// Publica o evento com o resultado final na fila do Abiyss e completa
+/// o diário (o "resultado observado" de quem delegou).
 fn publicar_resultado(banco: &Banco, id: i64) -> anyhow::Result<()> {
     let info = obter(banco, id)?.with_context(|| format!("sub-agente {id} sumiu"))?;
+    if let Some(r) = &info.relatorio {
+        let texto = format!(
+            "sub-agente {id} terminou ({}): relatório {} — {}",
+            info.estado.como_texto(),
+            r.status,
+            r.resumo
+        );
+        crate::diario::anexar_resultado_de_subagente(banco, id, &texto)?;
+    }
     eventos::publicar(
         banco,
         eventos::TIPO_SUBAGENTE,

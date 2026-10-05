@@ -3,8 +3,6 @@
 
 use std::fmt::Write as _;
 
-use rusqlite::params;
-
 use crate::config::Config;
 use crate::cron;
 use crate::daemon;
@@ -13,6 +11,7 @@ use crate::eventos;
 use crate::goals;
 use crate::heartbeat;
 use crate::identidade::Identidade;
+use crate::interocepcao::Interocepcao;
 use crate::tempo::{agora_ms, formatar_ms};
 
 /// Monta o relatório em texto.
@@ -131,18 +130,11 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         }
     }
 
-    // Pools (resumo simples: chamadas no último minuto)
-    let conexao = banco.conexao();
-    for pool in ["cerebro", "subagentes"] {
-        let ultimo_minuto: i64 = conexao.query_row(
-            "SELECT COUNT(*) FROM chamadas_modelo WHERE pool = ?1 AND momento_ms >= ?2",
-            params![pool, agora - 60_000],
-            |l| l.get(0),
-        )?;
-        writeln!(
-            t,
-            "Pool {pool}: {ultimo_minuto} requisição(ões) no último minuto"
-        )?;
+    // Interocepção (a mesma que vai para o contexto do modelo).
+    writeln!(t, "\nInterocepção:")?;
+    let corpo = Interocepcao::medir(config, banco)?;
+    for linha in corpo.como_texto().lines() {
+        writeln!(t, "  {linha}")?;
     }
     Ok(t)
 }

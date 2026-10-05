@@ -6,7 +6,8 @@
 //!    novidade, sem chamada);
 //! 3. faz UMA chamada ao cérebro (perceber + orientar + decidir juntos),
 //!    com o núcleo do goal em foco no INÍCIO e no FIM do contexto;
-//! 4. executa as ações decididas, validando cada uma por código;
+//! 4. executa as ações decididas, validando cada uma por código, e anota
+//!    no diário a expectativa (antes) e o resultado observado (depois);
 //! 5. registra tudo na tabela `ciclos`.
 
 use anyhow::Context;
@@ -17,9 +18,11 @@ use serde_json::Value;
 use crate::config::Config;
 use crate::dados;
 use crate::db::Banco;
+use crate::diario;
 use crate::eventos::{self, Evento};
 use crate::goals::{self, EstadoGoal, Goal};
 use crate::identidade::Identidade;
+use crate::interocepcao::{self, Interocepcao};
 use crate::nim::{self, Mensagem};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
@@ -75,6 +78,22 @@ pub enum Acao {
 
 fn prazo_padrao() -> u64 {
     600
+}
+
+/// O que uma ação executada produziu.
+struct AcaoFeita {
+    texto: String,
+    /// Preenchido quando a ação criou um sub-agente.
+    subagente_id: Option<i64>,
+}
+
+impl AcaoFeita {
+    fn texto(texto: String) -> AcaoFeita {
+        AcaoFeita {
+            texto,
+            subagente_id: None,
+        }
+    }
 }
 
 /// Resumo de um ciclo, devolvido para quem chamou (daemon, testes, CLI).
@@ -162,7 +181,14 @@ impl Heartbeat {
         resultado.motivo = motivo;
         resultado.chamou_modelo = true;
 
-        // 3. UMA chamada ao modelo.
+        // 3. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
+        let corpo = match Interocepcao::medir(&self.config, &self.banco) {
+            Ok(i) => i.como_texto(),
+            Err(e) => format!(
+                "Data e hora: {}\n(interocepção indisponível: {e})",
+                interocepcao::agora_formatado()
+            ),
+        };
         let mensagens = vec![
             Mensagem::sistema(self.prompt_sistema()),
             Mensagem::usuario(montar_contexto(
@@ -171,7 +197,7 @@ impl Heartbeat {
                 &novos,
                 &trabalhando,
                 ultimo.as_ref(),
-                inicio,
+                &corpo,
             )),
         ];
         let pedido = nim::montar_pedido(&self.config.modelos.cerebro, mensagens, vec![]);
@@ -200,10 +226,24 @@ impl Heartbeat {
         let erro = match interpretar_decisao(&texto) {
             Ok(decisao) => {
                 for acao in &decisao.acoes {
-                    let linha = match self.executar_acao(acao) {
-                        Ok(ok) => format!("ok: {ok}"),
-                        Err(e) => format!("erro: {e:#}"),
+                    // Diário: expectativa ANTES de agir...
+                    let expectativa = acao["expectativa"].as_str().unwrap_or("");
+                    let id_diario = diario::registrar_expectativa(
+                        &self.banco,
+                        "heartbeat",
+                        acao["goal_id"].as_i64(),
+                        &acao.to_string(),
+                        expectativa,
+                    )?;
+                    let (linha, subagente) = match self.executar_acao(acao) {
+                        Ok(feito) => (format!("ok: {}", feito.texto), feito.subagente_id),
+                        Err(e) => (format!("erro: {e:#}"), None),
                     };
+                    // ...e resultado observado DEPOIS.
+                    diario::registrar_resultado(&self.banco, id_diario, &linha)?;
+                    if let Some(id) = subagente {
+                        diario::vincular_subagente(&self.banco, id_diario, id)?;
+                    }
                     resultado.resultados.push(linha);
                 }
                 resultado.decisao = Some(decisao);
@@ -234,11 +274,11 @@ impl Heartbeat {
     }
 
     /// Executa uma ação já decidida, validando por código.
-    fn executar_acao(&self, bruta: &Value) -> anyhow::Result<String> {
+    fn executar_acao(&self, bruta: &Value) -> anyhow::Result<AcaoFeita> {
         let acao: Acao = serde_json::from_value(bruta.clone())
             .with_context(|| format!("ação não reconhecida: {bruta}"))?;
         match acao {
-            Acao::Aguardar { motivo } => Ok(format!("aguardando ({motivo})")),
+            Acao::Aguardar { motivo } => Ok(AcaoFeita::texto(format!("aguardando ({motivo})"))),
             Acao::Delegar {
                 nivel,
                 tarefa,
@@ -256,9 +296,12 @@ impl Heartbeat {
                     goal_id,
                 };
                 let id = self.subagentes.delegar(&pedido, "heartbeat")?;
-                Ok(format!("sub-agente {id} ({}) delegado", nivel.como_texto()))
+                Ok(AcaoFeita {
+                    texto: format!("sub-agente {id} ({}) delegado", nivel.como_texto()),
+                    subagente_id: Some(id),
+                })
             }
-            Acao::CancelarSubagente { id } => self.subagentes.cancelar(id),
+            Acao::CancelarSubagente { id } => Ok(AcaoFeita::texto(self.subagentes.cancelar(id)?)),
             Acao::TransicionarGoal {
                 goal_id,
                 para,
@@ -267,7 +310,10 @@ impl Heartbeat {
                 let destino = EstadoGoal::de_texto(&para)
                     .with_context(|| format!("estado desconhecido: '{para}'"))?;
                 let goal = goals::transicionar(&self.banco, goal_id, destino, &motivo, AUTOR)?;
-                Ok(format!("goal #{} agora está '{}'", goal.id, goal.estado))
+                Ok(AcaoFeita::texto(format!(
+                    "goal #{} agora está '{}'",
+                    goal.id, goal.estado
+                )))
             }
         }
     }
@@ -300,6 +346,8 @@ Ações possíveis em \"acoes\":\n\
   (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento)\n\
 - {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
 - {{\"tipo\": \"aguardar\", \"motivo\": \"...\"}}\n\n\
+Em CADA ação, inclua também \"expectativa\": o que você espera que aconteça \
+(o kernel anota no diário e depois compara com o resultado observado).\n\n\
 Transições de goal permitidas (qualquer outra é recusada pelo kernel):\n{transicoes}\
 Toda transição precisa de motivo. Se nada precisa ser feito, use \"acoes\": []."
     )
@@ -344,7 +392,7 @@ pub fn montar_contexto(
     novos: &[Evento],
     trabalhando: &[InfoSubagente],
     ultimo: Option<&Ciclo>,
-    agora: i64,
+    corpo: &str,
 ) -> String {
     let nucleo = match foco {
         Some(g) => format!(
@@ -356,7 +404,9 @@ pub fn montar_contexto(
 
     let mut texto = String::new();
     texto.push_str(&nucleo);
-    texto.push_str(&format!("\n\n## Agora\n{}\n", formatar_ms(agora)));
+    texto.push_str(&format!(
+        "\n\n## Agora e estado do corpo (medido pelo kernel)\n{corpo}\n"
+    ));
 
     texto.push_str("\n## Goals ativos\n");
     if ativos.is_empty() {
@@ -581,7 +631,14 @@ mod testes {
         let mut g = goal(7, 0);
         g.titulo = "Escrever o livro".into();
         g.nucleo = "Terminar o capítulo 1 até sexta.".into();
-        let texto = montar_contexto(Some(&g), std::slice::from_ref(&g), &[], &[], None, 0);
+        let texto = montar_contexto(
+            Some(&g),
+            std::slice::from_ref(&g),
+            &[],
+            &[],
+            None,
+            "Data e hora: x",
+        );
         assert!(texto.starts_with("### NÚCLEO DO GOAL EM FOCO — #7"));
         assert_eq!(texto.matches("Terminar o capítulo 1 até sexta.").count(), 3);
         let fim = texto.rfind("### NÚCLEO DO GOAL EM FOCO").unwrap();

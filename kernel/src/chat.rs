@@ -2,7 +2,8 @@
 //!
 //! A cada mensagem do usuário:
 //! 1. grava a mensagem no histórico;
-//! 2. monta o contexto: system prompt (regras + núcleo) + histórico recente;
+//! 2. monta o contexto: system prompt (regras + núcleo + interocepção)
+//!    + histórico recente;
 //! 3. chama o cérebro pelo pool, com origem `Conversa` (fatia reservada);
 //! 4. se o modelo pedir ferramentas, executa, grava os resultados
 //!    (rotulados como dado) e volta ao passo 2 — até `max_rodadas_ferramentas`;
@@ -17,6 +18,7 @@ use crate::db::Banco;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::historico;
 use crate::identidade::Identidade;
+use crate::interocepcao::{self, Interocepcao};
 use crate::nim::{self, Mensagem, Uso};
 use crate::orquestrador::{AoReceber, Origem, Orquestrador, reemprestar};
 
@@ -84,7 +86,12 @@ impl SessaoChat {
     fn montar_contexto(&self) -> anyhow::Result<Vec<Mensagem>> {
         // O núcleo é relido a cada turno: editar o arquivo vale na hora.
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
-        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema(None))];
+        // Data/hora e estado do "corpo", medidos por código a cada turno.
+        let corpo = match Interocepcao::medir(&self.config, &self.banco) {
+            Ok(i) => i.como_texto(),
+            Err(_) => format!("Data e hora: {}", interocepcao::agora_formatado()),
+        };
+        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema(Some(&corpo)))];
         mensagens.extend(historico::carregar(
             &self.banco,
             self.conversa,
