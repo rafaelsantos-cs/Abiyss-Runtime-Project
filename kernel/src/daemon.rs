@@ -4,11 +4,18 @@
 //! - A cada `cron_verificacao_segundos`: dispara crons vencidos e grava
 //!   um "sinal de vida" (código puro, sem modelo).
 //! - A cada `heartbeat_segundos`: um ciclo de heartbeat.
+//! - A cada `retencao.checkpoint_minutos`: checkpoint do WAL.
+//! - A cada `retencao.manutencao_minutos`: retenção (detalhe antigo vira
+//!   agregado diário) e vacuum incremental.
 //! - Em paralelo: o executor de sub-agentes.
 //! - SIGTERM (systemd) ou Ctrl+C: para com educação, mesmo no meio de um ciclo.
+//! - Sob o systemd (`Type=notify`): avisa READY=1 ao subir, STOPPING=1 ao
+//!   parar e, com `WatchdogSec=`, manda WATCHDOG=1 enquanto o loop principal
+//!   estiver andando (ver `vigiar`).
 
 use std::fs::{File, OpenOptions};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -20,6 +27,7 @@ use crate::cron;
 use crate::db::Banco;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::Heartbeat;
+use crate::manutencao;
 use crate::orquestrador::Orquestrador;
 use crate::subagentes::{self, ExecutorSubagentes};
 use crate::tempo::agora_ms;
@@ -29,6 +37,8 @@ pub const CHAVE_PID: &str = "pid";
 pub const CHAVE_INICIADO: &str = "iniciado_ms";
 pub const CHAVE_SINAL_DE_VIDA: &str = "sinal_de_vida_ms";
 pub const CHAVE_PARADO: &str = "parado_ms";
+pub const CHAVE_MANUTENCAO: &str = "manutencao_ms";
+pub const CHAVE_MANUTENCAO_RESUMO: &str = "manutencao_resumo";
 
 /// Trava de instância única. Enquanto este valor existir, nenhum outro
 /// daemon consegue iniciar. O sistema operacional solta a trava sozinho
@@ -117,6 +127,45 @@ impl SinalDeParada {
     }
 }
 
+/// Avisa o systemd (sem efeito fora dele).
+fn avisar_systemd(mensagem: &str) {
+    #[cfg(unix)]
+    crate::systemd::notificar(mensagem);
+    #[cfg(not(unix))]
+    let _ = mensagem;
+}
+
+/// O loop principal está andando? `ultima_volta_ms` é atualizado a cada
+/// volta completa do loop (no mínimo a cada `cron_verificacao_segundos`
+/// quando nada demora).
+pub fn loop_saudavel(ultima_volta_ms: i64, agora_ms: i64, max_travado_segundos: u64) -> bool {
+    agora_ms - ultima_volta_ms <= max_travado_segundos as i64 * 1000
+}
+
+/// Tarefa do watchdog: a cada `intervalo`, manda WATCHDOG=1 se o loop
+/// principal deu uma volta há pouco tempo. Se o loop travar, os avisos
+/// param e o systemd reinicia o serviço. Se o próprio tokio travar, esta
+/// tarefa nem roda — e o efeito é o mesmo.
+async fn vigiar(ultima_volta_ms: Arc<AtomicI64>, max_travado_segundos: u64, intervalo: Duration) {
+    let mut tique = tokio::time::interval(intervalo);
+    let mut avisou_travado = false;
+    loop {
+        tique.tick().await;
+        let ultima = ultima_volta_ms.load(Ordering::Relaxed);
+        if loop_saudavel(ultima, agora_ms(), max_travado_segundos) {
+            avisar_systemd("WATCHDOG=1");
+            avisou_travado = false;
+        } else if !avisou_travado {
+            tracing::error!(
+                "loop principal parado há mais de {max_travado_segundos} s; \
+                 deixando de avisar o watchdog do systemd"
+            );
+            avisar_systemd("STATUS=loop principal travado");
+            avisou_travado = true;
+        }
+    }
+}
+
 /// Opções de linha de comando do daemon.
 #[derive(Debug, Clone, Default)]
 pub struct OpcoesDaemon {
@@ -172,6 +221,37 @@ impl Daemon {
         }
     }
 
+    /// Retenção + vacuum, fora das threads do tokio (pode demorar no
+    /// primeiro dia de um banco grande).
+    async fn manutencao(&self) {
+        let banco = self.banco.clone();
+        let config = self.config.retencao.clone();
+        let rodada = tokio::task::spawn_blocking(move || {
+            manutencao::rodada_completa(&banco, &config, agora_ms())
+        })
+        .await;
+        match rodada {
+            Ok(Ok(resumo)) => {
+                tracing::info!("manutenção do banco: {resumo}");
+                let _ = gravar_estado(&self.banco, CHAVE_MANUTENCAO, &agora_ms().to_string());
+                let _ = gravar_estado(&self.banco, CHAVE_MANUTENCAO_RESUMO, &resumo);
+            }
+            Ok(Err(e)) => tracing::error!("manutenção do banco falhou: {e:#}"),
+            Err(e) => tracing::error!("tarefa de manutenção morreu: {e}"),
+        }
+    }
+
+    /// Checkpoint do WAL (rápido; ocupado = tenta no próximo intervalo).
+    fn checkpoint(&self) {
+        match manutencao::checkpoint_wal(&self.banco) {
+            Ok(r) if r.ocupado => {
+                tracing::debug!("checkpoint do WAL parcial (banco ocupado): {r:?}")
+            }
+            Ok(r) => tracing::debug!("checkpoint do WAL: {r:?}"),
+            Err(e) => tracing::warn!("checkpoint do WAL falhou: {e:#}"),
+        }
+    }
+
     async fn um_ciclo(&self) {
         match self.heartbeat.ciclo().await {
             Ok(r) if r.chamou_modelo => {
@@ -217,17 +297,48 @@ impl Daemon {
         ));
         let mut tique_heartbeat =
             tokio::time::interval(Duration::from_secs(self.config.daemon.heartbeat_segundos));
+        let retencao = &self.config.retencao;
+        let mut tique_manutencao =
+            tokio::time::interval(Duration::from_secs(retencao.manutencao_minutos * 60));
+        let mut tique_checkpoint =
+            tokio::time::interval(Duration::from_secs(retencao.checkpoint_minutos * 60));
         // Se um ciclo demorar mais que o intervalo, não "compensa" depois.
-        tique_cron.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        tique_heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        for tique in [
+            &mut tique_cron,
+            &mut tique_heartbeat,
+            &mut tique_manutencao,
+            &mut tique_checkpoint,
+        ] {
+            tique.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        }
+
+        // Watchdog do systemd (só se a unit tiver WatchdogSec=).
+        let ultima_volta_ms = Arc::new(AtomicI64::new(agora_ms()));
+        #[cfg(unix)]
+        let vigia = crate::systemd::intervalo_watchdog().map(|intervalo| {
+            tracing::info!("watchdog do systemd ligado (aviso a cada {intervalo:?})");
+            tokio::spawn(vigiar(
+                Arc::clone(&ultima_volta_ms),
+                self.config.daemon.max_travado_segundos,
+                intervalo,
+            ))
+        });
+        #[cfg(not(unix))]
+        let vigia: Option<tokio::task::JoinHandle<()>> = None;
 
         tracing::info!(
             "daemon do Abiyss no ar (heartbeat a cada {} s)",
             self.config.daemon.heartbeat_segundos
         );
+        avisar_systemd(&format!(
+            "READY=1\nSTATUS=no ar (heartbeat a cada {} s)",
+            self.config.daemon.heartbeat_segundos
+        ));
         loop {
             tokio::select! {
                 _ = tique_cron.tick() => self.tique_de_cron(),
+                _ = tique_checkpoint.tick() => self.checkpoint(),
+                _ = tique_manutencao.tick() => self.manutencao().await,
                 _ = tique_heartbeat.tick() => {
                     // O ciclo pode demorar (raciocínio longo); a parada não espera ele terminar.
                     tokio::select! {
@@ -240,6 +351,11 @@ impl Daemon {
                 }
                 _ = parada.esperar() => break,
             }
+            ultima_volta_ms.store(agora_ms(), Ordering::Relaxed);
+        }
+        avisar_systemd("STOPPING=1\nSTATUS=parando");
+        if let Some(vigia) = vigia {
+            vigia.abort();
         }
         // Para o executor (e os sub-agentes dele) e registra quem ficou no meio.
         executor.abort();
@@ -270,6 +386,13 @@ mod testes {
         drop(trava);
         assert!(!esta_rodando(&config));
         assert!(TravaDaemon::adquirir(&config).is_ok());
+    }
+
+    #[test]
+    fn loop_saudavel_ate_o_limite() {
+        assert!(loop_saudavel(1_000, 1_000, 10));
+        assert!(loop_saudavel(1_000, 11_000, 10));
+        assert!(!loop_saudavel(1_000, 11_001, 10));
     }
 
     #[test]

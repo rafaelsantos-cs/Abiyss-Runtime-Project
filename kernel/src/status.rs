@@ -12,6 +12,7 @@ use crate::goals;
 use crate::heartbeat;
 use crate::identidade::Identidade;
 use crate::interocepcao::Interocepcao;
+use crate::latencia;
 use crate::memoria::central::MemoriaCentral;
 use crate::memoria::propostas;
 use crate::tempo::{agora_ms, formatar_ms};
@@ -37,6 +38,15 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
             "  último sinal de vida: {} ({} s atrás)",
             formatar_ms(ms),
             (agora - ms) / 1000
+        )?;
+    }
+
+    if let Some(ms) = ler(daemon::CHAVE_MANUTENCAO).and_then(|v| v.parse::<i64>().ok()) {
+        writeln!(
+            t,
+            "  última manutenção do banco: {} — {}",
+            formatar_ms(ms),
+            ler(daemon::CHAVE_MANUTENCAO_RESUMO).unwrap_or_default()
         )?;
     }
 
@@ -148,6 +158,28 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
             if let Some(e) = c.erro {
                 writeln!(t, "  erro: {e}")?;
             }
+        }
+    }
+
+    // Latência das chamadas ao modelo (últimas 24 h, só tentativas com sucesso).
+    let latencias = latencia::resumo_desde(banco, agora - latencia::JANELA_24H_MS)?;
+    if latencias.is_empty() {
+        writeln!(t, "Latência (24 h): nenhuma chamada ao modelo")?;
+    } else {
+        writeln!(t, "Latência (24 h, p50 / p95):")?;
+        for l in &latencias {
+            writeln!(
+                t,
+                "  {} [{}]: 1º token {} / {}; total {} / {} ({} ok, {} falha(s))",
+                l.modelo,
+                l.pool,
+                latencia::formatar(l.primeiro_token.p50),
+                latencia::formatar(l.primeiro_token.p95),
+                latencia::formatar(l.total.p50),
+                latencia::formatar(l.total.p95),
+                l.sucessos,
+                l.falhas
+            )?;
         }
     }
 

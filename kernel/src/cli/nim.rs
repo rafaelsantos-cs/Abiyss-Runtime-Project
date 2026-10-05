@@ -1,12 +1,13 @@
 //! Comandos de diagnóstico do NIM: `testar-nim` e `mock-nim`.
 
 use std::io::Write;
+use std::time::Duration;
 
 use anyhow::Context;
 
 use abiyss::config::Config;
 use abiyss::db::Banco;
-use abiyss::nim::mock::MockNim;
+use abiyss::nim::mock::{MockNim, roteiro_resistencia};
 use abiyss::nim::{self, EventoStream, Mensagem};
 use abiyss::orquestrador::{AoReceber, Nivel, Origem, Orquestrador};
 
@@ -19,10 +20,32 @@ pub enum QualModelo {
     Low,
 }
 
-pub async fn rodar_mock(porta: u16) -> anyhow::Result<()> {
+/// `abiyss esforco`: a tabela de cada modelo, nível por nível.
+pub fn esforco(config: &Config) -> anyhow::Result<()> {
+    println!("Modos: raso = minimal, low, medium; profundo = high, xhigh, ultra.");
+    for papel in abiyss::config::ConfigModelos::PAPEIS {
+        println!("\n[modelos.{papel}]");
+        for linha in abiyss::esforco::descrever(&config.modelos, papel)? {
+            println!("  {linha}");
+        }
+    }
+    Ok(())
+}
+
+/// O que o `mock-nim` responde.
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum RoteiroMock {
+    Eco,
+    Resistencia,
+}
+
+pub async fn rodar_mock(porta: u16, roteiro: RoteiroMock, atraso_ms: u64) -> anyhow::Result<()> {
     let mock = MockNim::iniciar_em(&format!("127.0.0.1:{porta}"))
         .await
         .with_context(|| format!("não consegui abrir a porta {porta}"))?;
+    if let RoteiroMock::Resistencia = roteiro {
+        mock.definir_roteiro(roteiro_resistencia(Duration::from_millis(atraso_ms)));
+    }
     println!("Mock do NIM ouvindo em {}", mock.base_url());
     println!("Use esse valor em nim.base_url (num abiyss.toml separado) e qualquer chave.");
     println!("Ctrl+C para parar.");

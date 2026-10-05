@@ -468,15 +468,18 @@ impl ExecutorSubagentes {
         Ok(alterados == 1)
     }
 
-    /// IDs pendentes, Ultra primeiro.
+    /// IDs pendentes, Ultra primeiro. No máximo `max_simultaneos` por vez
+    /// (mais que isso não caberia nas vagas mesmo).
     fn pendentes(&self) -> anyhow::Result<Vec<i64>> {
         let conexao = self.banco.conexao();
         let mut consulta = conexao.prepare(
             "SELECT id FROM subagentes WHERE estado = 'pendente'
-             ORDER BY CASE nivel WHEN 'ultra' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id",
+             ORDER BY CASE nivel WHEN 'ultra' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, id
+             LIMIT ?1",
         )?;
+        let limite = self.config.subagentes.max_simultaneos.max(1) as i64;
         let ids = consulta
-            .query_map([], |l| l.get(0))?
+            .query_map(params![limite], |l| l.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ids)
     }

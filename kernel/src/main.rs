@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use abiyss::config::Config;
 use abiyss::daemon::OpcoesDaemon;
 use abiyss::goals::NovoGoal;
-use cli::nim::QualModelo;
+use cli::nim::{QualModelo, RoteiroMock};
 
 #[derive(Parser)]
 #[command(
@@ -95,10 +95,23 @@ enum Comando {
         #[arg(default_value = "Responda apenas: ok")]
         mensagem: String,
     },
+    /// Roda a manutenção do banco agora (retenção, checkpoint do WAL e
+    /// vacuum incremental) — o daemon faz o mesmo periodicamente.
+    Manutencao,
+    /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
+    /// resolvida a partir do abiyss.toml (não chama o modelo).
+    Esforco,
     /// Sobe um NIM de mentira em 127.0.0.1 (para testar sem gastar cota).
     MockNim {
         #[arg(long, default_value_t = 8089)]
         porta: u16,
+        /// "eco" repete a mensagem; "resistencia" responde como heartbeat e
+        /// sub-agentes de verdade (usado por tools/resistencia.sh).
+        #[arg(long, value_enum, default_value_t = RoteiroMock::Eco)]
+        roteiro: RoteiroMock,
+        /// Latência de mentira de cada resposta (só no roteiro "resistencia").
+        #[arg(long, default_value_t = 200)]
+        atraso_ms: u64,
     },
 }
 
@@ -183,7 +196,11 @@ async fn main() -> anyhow::Result<()> {
     let caminho_config = Config::caminho_padrao(cli.config.as_deref());
 
     match cli.comando {
-        Comando::MockNim { porta } => cli::nim::rodar_mock(porta).await,
+        Comando::MockNim {
+            porta,
+            roteiro,
+            atraso_ms,
+        } => cli::nim::rodar_mock(porta, roteiro, atraso_ms).await,
         Comando::TestarNim {
             modelo,
             sem_stream,
@@ -196,6 +213,8 @@ async fn main() -> anyhow::Result<()> {
             let config = Config::carregar(&caminho_config)?;
             cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
         }
+        Comando::Manutencao => cli::daemon::manutencao(&Config::carregar(&caminho_config)?),
+        Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
         Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
         Comando::Goal(sub) => {
             let config = Config::carregar(&caminho_config)?;

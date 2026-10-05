@@ -23,6 +23,7 @@ comando (`abiyss ...`); não há painel web.
 4. [Comandos da CLI](#comandos-da-cli)
 5. [Daemon com systemd](#daemon-com-systemd)
 6. [Testar sem gastar cota (mock do NIM)](#testar-sem-gastar-cota-mock-do-nim)
+   — inclui o [teste de resistência](#teste-de-resistência-soak)
 7. [Desenvolvimento](#desenvolvimento)
 8. [Regras de segurança](#regras-de-segurança)
 9. [Itens a confirmar](#itens-a-confirmar)
@@ -226,7 +227,9 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss chat --mostrar-raciocinio` | Mostra o raciocínio do modelo em cinza |
 | `abiyss daemon` | Roda o Abiyss 24/7 (heartbeat, crons, sub-agentes) |
 | `abiyss daemon --uma-vez` | Um ciclo de heartbeat (+ sub-agentes pendentes) e sai |
-| `abiyss status` | Estado geral: daemon, identidade, goals, fila, crons, sub-agentes, interocepção |
+| `abiyss status` | Estado geral: daemon, identidade, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` |
+| `abiyss manutencao` | Roda agora a retenção (detalhe antigo → agregado diário), o vacuum incremental e o checkpoint do WAL |
 | `abiyss goal add "Título" --nucleo "essência + critério de pronto" [--descricao ..] [--prioridade N]` | Cria um goal (estado `proposto`) |
 | `abiyss goal list [--todos]` | Lista goals (`*` = em foco) |
 | `abiyss goal show ID` | Detalhes e histórico de transições |
@@ -244,7 +247,7 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss importar-hermes --origem ~/.hermes [--aplicar]` | Importa a memória do Hermes (simulação sem `--aplicar`); veja [`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md) |
 | `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
-| `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
+| `abiyss mock-nim [--porta 8089] [--roteiro eco\|resistencia] [--atraso-ms 200]` | NIM de mentira local (veja abaixo) |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
 `escrever_arquivo` (só em `workspace/`), `ler_skill`, `memoria_buscar` /
@@ -351,43 +354,28 @@ Todas as suposições sobre os formatos e o roteiro de teste na VM estão em
 
 ## Daemon com systemd
 
-A unit está em [`deploy/abiyss.service`](deploy/abiyss.service):
+A unit está em [`deploy/abiyss.service`](deploy/abiyss.service) (comentada
+linha a linha). O essencial:
 
-```ini
-[Unit]
-Description=Abiyss - agente de IA autonomo 24/7
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/Abiyss-Runtime-Project
-ExecStart=/home/ubuntu/Abiyss-Runtime-Project/target/release/abiyss daemon
-Environment=RUST_LOG=abiyss=info
-Environment=TZ=America/Sao_Paulo
-Environment=PATH=/home/ubuntu/.local/bin:/home/ubuntu/.cargo/bin:/usr/local/bin:/usr/bin:/bin
-Restart=on-failure
-RestartSec=10
-KillSignal=SIGTERM
-TimeoutStopSec=30
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-MemoryMax=4G
-
-[Install]
-WantedBy=multi-user.target
-```
+| Diretiva | Valor | Por quê |
+|---|---|---|
+| `Type=notify` | — | o daemon avisa `READY=1` depois de subir os servidores MCP (`TimeoutStartSec=300`) |
+| `WatchdogSec` | `120` | o daemon manda `WATCHDOG=1` a cada 60 s **enquanto o loop principal anda**; tokio travado ou loop parado há mais de `[daemon] max_travado_segundos` (3600) → o systemd mata e reinicia |
+| `Restart=on-failure` | `RestartSec=10` | reinicia em erro, sinal fatal e estouro do watchdog; no máximo 5 vezes em 10 min (`StartLimit*`) |
+| `MemoryHigh` / `MemoryMax` | `3G` / `4G` | valem para o cgroup inteiro (daemon + uv + Python dos servidores MCP) |
+| `MemorySwapMax` | `0` | vazamento vira OOM visível em vez de VM trocando páginas |
+| `OOMPolicy=continue` | — | se o OOM matar só um servidor MCP, a supervisão sobe ele de novo |
+| `TasksMax` | `256` | processos + threads do cgroup |
+| `LogRateLimit*` | `30s` / `2000` | rajada de log não enche o journal (systemd ≥ 240) |
 
 Troque `ubuntu` pelo seu usuário (no Oracle Linux, `opc`) e instale:
 
 ```bash
 sudo cp deploy/abiyss.service /etc/systemd/system/abiyss.service
+sudo systemd-analyze verify /etc/systemd/system/abiyss.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now abiyss
-systemctl status abiyss
+systemctl status abiyss          # mostra o STATUS= mandado pelo daemon
 journalctl -u abiyss -f
 ```
 
@@ -396,6 +384,38 @@ journalctl -u abiyss -f
   ciclo; sub-agentes interrompidos ficam marcados como `falhou` e o resultado
   vira evento.
 - O `.env` é lido pelo próprio Abiyss; não precisa de `EnvironmentFile`.
+- Fora do systemd (rodando `abiyss daemon` à mão), os avisos `sd_notify`
+  simplesmente não acontecem.
+
+### Logs: tamanho do journal
+
+O journald guarda os logs de todos os serviços. Sem limite explícito, ele
+usa até 10% do disco (teto de 4 GiB) — numa VM pequena, é melhor fixar.
+Crie `/etc/systemd/journald.conf.d/abiyss.conf`:
+
+```ini
+[Journal]
+# Espaço total do journal em disco e tamanho de cada arquivo.
+SystemMaxUse=500M
+SystemMaxFileSize=50M
+# Sempre deixar pelo menos isto livre no disco.
+SystemKeepFree=1G
+# Apagar entradas com mais de 1 mês.
+MaxRetentionSec=1month
+```
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo nano /etc/systemd/journald.conf.d/abiyss.conf   # conteúdo acima
+sudo systemctl restart systemd-journald
+journalctl --disk-usage          # conferir
+sudo journalctl --vacuum-size=500M   # encolher já, sem esperar a rotação
+```
+
+Se o journal for só em memória (`Storage=volatile`, comum em imagens
+mínimas), os limites equivalentes são `RuntimeMaxUse=` e
+`RuntimeMaxFileSize=`. Com `RUST_LOG=abiyss=info`, o daemon escreve poucas
+linhas por ciclo de heartbeat; `debug` gera bem mais.
 
 ---
 
@@ -416,6 +436,21 @@ atrasos — **nenhum teste usa rede externa nem chaves reais**.
 
 > Use um `data/` separado se não quiser misturar o histórico do mock com o
 > real (ajuste `[caminhos] dados` no `abiyss.mock.toml`).
+
+### Teste de resistência (soak)
+
+[`tools/resistencia.sh`](tools/resistencia.sh) roda o daemon de verdade
+contra o mock (`--roteiro resistencia`: decisões de heartbeat válidas,
+sub-agentes e relatórios), com heartbeat de 2 s, num projeto temporário, e
+grava RSS, threads, descritores e tamanho do banco num CSV:
+
+```bash
+cargo build --release
+tools/resistencia.sh --duracao 600          # 10 min
+```
+
+Resultados, como ler o CSV e como rodar 24–48 h na VM:
+[`docs/RESISTENCIA.md`](docs/RESISTENCIA.md).
 
 ---
 
