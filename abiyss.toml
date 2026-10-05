@@ -142,6 +142,22 @@ central = "identity/memoria-central.md"
 # relatada (nunca cortada). O Hermes usava ~2200 (MEMORY.md) + ~1375 (USER.md).
 limite_central_caracteres = 4000
 
+# Busca: o qmd (servidor MCP HTTP, em [[mcp.servidores]] abaixo) é o motor de
+# memoria_buscar quando está no ar; senão, busca por texto simples no cofre.
+[memoria.qmd]
+# Nome do servidor qmd em [[mcp.servidores]]. Vazio = nunca usar o qmd.
+servidor = "qmd"
+# Ferramenta de busca. Vazio = a primeira que existir entre search,
+# qmd_search, query, qmd_query, vsearch, qmd_vsearch — A CONFIRMAR na VM
+# (`abiyss ferramentas` com expor = true mostra os nomes).
+ferramenta = ""
+# Coleções do qmd que indexam cada escopo (opcional, recomendado):
+#   qmd collection add <cofre>/01_internal --name abiyss-interno
+#   qmd collection add <cofre>/02_external --name abiyss-externo
+# Vazias = uma busca só, e o kernel separa os escopos pelo caminho.
+colecao_interna = ""
+colecao_externa = ""
+
 # ---------------------------------------------------------------------------
 # Daemon (`abiyss daemon`): heartbeat e crons.
 # ---------------------------------------------------------------------------
@@ -189,9 +205,13 @@ max_rodadas = 8
 ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
 
 # ---------------------------------------------------------------------------
-# Servidores MCP (recursos em Python, em recursos/). O kernel sobe cada um
-# como processo filho (stdio) e expõe as ferramentas como <nome>__<ferramenta>.
-# Os processos recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# Servidores MCP. Dois tipos:
+# - processo filho (stdio): `comando` + `args` (recursos em Python, em
+#   recursos/). Recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# - HTTP "streamable": `url` de um servidor que já está rodando (ex.: qmd).
+#   Token, se precisar, só por variável de ambiente: `token_env = "NOME"`.
+# As ferramentas aparecem como <nome>__<ferramenta>; `expor = false` esconde
+# do modelo (só o kernel usa).
 # ---------------------------------------------------------------------------
 
 [mcp]
@@ -204,4 +224,15 @@ comando = "uv"
 args = ["run", "--frozen", "--quiet", "servidor.py"]
 diretorio = "recursos/mcp/exemplo"
 timeout_segundos = 60
+ativo = true
+
+[[mcp.servidores]]
+# qmd: busca em Markdown (BM25/vetores) sobre o cofre. Já roda na VM; o
+# kernel só conecta. Fora do ar = memoria_buscar usa busca por texto.
+# A CONFIRMAR: o caminho /mcp do endpoint HTTP do qmd.
+nome = "qmd"
+url = "http://localhost:8181/mcp"
+timeout_segundos = 30
+# Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
+expor = false
 ativo = true

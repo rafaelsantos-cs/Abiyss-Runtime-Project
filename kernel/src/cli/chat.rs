@@ -33,7 +33,8 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
     // `delegar` só grava o pedido: quem executa é o daemon.
     let controle = ControleSubagentes::novo(config.clone(), banco.clone(), None);
     // Memória: o modelo só propõe; quem grava é o `abiyss sleep`.
-    let memoria = Arc::new(Memoria::abrir(&config, banco.clone())?);
+    // O qmd (se configurado e ativo) é o motor de busca da memória.
+    let memoria = Arc::new(Memoria::abrir(&config, banco.clone())?.com_mcp(mcp.clone()));
     let ferramentas = Arc::new(
         CaixaDeFerramentas::da_config(&config)?
             .com_mcp(mcp.clone())

@@ -1,10 +1,16 @@
-//! Ponte MCP: o kernel sobe servidores MCP (em Python, em `recursos/`)
-//! como processos filhos, conversa com eles por stdio usando o crate
-//! `rmcp` e expõe as ferramentas deles ao modelo.
+//! Ponte MCP: o kernel conversa com servidores MCP usando o crate `rmcp`
+//! e expõe as ferramentas deles ao modelo. Dois transportes:
+//! - **processo filho (stdio)**: servidores em Python, em `recursos/`
+//!   (`comando` + `args` no abiyss.toml);
+//! - **HTTP "streamable"**: servidores que já estão rodando, locais ou
+//!   remotos, como o qmd (`url` no abiyss.toml).
 //!
 //! - Nome exposto ao modelo: `<servidor>__<ferramenta>`.
+//! - `expor = false`: as ferramentas NÃO aparecem para o modelo; só o
+//!   kernel usa o servidor (ex.: o qmd por trás de `memoria_buscar`).
 //! - Os processos filhos recebem um ambiente LIMPO (as chaves do NIM
 //!   não vazam para código que o Abiyss poderá editar no futuro).
+//! - Token de servidor HTTP só por variável de ambiente (`token_env`).
 //! - Um servidor que não sobe é registrado no log e ignorado: o Abiyss
 //!   continua funcionando sem ele.
 
@@ -14,7 +20,8 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock, Tool};
 use rmcp::service::RunningService;
-use rmcp::transport::{ConfigureCommandExt, TokioChildProcess};
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::{ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{RoleClient, ServiceExt};
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,11 +74,13 @@ impl Default for ConfigMcp {
     }
 }
 
-/// Um item `[[mcp.servidores]]`.
+/// Um item `[[mcp.servidores]]`: OU `comando` (processo filho) OU `url` (HTTP).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigServidorMcp {
     /// Nome curto (letras, números, `_` ou `-`); vira prefixo das ferramentas.
     pub nome: String,
+    /// Programa a executar (transporte stdio). Vazio quando há `url`.
+    #[serde(default)]
     pub comando: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -86,6 +95,24 @@ pub struct ConfigServidorMcp {
     pub timeout_segundos: u64,
     #[serde(default = "padrao_ativo")]
     pub ativo: bool,
+    /// Endpoint MCP de um servidor que já está rodando (transporte HTTP
+    /// "streamable"), ex.: "http://localhost:8181/mcp".
+    #[serde(default)]
+    pub url: Option<String>,
+    /// NOME da variável de ambiente com o token (enviado como Bearer).
+    /// O token em si nunca fica no abiyss.toml.
+    #[serde(default)]
+    pub token_env: Option<String>,
+    /// `false` = as ferramentas não são oferecidas ao modelo (só o kernel usa).
+    #[serde(default = "padrao_ativo")]
+    pub expor: bool,
+}
+
+impl ConfigServidorMcp {
+    /// "http" ou "stdio".
+    pub fn transporte(&self) -> &'static str {
+        if self.url.is_some() { "http" } else { "stdio" }
+    }
 }
 
 fn padrao_timeout_chamada() -> u64 {
@@ -102,6 +129,18 @@ struct ServidorMcp {
     cliente: RunningService<RoleClient, ()>,
     ferramentas: Vec<Tool>,
     timeout: Duration,
+    /// As ferramentas aparecem para o modelo?
+    expor: bool,
+    transporte: &'static str,
+}
+
+/// Resposta de uma ferramenta MCP chamada pelo próprio kernel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RespostaMcp {
+    /// Texto juntado dos blocos de conteúdo.
+    pub texto: String,
+    /// `structuredContent`, quando o servidor manda.
+    pub estruturado: Option<Value>,
 }
 
 /// Onde encontrar uma ferramenta exposta.
@@ -133,9 +172,15 @@ impl PonteMcp {
             match iniciar_servidor(config, item, timeout).await {
                 Ok(servidor) => {
                     tracing::info!(
-                        "MCP '{}' ativo com {} ferramenta(s)",
+                        "MCP '{}' ({}) ativo com {} ferramenta(s){}",
                         servidor.nome,
-                        servidor.ferramentas.len()
+                        servidor.transporte,
+                        servidor.ferramentas.len(),
+                        if servidor.expor {
+                            ""
+                        } else {
+                            ", só para o kernel"
+                        }
                     );
                     ponte.adicionar(servidor);
                 }
@@ -147,7 +192,13 @@ impl PonteMcp {
 
     fn adicionar(&mut self, servidor: ServidorMcp) {
         let indice = self.servidores.len();
-        for ferramenta in &servidor.ferramentas {
+        // Servidor só do kernel: as ferramentas não ficam chamáveis pelo modelo.
+        let ferramentas = if servidor.expor {
+            servidor.ferramentas.as_slice()
+        } else {
+            &[]
+        };
+        for ferramenta in ferramentas {
             let exposto = nome_exposto(&servidor.nome, &ferramenta.name);
             if self.enderecos.contains_key(&exposto) {
                 tracing::warn!("ferramenta MCP duplicada ignorada: {exposto}");
@@ -169,15 +220,58 @@ impl PonteMcp {
         self.servidores.iter().map(|s| s.nome.clone()).collect()
     }
 
+    /// Servidores ativos com transporte e visibilidade (para listagens).
+    pub fn descricao_servidores(&self) -> Vec<String> {
+        self.servidores
+            .iter()
+            .map(|s| {
+                let visibilidade = if s.expor { "" } else { ", só para o kernel" };
+                format!("{} ({}{visibilidade})", s.nome, s.transporte)
+            })
+            .collect()
+    }
+
+    /// Ferramentas de um servidor (inclusive dos que não são expostos).
+    pub fn ferramentas_do_servidor(&self, servidor: &str) -> Option<&[Tool]> {
+        self.servidores
+            .iter()
+            .find(|s| s.nome == servidor)
+            .map(|s| s.ferramentas.as_slice())
+    }
+
+    /// Chamada feita pelo KERNEL (não pelo modelo) a uma ferramenta pelo
+    /// nome original, em qualquer servidor ativo (exposto ou não).
+    pub async fn chamar_no_servidor(
+        &self,
+        servidor: &str,
+        ferramenta: &str,
+        argumentos: Value,
+    ) -> anyhow::Result<RespostaMcp> {
+        let indice = self
+            .servidores
+            .iter()
+            .position(|s| s.nome == servidor)
+            .with_context(|| format!("servidor MCP '{servidor}' não está ativo"))?;
+        let resultado = self.chamar_interno(indice, ferramenta, argumentos).await?;
+        let texto = texto_do_resultado(&resultado);
+        if resultado.is_error == Some(true) {
+            bail!("{texto}");
+        }
+        Ok(RespostaMcp {
+            texto,
+            estruturado: resultado.structured_content.clone(),
+        })
+    }
+
     /// A ferramenta com este nome exposto existe?
     pub fn tem(&self, nome: &str) -> bool {
         self.enderecos.contains_key(nome)
     }
 
-    /// Definições das ferramentas MCP no formato do NIM.
+    /// Definições das ferramentas MCP no formato do NIM (só as expostas).
     pub fn definicoes(&self) -> Vec<Ferramenta> {
         let mut lista = Vec::new();
-        for servidor in &self.servidores {
+        for servidor in self.servidores.iter().filter(|s| s.expor) {
             for ferramenta in &servidor.ferramentas {
                 let exposto = nome_exposto(&servidor.nome, &ferramenta.name);
                 let descricao = ferramenta
@@ -201,9 +295,30 @@ impl PonteMcp {
             .enderecos
             .get(nome)
             .with_context(|| format!("ferramenta MCP desconhecida: {nome}"))?;
-        let servidor = &self.servidores[endereco.indice_servidor];
+        let resultado = self
+            .chamar_interno(
+                endereco.indice_servidor,
+                &endereco.nome_original,
+                argumentos,
+            )
+            .await?;
+        let texto = texto_do_resultado(&resultado);
+        if resultado.is_error == Some(true) {
+            bail!("{texto}");
+        }
+        Ok(texto)
+    }
 
-        let mut parametros = CallToolRequestParams::new(endereco.nome_original.clone());
+    /// Chamada com tempo limite, comum aos dois caminhos acima.
+    async fn chamar_interno(
+        &self,
+        indice: usize,
+        ferramenta: &str,
+        argumentos: Value,
+    ) -> anyhow::Result<CallToolResult> {
+        let servidor = &self.servidores[indice];
+        let nome = format!("{}{SEPARADOR}{ferramenta}", servidor.nome);
+        let mut parametros = CallToolRequestParams::new(ferramenta.to_string());
         if let Value::Object(mapa) = argumentos {
             parametros = parametros.with_arguments(mapa);
         }
@@ -217,12 +332,7 @@ impl PonteMcp {
                     )
                 })?
                 .with_context(|| format!("falha ao chamar {nome}"))?;
-
-        let texto = texto_do_resultado(&resultado);
-        if resultado.is_error == Some(true) {
-            bail!("{texto}");
-        }
-        Ok(texto)
+        Ok(resultado)
     }
 
     /// Encerra todos os servidores com educação (fecha o stdio e espera).
@@ -251,6 +361,37 @@ async fn iniciar_servidor(
             "nome de servidor inválido: '{}' (use letras, números, _ ou -)",
             item.nome
         );
+    }
+    let (cliente, ferramentas) = match &item.url {
+        Some(url) => {
+            if !item.comando.is_empty() {
+                bail!("use 'comando' OU 'url', não os dois");
+            }
+            conectar_http(item, url, timeout).await?
+        }
+        None => subir_processo(config, item, timeout).await?,
+    };
+    Ok(ServidorMcp {
+        nome: item.nome.clone(),
+        cliente,
+        ferramentas,
+        timeout: Duration::from_secs(item.timeout_segundos),
+        expor: item.expor,
+        transporte: item.transporte(),
+    })
+}
+
+/// Cliente MCP conectado + as ferramentas que o servidor oferece.
+type Conexao = (RunningService<RoleClient, ()>, Vec<Tool>);
+
+/// Transporte stdio: sobe o servidor como processo filho com ambiente limpo.
+async fn subir_processo(
+    config: &Config,
+    item: &ConfigServidorMcp,
+    timeout: Duration,
+) -> anyhow::Result<Conexao> {
+    if item.comando.is_empty() {
+        bail!("falta 'comando' (processo filho) ou 'url' (HTTP)");
     }
     let diretorio = item
         .diretorio
@@ -284,16 +425,45 @@ async fn iniciar_servidor(
             .context("não consegui listar as ferramentas")?;
         anyhow::Ok((cliente, ferramentas))
     };
-    let (cliente, ferramentas) = tokio::time::timeout(timeout, subir)
+    tokio::time::timeout(timeout, subir)
         .await
-        .with_context(|| format!("servidor não respondeu em {} s", timeout.as_secs()))??;
+        .with_context(|| format!("servidor não respondeu em {} s", timeout.as_secs()))?
+}
 
-    Ok(ServidorMcp {
-        nome: item.nome.clone(),
-        cliente,
-        ferramentas,
-        timeout: Duration::from_secs(item.timeout_segundos),
-    })
+/// Transporte HTTP "streamable": conecta num servidor que já está rodando.
+async fn conectar_http(
+    item: &ConfigServidorMcp,
+    url: &str,
+    timeout: Duration,
+) -> anyhow::Result<Conexao> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        bail!("url precisa começar com http:// ou https:// (veio '{url}')");
+    }
+    let mut config_http = StreamableHttpClientTransportConfig::with_uri(url.to_string());
+    if let Some(variavel) = &item.token_env {
+        // A mensagem nunca mostra o valor do token.
+        let token = std::env::var(variavel)
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+            .with_context(|| format!("variável {variavel} (token do servidor) não definida"))?;
+        config_http = config_http.auth_header(token.trim().to_string());
+    }
+    let transporte = StreamableHttpClientTransport::from_config(config_http);
+
+    let conectar = async {
+        let cliente = ()
+            .serve(transporte)
+            .await
+            .with_context(|| format!("handshake MCP em {url} falhou"))?;
+        let ferramentas = cliente
+            .list_all_tools()
+            .await
+            .context("não consegui listar as ferramentas")?;
+        anyhow::Ok((cliente, ferramentas))
+    };
+    tokio::time::timeout(timeout, conectar)
+        .await
+        .with_context(|| format!("{url} não respondeu em {} s", timeout.as_secs()))?
 }
 
 /// Nome exposto ao modelo: `servidor__ferramenta`, só com caracteres que a
@@ -352,6 +522,22 @@ mod testes {
     }
 
     #[test]
+    fn config_http_sem_comando() {
+        let texto = r#"
+            [[servidores]]
+            nome = "qmd"
+            url = "http://localhost:8181/mcp"
+            expor = false
+        "#;
+        let c: ConfigMcp = toml::from_str(texto).unwrap();
+        let qmd = &c.servidores[0];
+        assert_eq!(qmd.transporte(), "http");
+        assert!(qmd.comando.is_empty());
+        assert!(!qmd.expor);
+        assert_eq!(qmd.token_env, None);
+    }
+
+    #[test]
     fn config_mcp_padrao_e_parse() {
         let texto = r#"
             timeout_inicio_segundos = 30
@@ -364,6 +550,8 @@ mod testes {
         let c: ConfigMcp = toml::from_str(texto).unwrap();
         assert_eq!(c.servidores[0].timeout_segundos, 60);
         assert!(c.servidores[0].ativo);
+        assert!(c.servidores[0].expor);
+        assert_eq!(c.servidores[0].transporte(), "stdio");
         assert_eq!(ConfigMcp::default().servidores.len(), 0);
     }
 }

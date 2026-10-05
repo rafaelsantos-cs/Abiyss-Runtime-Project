@@ -29,7 +29,10 @@ pub mod central;
 pub mod cofre;
 pub mod nota;
 pub mod propostas;
+pub mod qmd;
 pub mod sleep;
+
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
@@ -37,6 +40,7 @@ use serde::Deserialize;
 use crate::config::Config;
 use crate::db::Banco;
 use crate::frontmatter;
+use crate::mcp::PonteMcp;
 use busca::ResultadoBusca;
 use central::MemoriaCentral;
 use cofre::{Cofre, resolver_wikilink};
@@ -61,6 +65,8 @@ pub struct ConfigMemoria {
     pub central: String,
     /// Orçamento da memória central, em caracteres.
     pub limite_central_caracteres: usize,
+    /// Busca pelo qmd (servidor MCP HTTP). Sem ele, busca por texto.
+    pub qmd: qmd::ConfigQmd,
 }
 
 impl Default for ConfigMemoria {
@@ -72,6 +78,7 @@ impl Default for ConfigMemoria {
             max_bytes_proposta: 20_000,
             central: "identity/memoria-central.md".to_string(),
             limite_central_caracteres: 4_000,
+            qmd: qmd::ConfigQmd::default(),
         }
     }
 }
@@ -106,7 +113,8 @@ pub struct PropostaRegistrada {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RespostaBusca {
     pub resultados: Vec<ResultadoBusca>,
-    /// Qual motor respondeu ("texto").
+    /// Qual motor respondeu: "qmd" ou "texto" (com o motivo, se o qmd
+    /// estava configurado e não foi usado).
     pub motor: String,
 }
 
@@ -123,6 +131,8 @@ pub struct Memoria {
     cofre: Cofre,
     central: MemoriaCentral,
     banco: Banco,
+    /// Ponte MCP onde (talvez) está o qmd.
+    mcp: Option<Arc<PonteMcp>>,
 }
 
 impl Memoria {
@@ -134,7 +144,14 @@ impl Memoria {
             cofre,
             central: MemoriaCentral::da_config(config),
             banco,
+            mcp: None,
         })
+    }
+
+    /// Usa o qmd desta ponte MCP como motor de busca (se estiver ativo).
+    pub fn com_mcp(mut self, mcp: Arc<PonteMcp>) -> Memoria {
+        self.mcp = Some(mcp);
+        self
     }
 
     pub fn cofre(&self) -> &Cofre {
@@ -149,7 +166,8 @@ impl Memoria {
         &self.config
     }
 
-    /// Busca por texto no(s) escopo(s) pedido(s).
+    /// Busca no(s) escopo(s) pedido(s): pelo qmd quando ele está ativo e
+    /// responde algo aproveitável; senão, por texto simples.
     pub async fn buscar(
         &self,
         consulta: &str,
@@ -158,14 +176,37 @@ impl Memoria {
         if consulta.trim().is_empty() {
             bail!("a consulta está vazia");
         }
+        let max = self.config.max_resultados;
+        let servidor = self.config.qmd.servidor.trim();
+        let mut motivo = None;
+        if !servidor.is_empty() {
+            match &self.mcp {
+                Some(ponte) if ponte.ferramentas_do_servidor(servidor).is_some() => {
+                    match qmd::buscar(ponte, &self.config.qmd, &self.cofre, consulta, escopo, max)
+                        .await
+                    {
+                        Ok(resultados) if !resultados.is_empty() => {
+                            return Ok(RespostaBusca {
+                                resultados,
+                                motor: "qmd".to_string(),
+                            });
+                        }
+                        Ok(_) => motivo = Some("qmd sem resultados".to_string()),
+                        Err(e) => {
+                            tracing::warn!("busca no qmd falhou; usando busca por texto: {e:#}");
+                            motivo = Some("qmd falhou".to_string());
+                        }
+                    }
+                }
+                _ => motivo = Some("qmd indisponível".to_string()),
+            }
+        }
         Ok(RespostaBusca {
-            resultados: busca::buscar_texto(
-                &self.cofre,
-                consulta,
-                escopo,
-                self.config.max_resultados,
-            ),
-            motor: "texto".to_string(),
+            resultados: busca::buscar_texto(&self.cofre, consulta, escopo, max),
+            motor: match motivo {
+                Some(m) => format!("texto ({m})"),
+                None => "texto".to_string(),
+            },
         })
     }
 

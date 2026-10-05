@@ -13,11 +13,11 @@ use abiyss::skills::Skills;
 pub async fn listar(config: &Config) -> anyhow::Result<()> {
     let mcp = Arc::new(PonteMcp::iniciar(config).await);
     let banco = Banco::abrir(&config.caminho_banco())?;
-    let memoria = Arc::new(Memoria::abrir(config, banco)?);
+    let memoria = Arc::new(Memoria::abrir(config, banco)?.com_mcp(mcp.clone()));
     let caixa = CaixaDeFerramentas::da_config(config)?
         .com_mcp(mcp.clone())
         .com_memoria(memoria);
-    let servidores = mcp.servidores();
+    let servidores = mcp.descricao_servidores();
     println!(
         "Servidores MCP ativos: {}",
         if servidores.is_empty() {

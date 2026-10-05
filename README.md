@@ -41,7 +41,7 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/orquestrador/          ← dois pools, token bucket, fila de prioridade
   src/chat.rs                ← conversa com tool calling
   src/ferramentas/           ← tools nativas (só dentro de workspace/)
-  src/mcp.rs                 ← ponte MCP (cliente rmcp, processos filhos)
+  src/mcp.rs                 ← ponte MCP (cliente rmcp: processos filhos e HTTP)
   src/heartbeat.rs daemon.rs ← ciclo autônomo e daemon
   src/goals.rs cron.rs       ← máquina de estados dos goals, crons
   src/subagentes.rs          ← sub-agentes assíncronos
@@ -179,7 +179,8 @@ O arquivo está comentado seção por seção. Os pontos principais:
 | `[pools.*]` | requisições por minuto, rajada, reserva de conversa, concorrência por nível, retentativas |
 | `[daemon]` | intervalo do heartbeat, verificação de crons, revisão mínima |
 | `[subagentes.*]` | orçamento (tokens, segundos, rodadas) e ferramentas por nível |
-| `[[mcp.servidores]]` | servidores MCP em Python |
+| `[[mcp.servidores]]` | servidores MCP: processo filho (`comando`) ou HTTP (`url`, ex.: qmd) |
+| `[memoria]` / `[memoria.qmd]` | cofre, memória central e orçamento, busca pelo qmd |
 
 > **Limite por chave ou por conta?** Ainda não confirmado. Se as duas chaves
 > forem da mesma conta NVIDIA e o limite for por conta, divida (ex.: 25 + 15)
@@ -292,6 +293,18 @@ rejeita no escopo interno (o `Cofre::gravar` confere de novo). Leituras da
 memória interna e confirmações do kernel não contam como externas; memória
 externa, arquivos do workspace, skills, MCP e sub-agentes contam. Para
 sub-agentes, tudo conta como externo.
+
+### Busca: qmd com reserva por texto
+
+`memoria_buscar` usa o **qmd** (servidor MCP já rodando na VM, conectado
+por HTTP "streamable": `[[mcp.servidores]] url = "http://localhost:8181/mcp"`,
+`expor = false`) quando ele está no ar. A resposta é lida com desconfiança:
+cada resultado precisa apontar para uma nota que existe no cofre e é do
+escopo pedido; o resto é descartado. Se o qmd estiver fora do ar, responder
+algo ilegível ou nada, a busca cai na **busca por texto** simples. O motor
+usado aparece no resultado (`motor: qmd` ou `motor: texto (...)`).
+
+Para testar na VM: `abiyss memoria buscar "algo" --escopo interno`.
 
 ### Memória central
 

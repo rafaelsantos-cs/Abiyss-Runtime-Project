@@ -24,8 +24,13 @@ dotenvy = "0.15"
 fastrand = "2"
 futures = "0.3"
 reqwest = { version = "0.13", features = ["json", "stream"] }
-# SDK oficial do MCP em Rust: só a parte de CLIENTE com transporte por processo filho.
-rmcp = { version = "3.5", default-features = false, features = ["client", "transport-child-process"] }
+# SDK oficial do MCP em Rust: só a parte de CLIENTE, com dois transportes:
+# processo filho (stdio) e HTTP "streamable" (servidores remotos, ex.: qmd).
+rmcp = { version = "3.5", default-features = false, features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
 # "bundled": compila o SQLite junto, sem depender da versão instalada na VM.
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -42,3 +47,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Só nos testes: um servidor MCP HTTP de mentira (faz o papel do qmd).
+rmcp = { version = "3.5", default-features = false, features = [
+    "server",
+    "transport-streamable-http-server",
+] }

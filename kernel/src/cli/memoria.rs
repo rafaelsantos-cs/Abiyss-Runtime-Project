@@ -1,8 +1,11 @@
 //! `abiyss sleep` e `abiyss memoria ...`: memória de longo prazo (cofre).
 //! Não precisam das chaves do NIM.
 
+use std::sync::Arc;
+
 use abiyss::config::Config;
 use abiyss::db::Banco;
+use abiyss::mcp::PonteMcp;
 use abiyss::memoria::Memoria;
 use abiyss::memoria::central::MemoriaCentral;
 use abiyss::memoria::nota::EscopoBusca;
@@ -76,11 +79,19 @@ pub fn propostas(config: &Config, todas: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Busca como a ferramenta `memoria_buscar` (sobe os servidores MCP para
+/// usar o qmd, se estiver configurado). Bom para testar o qmd na VM.
 pub async fn buscar(config: &Config, consulta: &str, escopo: &str) -> anyhow::Result<()> {
     let escopo = EscopoBusca::de_texto(escopo)
         .ok_or_else(|| anyhow::anyhow!("escopo inválido: use interno, externo ou ambos"))?;
-    let memoria = abrir(config)?;
-    let resposta = memoria.buscar(consulta, escopo).await?;
+    let mcp = Arc::new(PonteMcp::iniciar(config).await);
+    let memoria = abrir(config)?.com_mcp(mcp.clone());
+    let resposta = memoria.buscar(consulta, escopo).await;
+    drop(memoria);
+    if let Ok(ponte) = Arc::try_unwrap(mcp) {
+        ponte.encerrar().await;
+    }
+    let resposta = resposta?;
     println!(
         "{} resultado(s) (motor: {})",
         resposta.resultados.len(),

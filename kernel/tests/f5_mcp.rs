@@ -46,6 +46,9 @@ fn servidor_exemplo() -> ConfigServidorMcp {
         env: Default::default(),
         timeout_segundos: 30,
         ativo: true,
+        url: None,
+        token_env: None,
+        expor: true,
     }
 }
 

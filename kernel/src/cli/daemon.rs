@@ -19,7 +19,8 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
     // Ferramentas dos sub-agentes: nativas + memória + MCP (cada nível recebe
     // um recorte). Para sub-agentes, tudo conta como conteúdo externo.
     let mcp = Arc::new(PonteMcp::iniciar(&config).await);
-    let memoria = Arc::new(Memoria::abrir(&config, banco.clone())?);
+    // O qmd (se configurado e ativo) é o motor de busca da memória.
+    let memoria = Arc::new(Memoria::abrir(&config, banco.clone())?.com_mcp(mcp.clone()));
     let ferramentas = Arc::new(
         CaixaDeFerramentas::da_config(&config)?
             .com_mcp(mcp.clone())
