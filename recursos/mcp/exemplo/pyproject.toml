@@ -1,0 +1,12 @@
+[project]
+name = "abiyss-mcp-exemplo"
+version = "0.1.0"
+description = "Servidor MCP de exemplo do Abiyss (ferramentas determinísticas simples)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só um script com dependências.
+package = false

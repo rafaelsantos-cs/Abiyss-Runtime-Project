@@ -1,0 +1,42 @@
+# Unit do systemd para o daemon do Abiyss.
+#
+# Instalação (troque "ubuntu" pelo seu usuário — no Oracle Linux é "opc"):
+#   sudo cp deploy/abiyss.service /etc/systemd/system/abiyss.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now abiyss
+#   journalctl -u abiyss -f        # acompanhar os logs
+
+[Unit]
+Description=Abiyss - agente de IA autonomo 24/7
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Abiyss-Runtime-Project
+ExecStart=/home/ubuntu/Abiyss-Runtime-Project/target/release/abiyss daemon
+
+# As chaves do NIM vêm do .env ao lado do abiyss.toml (lido pelo próprio
+# Abiyss). Alternativa: EnvironmentFile=/home/ubuntu/Abiyss-Runtime-Project/.env
+Environment=RUST_LOG=abiyss=info
+# Fuso usado em data/hora, crons e interocepção.
+Environment=TZ=America/Sao_Paulo
+# O uv precisa estar no PATH para subir os servidores MCP.
+Environment=PATH=/home/ubuntu/.local/bin:/home/ubuntu/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+
+Restart=on-failure
+RestartSec=10
+# SIGTERM: o daemon para com educação, mesmo no meio de um ciclo.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Endurecimento básico.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+MemoryMax=4G
+
+[Install]
+WantedBy=multi-user.target

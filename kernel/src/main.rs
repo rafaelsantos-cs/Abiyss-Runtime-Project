@@ -1,0 +1,228 @@
+//! Ponto de entrada da CLI `abiyss`.
+//!
+//! Aqui ficam só a definição dos comandos (clap) e o despacho; a
+//! implementação de cada comando está em `cli/`.
+
+mod cli;
+
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+
+use abiyss::config::Config;
+use abiyss::daemon::OpcoesDaemon;
+use abiyss::goals::NovoGoal;
+use cli::nim::QualModelo;
+
+#[derive(Parser)]
+#[command(
+    name = "abiyss",
+    version,
+    about = "Kernel do Abiyss, agente autônomo 24/7"
+)]
+struct Cli {
+    /// Caminho do abiyss.toml (padrão: ./abiyss.toml).
+    #[arg(long, global = true, env = "ABIYSS_CONFIG")]
+    config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    comando: Comando,
+}
+
+#[derive(Subcommand)]
+enum Comando {
+    /// Conversa com o Abiyss (histórico salvo no SQLite).
+    Chat {
+        /// Continua a conversa mais recente em vez de começar outra.
+        #[arg(long)]
+        continuar: bool,
+        /// Continua uma conversa específica.
+        #[arg(long)]
+        conversa: Option<i64>,
+        /// Envia só esta mensagem, mostra a resposta e sai.
+        #[arg(short, long)]
+        mensagem: Option<String>,
+        /// Mostra o raciocínio do modelo (em cinza, no stderr).
+        #[arg(long)]
+        mostrar_raciocinio: bool,
+    },
+    /// Roda o Abiyss 24/7: heartbeat, crons (e sub-agentes).
+    Daemon {
+        /// Roda um único ciclo e sai (bom para testar).
+        #[arg(long)]
+        uma_vez: bool,
+    },
+    /// Mostra o estado do Abiyss (não chama o modelo).
+    Status,
+    /// Gerencia goals.
+    #[command(subcommand)]
+    Goal(ComandoGoal),
+    /// Gerencia lembretes agendados (cron).
+    #[command(subcommand)]
+    Cron(ComandoCron),
+    /// Mostra o diário: expectativa antes de cada ação e resultado depois.
+    Diario {
+        #[arg(long, default_value_t = 20)]
+        limite: usize,
+    },
+    /// Lista as ferramentas disponíveis (nativas + servidores MCP).
+    Ferramentas,
+    /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
+    TestarNim {
+        /// Qual modelo da config usar.
+        #[arg(long, value_enum, default_value_t = QualModelo::Cerebro)]
+        modelo: QualModelo,
+        /// Desliga o streaming (resposta chega inteira no fim).
+        #[arg(long)]
+        sem_stream: bool,
+        /// Mensagem a enviar.
+        #[arg(default_value = "Responda apenas: ok")]
+        mensagem: String,
+    },
+    /// Sobe um NIM de mentira em 127.0.0.1 (para testar sem gastar cota).
+    MockNim {
+        #[arg(long, default_value_t = 8089)]
+        porta: u16,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComandoGoal {
+    /// Cria um goal (começa como "proposto").
+    Add {
+        /// Título curto.
+        titulo: String,
+        /// Núcleo: a essência do goal e o critério de pronto, em 1-2 frases.
+        #[arg(long)]
+        nucleo: String,
+        #[arg(long, default_value = "")]
+        descricao: String,
+        /// Maior = mais importante.
+        #[arg(long, default_value_t = 0)]
+        prioridade: i64,
+    },
+    /// Lista os goals ativos.
+    List {
+        /// Inclui concluídos e abandonados.
+        #[arg(long)]
+        todos: bool,
+    },
+    /// Mostra um goal e o histórico de transições.
+    Show { id: i64 },
+    /// Muda o estado de um goal (transição validada).
+    Mover {
+        id: i64,
+        /// proposto, comprometido, executando, validando, concluido, bloqueado, abandonado
+        estado: String,
+        #[arg(long)]
+        motivo: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComandoCron {
+    /// Agenda um lembrete. Ex.: abiyss cron add bom-dia "0 9 * * *" "Revise os goals"
+    Add {
+        nome: String,
+        /// 5 campos: minuto hora dia mês dia-da-semana (fuso local).
+        expressao: String,
+        /// Texto que vira evento na fila quando o cron disparar.
+        mensagem: String,
+    },
+    /// Lista os crons.
+    List,
+    /// Remove um cron pelo nome.
+    Remover { nome: String },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    iniciar_logs();
+    let cli = Cli::parse();
+    let caminho_config = Config::caminho_padrao(cli.config.as_deref());
+
+    match cli.comando {
+        Comando::MockNim { porta } => cli::nim::rodar_mock(porta).await,
+        Comando::TestarNim {
+            modelo,
+            sem_stream,
+            mensagem,
+        } => {
+            let config = Config::carregar(&caminho_config)?;
+            cli::nim::testar_nim(&config, modelo, !sem_stream, &mensagem).await
+        }
+        Comando::Daemon { uma_vez } => {
+            let config = Config::carregar(&caminho_config)?;
+            cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
+        }
+        Comando::Status => cli::daemon::status(&Config::carregar(&caminho_config)?),
+        Comando::Goal(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoGoal::Add {
+                    titulo,
+                    nucleo,
+                    descricao,
+                    prioridade,
+                } => cli::goal::adicionar(
+                    &config,
+                    NovoGoal {
+                        titulo,
+                        nucleo,
+                        descricao,
+                        prioridade,
+                    },
+                ),
+                ComandoGoal::List { todos } => cli::goal::listar(&config, todos),
+                ComandoGoal::Show { id } => cli::goal::mostrar(&config, id),
+                ComandoGoal::Mover { id, estado, motivo } => {
+                    cli::goal::mover(&config, id, &estado, &motivo)
+                }
+            }
+        }
+        Comando::Cron(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoCron::Add {
+                    nome,
+                    expressao,
+                    mensagem,
+                } => cli::goal::cron_adicionar(&config, &nome, &expressao, &mensagem),
+                ComandoCron::List => cli::goal::cron_listar(&config),
+                ComandoCron::Remover { nome } => cli::goal::cron_remover(&config, &nome),
+            }
+        }
+        Comando::Diario { limite } => {
+            cli::goal::diario_listar(&Config::carregar(&caminho_config)?, limite)
+        }
+        Comando::Ferramentas => {
+            let config = Config::carregar(&caminho_config)?;
+            cli::ferramentas::listar(&config).await
+        }
+        Comando::Chat {
+            continuar,
+            conversa,
+            mensagem,
+            mostrar_raciocinio,
+        } => {
+            let config = Config::carregar(&caminho_config)?;
+            let opcoes = cli::chat::OpcoesChat {
+                continuar,
+                conversa,
+                mensagem,
+                mostrar_raciocinio,
+            };
+            cli::chat::executar(config, opcoes).await
+        }
+    }
+}
+
+/// Logs vão para o stderr. Controle o nível com RUST_LOG (ex.: RUST_LOG=abiyss=debug).
+fn iniciar_logs() {
+    let filtro = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("abiyss=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filtro)
+        .with_writer(std::io::stderr)
+        .init();
+}
