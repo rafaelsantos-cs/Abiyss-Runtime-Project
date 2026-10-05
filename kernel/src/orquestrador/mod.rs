@@ -109,6 +109,14 @@ pub fn reemprestar<'b>(ao_receber: &'b mut AoReceber<'_>) -> AoReceber<'b> {
     }
 }
 
+/// Tempos medidos numa tentativa de chamada (vão para `chamadas_modelo`).
+struct Latencia {
+    stream: bool,
+    /// `None` quando a chamada falhou antes de qualquer token.
+    primeiro_token: Option<Duration>,
+    total: Duration,
+}
+
 /// O que os dois pools têm em comum: cliente, fila, banco e retentativas.
 struct NucleoPool {
     nome: &'static str,
@@ -165,17 +173,37 @@ impl NucleoPool {
             self.esperar_ficha(prioridade, baldes).await?;
 
             let inicio = Instant::now();
+            // Tempo até o primeiro token: no streaming, o primeiro pedaço
+            // (texto, raciocínio ou início de ferramenta) que chega; sem
+            // streaming, o primeiro token só chega junto com a resposta inteira.
+            let mut primeiro_token: Option<Duration> = None;
+            let stream = ao_receber.is_some();
             let resultado = match ao_receber.as_mut() {
-                Some(callback) => self.cliente.completar_stream(pedido, *callback).await,
+                Some(callback) => {
+                    let mut medir_e_repassar = |evento: EventoStream| {
+                        if primeiro_token.is_none() {
+                            primeiro_token = Some(inicio.elapsed());
+                        }
+                        callback(evento);
+                    };
+                    self.cliente
+                        .completar_stream(pedido, &mut medir_e_repassar)
+                        .await
+                }
                 None => self.cliente.completar(pedido).await,
             };
-            self.registrar(
-                origem,
-                &pedido.model,
-                tentativa,
-                &resultado,
-                inicio.elapsed(),
-            );
+            let duracao = inicio.elapsed();
+            let latencia = Latencia {
+                stream,
+                // Resposta sem nenhum pedaço (ex.: só `usage`) ou sem
+                // streaming: o primeiro token chegou com o fim da resposta.
+                primeiro_token: match &resultado {
+                    Ok(_) => Some(primeiro_token.unwrap_or(duracao)),
+                    Err(_) => primeiro_token,
+                },
+                total: duracao,
+            };
+            self.registrar(origem, &pedido.model, tentativa, &resultado, &latencia);
 
             let erro = match resultado {
                 Ok(resposta) => return Ok(resposta),
@@ -213,7 +241,7 @@ impl NucleoPool {
         modelo: &str,
         tentativa: u32,
         resultado: &Result<RespostaModelo, ErroNim>,
-        duracao: Duration,
+        latencia: &Latencia,
     ) {
         let (status, http, entrada, saida) = match resultado {
             Ok(r) => ("ok", None, r.uso.prompt_tokens, r.uso.completion_tokens),
@@ -224,8 +252,8 @@ impl NucleoPool {
         let gravou = self.banco.conexao().execute(
             "INSERT INTO chamadas_modelo
                (momento_ms, pool, origem, modelo, tentativa, status, http_status,
-                tokens_entrada, tokens_saida, duracao_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                tokens_entrada, tokens_saida, duracao_ms, primeiro_token_ms, stream)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 agora_ms(),
                 self.nome,
@@ -236,7 +264,9 @@ impl NucleoPool {
                 http,
                 entrada as i64,
                 saida as i64,
-                duracao.as_millis() as i64
+                latencia.total.as_millis() as i64,
+                latencia.primeiro_token.map(|d| d.as_millis() as i64),
+                latencia.stream
             ],
         );
         if let Err(e) = gravou {

@@ -203,6 +203,14 @@ const MIGRACOES: &[&str] = &[
         momento_ms INTEGER NOT NULL
     );
     "#,
+    // 8 (infra v0.2) — latência das chamadas ao modelo: tempo até o primeiro
+    // token (NULL quando a chamada falhou antes de qualquer token) e se a
+    // chamada foi por streaming. A duração total já existia (`duracao_ms`).
+    r#"
+    ALTER TABLE chamadas_modelo ADD COLUMN primeiro_token_ms INTEGER;
+    ALTER TABLE chamadas_modelo ADD COLUMN stream INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_chamadas_modelo_momento ON chamadas_modelo(modelo, momento_ms);
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

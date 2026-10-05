@@ -23,6 +23,7 @@ pub mod historico;
 pub mod identidade;
 pub mod importacoes;
 pub mod interocepcao;
+pub mod latencia;
 pub mod mcp;
 pub mod memoria;
 pub mod nim;
