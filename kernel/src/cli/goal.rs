@@ -55,6 +55,9 @@ pub fn mostrar(config: &Config, id: i64) -> anyhow::Result<()> {
         formatar_ms(g.criado_ms),
         formatar_ms(g.atualizado_ms)
     );
+    if let Some(extras) = goals::extras(&banco, id)? {
+        println!("Campos extras (preservados da importação): {extras}");
+    }
     let proximos: Vec<&str> = g
         .estado
         .proximos_permitidos()
@@ -165,9 +168,21 @@ pub fn diario_listar(config: &Config, limite: usize) -> anyhow::Result<()> {
         );
         println!("  ação:        {}", e.acao);
         println!("  expectativa: {}", e.expectativa);
+        if let Some(sinais) = &e.sinais {
+            println!("  sinais:      {sinais}");
+        }
+        if let Some(risco) = &e.risco {
+            println!("  risco:       {risco}");
+        }
+        if let Some(confianca) = e.confianca {
+            println!("  confiança:   {:.0}%", confianca * 100.0);
+        }
         match e.resultado {
             Some(r) => println!("  resultado:   {}", r.replace('\n', "\n               ")),
             None => println!("  resultado:   (ainda não observado)"),
+        }
+        if let Some(extras) = &e.extras {
+            println!("  extras:      {extras}");
         }
     }
     Ok(())

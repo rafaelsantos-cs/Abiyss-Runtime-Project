@@ -17,6 +17,7 @@
 use rusqlite::{OptionalExtension, params};
 
 use crate::db::Banco;
+use crate::importacoes;
 use crate::tempo::agora_ms;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -143,6 +144,22 @@ pub struct EventoGoal {
     pub autor: String,
 }
 
+/// Um goal vindo de outro sistema (ex.: o Hermes), que já nasce no
+/// estado em que estava lá.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GoalImportado {
+    pub titulo: String,
+    pub nucleo: String,
+    pub descricao: String,
+    pub prioridade: i64,
+    pub estado: EstadoGoal,
+    /// Motivo do evento de criação (ex.: o estado original no Hermes).
+    pub motivo: String,
+    pub criado_ms: i64,
+    /// Campos que o kernel não conhece, preservados em JSON.
+    pub extras: Option<String>,
+}
+
 /// Dados para criar um goal novo.
 #[derive(Debug, Clone)]
 pub struct NovoGoal {
@@ -229,6 +246,69 @@ pub fn obter(banco: &Banco, id: i64) -> Result<Goal, ErroGoal> {
         )
         .optional()?
         .ok_or(ErroGoal::NaoEncontrado(id))
+}
+
+/// Grava um goal importado JÁ no estado de origem, com um evento de
+/// criação (de = nenhum) explicando de onde veio, e a chave de importação,
+/// tudo na mesma transação. Devolve `None` se a chave já foi importada.
+///
+/// Não passa pela máquina de estados de propósito: o goal "nasce" no
+/// estado em que estava (é a mesma coisa que `criar` faz com `proposto`).
+pub fn importar(
+    banco: &Banco,
+    goal: &GoalImportado,
+    chave: &str,
+    original: &str,
+) -> Result<Option<Goal>, ErroGoal> {
+    let ja = importacoes::ja_importado(banco, chave)
+        .map_err(|e| ErroGoal::Invalido(format!("{e:#}")))?;
+    if ja {
+        return Ok(None);
+    }
+    if goal.titulo.trim().is_empty() || goal.nucleo.trim().is_empty() {
+        return Err(ErroGoal::Invalido(
+            "goal importado precisa de título e núcleo".into(),
+        ));
+    }
+    let mut conexao = banco.conexao();
+    let transacao = conexao.transaction()?;
+    transacao.execute(
+        "INSERT INTO goals (titulo, nucleo, descricao, prioridade, estado, criado_ms,
+                            atualizado_ms, extras)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            goal.titulo.trim(),
+            goal.nucleo.trim(),
+            goal.descricao.trim(),
+            goal.prioridade,
+            goal.estado.como_texto(),
+            goal.criado_ms,
+            agora_ms(),
+            goal.extras
+        ],
+    )?;
+    let id = transacao.last_insert_rowid();
+    transacao.execute(
+        "INSERT INTO eventos_goal (goal_id, momento_ms, de, para, motivo, autor)
+         VALUES (?1, ?2, NULL, ?3, ?4, 'importacao')",
+        params![id, agora_ms(), goal.estado.como_texto(), goal.motivo],
+    )?;
+    importacoes::registrar_em(&transacao, chave, "goal", &id.to_string(), original)
+        .map_err(|e| ErroGoal::Invalido(format!("{e:#}")))?;
+    transacao.commit()?;
+    drop(conexao);
+    obter(banco, id).map(Some)
+}
+
+/// Campos extras (JSON) de um goal, se houver.
+pub fn extras(banco: &Banco, id: i64) -> Result<Option<String>, ErroGoal> {
+    let extras =
+        banco
+            .conexao()
+            .query_row("SELECT extras FROM goals WHERE id = ?1", params![id], |l| {
+                l.get(0)
+            })?;
+    Ok(extras)
 }
 
 /// Move o goal para `destino`, se a transição for permitida.
@@ -459,6 +539,39 @@ mod testes {
                 );
             }
         }
+    }
+
+    #[test]
+    fn importado_nasce_no_estado_de_origem_uma_vez_so() {
+        let banco = Banco::em_memoria().unwrap();
+        let goal = GoalImportado {
+            titulo: "Migrar".into(),
+            nucleo: "Rodando no runtime novo.".into(),
+            descricao: String::new(),
+            prioridade: 2,
+            estado: EstadoGoal::Executando,
+            motivo: "importado do Hermes (estado original: 'active')".into(),
+            criado_ms: 1_000,
+            extras: Some("{\"owner\":\"abiyss\"}".into()),
+        };
+        let g = importar(&banco, &goal, "hermes:goal:g-001", "{}")
+            .unwrap()
+            .unwrap();
+        assert_eq!(g.estado, EstadoGoal::Executando);
+        assert_eq!(g.criado_ms, 1_000);
+        let historico = eventos(&banco, g.id).unwrap();
+        assert_eq!(historico.len(), 1);
+        assert_eq!(historico[0].de, None);
+        assert_eq!(historico[0].autor, "importacao");
+        assert!(historico[0].motivo.contains("active"));
+        assert!(extras(&banco, g.id).unwrap().unwrap().contains("owner"));
+        // De novo: nada muda.
+        assert!(
+            importar(&banco, &goal, "hermes:goal:g-001", "{}")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(listar(&banco, true).unwrap().len(), 1);
     }
 
     #[test]

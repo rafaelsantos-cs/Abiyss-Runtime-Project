@@ -185,6 +185,24 @@ const MIGRACOES: &[&str] = &[
     );
     CREATE INDEX idx_registro_caminho ON registro_memoria(caminho, id);
     "#,
+    // 7 (A5) — importação do Hermes: o diário ganha sinais, risco e
+    // confiança; diário e goals ganham `extras` (campos desconhecidos
+    // preservados, em JSON); `importacoes` garante que importar duas vezes
+    // não duplica nada (uma chave por item importado).
+    r#"
+    ALTER TABLE diario ADD COLUMN sinais TEXT;
+    ALTER TABLE diario ADD COLUMN risco TEXT;
+    ALTER TABLE diario ADD COLUMN confianca REAL;
+    ALTER TABLE diario ADD COLUMN extras TEXT;
+    ALTER TABLE goals ADD COLUMN extras TEXT;
+    CREATE TABLE importacoes (
+        chave      TEXT PRIMARY KEY,
+        tipo       TEXT    NOT NULL,
+        destino    TEXT    NOT NULL,
+        original   TEXT    NOT NULL DEFAULT '',
+        momento_ms INTEGER NOT NULL
+    );
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

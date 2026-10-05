@@ -71,6 +71,15 @@ enum Comando {
     Skills,
     /// Aplica as propostas de memória pendentes (ou rejeita, com motivo).
     Sleep,
+    /// Importa a memória do Hermes. Sem --aplicar, só mostra o relatório.
+    ImportarHermes {
+        /// Pasta do Hermes (ex.: ~/.hermes).
+        #[arg(long)]
+        origem: PathBuf,
+        /// Grava de verdade (sem isto é só simulação).
+        #[arg(long)]
+        aplicar: bool,
+    },
     /// Memória de longo prazo (cofre do Obsidian).
     #[command(subcommand)]
     Memoria(ComandoMemoria),
@@ -233,6 +242,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Comando::Skills => cli::ferramentas::skills(&Config::carregar(&caminho_config)?),
         Comando::Sleep => cli::memoria::sleep(&Config::carregar(&caminho_config)?),
+        Comando::ImportarHermes { origem, aplicar } => {
+            cli::hermes::importar(&Config::carregar(&caminho_config)?, &origem, aplicar)
+        }
         Comando::Memoria(sub) => {
             let config = Config::carregar(&caminho_config)?;
             match sub {

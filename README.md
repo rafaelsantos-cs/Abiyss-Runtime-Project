@@ -35,6 +35,7 @@ comando (`abiyss ...`); não há painel web.
 abiyss.toml  .env            ← configuração (sem segredos) + chaves (fora do git)
 identity/nucleo.md           ← núcleo de identidade (o Abiyss NÃO edita)
 identity/memoria-central.md  ← memória central com orçamento (fora do git; escrita só pelo sleep/importação)
+identity/nucleo.proposto.md  ← rascunho de núcleo gerado pela importação do Hermes (fora do git; o kernel não lê)
 skills/                      ← skills (SKILL.md); só leitura para o Abiyss
 kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/nim/                   ← cliente NIM (SSE, tool calling) + mock para testes
@@ -47,7 +48,8 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/subagentes.rs          ← sub-agentes assíncronos
   src/diario.rs interocepcao.rs ← base da metacognição
   src/skills.rs frontmatter.rs ← skills com revelação progressiva
-  src/memoria/               ← cofre (Obsidian), propostas, sleep, busca
+  src/memoria/               ← cofre (Obsidian), propostas, sleep, busca (qmd/texto), memória central
+  src/hermes/                ← importador do Hermes (simulação, idempotente, sem segredos)
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
 cofre/                       ← memória de longo prazo (fora do git; criada sozinha)
@@ -239,6 +241,7 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss memoria buscar "consulta" [--escopo interno\|externo\|ambos]` | Busca no cofre (a mesma da ferramenta) |
 | `abiyss memoria esquecer CAMINHO` | Remove uma nota (ex.: `01_internal/pessoas/ana.md`) e registra só que foi removida |
 | `abiyss memoria central` | Mostra a memória central e o uso do orçamento |
+| `abiyss importar-hermes --origem ~/.hermes [--aplicar]` | Importa a memória do Hermes (simulação sem `--aplicar`); veja [`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md) |
 | `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
 | `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
@@ -325,6 +328,24 @@ proposta); o kernel nunca corta em silêncio. Se o arquivo for editado à mão
 e passar do limite, ele vai inteiro para o prompt e `abiyss status` avisa.
 O Abiyss escreve aqui com `memoria_propor(escopo="central", ...)` (mesma
 regra dura do escopo interno; repetições são ignoradas).
+
+### Importar do Hermes
+
+```bash
+abiyss importar-hermes --origem ~/.hermes            # simulação: só o relatório
+abiyss importar-hermes --origem ~/.hermes --aplicar  # grava
+```
+
+Simulação por padrão; idempotente (rodar de novo não duplica nada); nunca
+abre `.env`, `auth.json` nem arquivos com nome de segredo (só lista);
+campos desconhecidos são preservados e listados. Goals → tabela `goals`
+(estado desconhecido vira `proposto`, com o original no motivo); journal →
+`diario` (com sinais, risco, confiança); diário pessoal → `01_internal/diario/`;
+`SOUL.md` e `auto-modelo.json` → `01_internal/identidade/` e o rascunho
+`identity/nucleo.proposto.md` (o `nucleo.md` nunca é alterado);
+`MEMORY.md`/`USER.md` → memória central, com o excedente em `01_internal/`.
+Todas as suposições sobre os formatos e o roteiro de teste na VM estão em
+[`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md).
 
 ---
 

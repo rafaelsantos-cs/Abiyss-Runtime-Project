@@ -462,6 +462,17 @@ pub fn achar_data(texto: &str) -> Option<chrono::NaiveDate> {
     }
     (0..=bytes.len() - 10).find_map(|i| {
         let pedaco = texto.get(i..i + 10)?;
+        // Formato exato AAAA-MM-DD (o chrono sozinho aceita anos curtos).
+        let formato_ok = pedaco.char_indices().all(|(j, c)| {
+            if j == 4 || j == 7 {
+                c == '-'
+            } else {
+                c.is_ascii_digit()
+            }
+        });
+        if !formato_ok {
+            return None;
+        }
         chrono::NaiveDate::parse_from_str(pedaco, "%Y-%m-%d").ok()
     })
 }
