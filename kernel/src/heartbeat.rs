@@ -21,7 +21,8 @@ use crate::eventos::{self, Evento};
 use crate::goals::{self, EstadoGoal, Goal};
 use crate::identidade::Identidade;
 use crate::nim::{self, Mensagem};
-use crate::orquestrador::{Origem, Orquestrador};
+use crate::orquestrador::{Nivel, Origem, Orquestrador};
+use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
 use crate::tempo::{agora_ms, formatar_ms};
 
 /// Autor registrado nas transições feitas pelo heartbeat.
@@ -52,11 +53,28 @@ pub enum Acao {
         para: String,
         motivo: String,
     },
+    /// Delega uma tarefa a um sub-agente (resultado chega como evento).
+    Delegar {
+        nivel: String,
+        tarefa: String,
+        #[serde(default)]
+        contexto: String,
+        #[serde(default = "prazo_padrao")]
+        prazo_segundos: u64,
+        #[serde(default)]
+        goal_id: Option<i64>,
+    },
+    /// Cancela um sub-agente em andamento.
+    CancelarSubagente { id: i64 },
     /// Não fazer nada agora.
     Aguardar {
         #[serde(default)]
         motivo: String,
     },
+}
+
+fn prazo_padrao() -> u64 {
+    600
 }
 
 /// Resumo de um ciclo, devolvido para quem chamou (daemon, testes, CLI).
@@ -91,15 +109,24 @@ pub struct Heartbeat {
     config: Config,
     banco: Banco,
     orquestrador: Orquestrador,
+    subagentes: ControleSubagentes,
 }
 
 impl Heartbeat {
     pub fn novo(config: Config, banco: Banco, orquestrador: Orquestrador) -> Heartbeat {
+        let subagentes = ControleSubagentes::novo(config.clone(), banco.clone(), None);
         Heartbeat {
             config,
             banco,
             orquestrador,
+            subagentes,
         }
+    }
+
+    /// Usa um controle ligado ao executor (delegações começam na hora).
+    pub fn com_subagentes(mut self, controle: ControleSubagentes) -> Heartbeat {
+        self.subagentes = controle;
+        self
     }
 
     /// Roda um ciclo completo.
@@ -115,6 +142,7 @@ impl Heartbeat {
         let foco = goals::em_foco(&ativos);
         let novos = eventos::pendentes(&self.banco, self.config.daemon.max_eventos_por_ciclo)?;
         let ultimo = ultimo_ciclo(&self.banco, true)?;
+        let trabalhando = subagentes::ativos(&self.banco)?;
         resultado.goal_foco = foco.as_ref().map(|g| g.id);
 
         // 2. Precisa mesmo chamar o modelo?
@@ -122,6 +150,7 @@ impl Heartbeat {
             &novos,
             foco.as_ref(),
             ultimo.as_ref(),
+            trabalhando.len(),
             inicio,
             self.config.daemon.revisao_minima_segundos,
         );
@@ -140,6 +169,7 @@ impl Heartbeat {
                 foco.as_ref(),
                 &ativos,
                 &novos,
+                &trabalhando,
                 ultimo.as_ref(),
                 inicio,
             )),
@@ -209,6 +239,26 @@ impl Heartbeat {
             .with_context(|| format!("ação não reconhecida: {bruta}"))?;
         match acao {
             Acao::Aguardar { motivo } => Ok(format!("aguardando ({motivo})")),
+            Acao::Delegar {
+                nivel,
+                tarefa,
+                contexto,
+                prazo_segundos,
+                goal_id,
+            } => {
+                let nivel = Nivel::de_texto(&nivel)
+                    .with_context(|| format!("nível inválido '{nivel}' (ultra, medium ou low)"))?;
+                let pedido = PedidoDelegacao {
+                    nivel,
+                    tarefa,
+                    contexto,
+                    prazo_segundos,
+                    goal_id,
+                };
+                let id = self.subagentes.delegar(&pedido, "heartbeat")?;
+                Ok(format!("sub-agente {id} ({}) delegado", nivel.como_texto()))
+            }
+            Acao::CancelarSubagente { id } => self.subagentes.cancelar(id),
             Acao::TransicionarGoal {
                 goal_id,
                 para,
@@ -246,6 +296,9 @@ Responda SOMENTE com um objeto JSON, sem texto antes ou depois:\n\
 \"decisao\": \"o que você decidiu e por quê\",\n  \"acoes\": []\n}}\n\n\
 Ações possíveis em \"acoes\":\n\
 - {{\"tipo\": \"transicionar_goal\", \"goal_id\": N, \"para\": \"<estado>\", \"motivo\": \"...\"}}\n\
+- {{\"tipo\": \"delegar\", \"nivel\": \"ultra|medium|low\", \"tarefa\": \"...\", \"contexto\": \"...\", \"prazo_segundos\": 600, \"goal_id\": N}}\n\
+  (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento)\n\
+- {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
 - {{\"tipo\": \"aguardar\", \"motivo\": \"...\"}}\n\n\
 Transições de goal permitidas (qualquer outra é recusada pelo kernel):\n{transicoes}\
 Toda transição precisa de motivo. Se nada precisa ser feito, use \"acoes\": []."
@@ -257,6 +310,7 @@ pub fn motivo_para_chamar(
     novos: &[Evento],
     foco: Option<&Goal>,
     ultimo: Option<&Ciclo>,
+    subagentes_ativos: usize,
     agora: i64,
     revisao_minima_segundos: u64,
 ) -> Option<String> {
@@ -264,12 +318,18 @@ pub fn motivo_para_chamar(
         return Some(format!("{} evento(s) novo(s) na fila", novos.len()));
     }
     let goal = foco?;
+    // Com sub-agente trabalhando, o resultado chegará como evento:
+    // não vale gastar uma chamada só para "ver como está".
+    let revisao_permitida = subagentes_ativos == 0;
     match ultimo {
         None => Some(format!("primeiro ciclo com o goal #{}", goal.id)),
         Some(c) if goal.atualizado_ms > c.inicio_ms => {
             Some(format!("o goal #{} mudou desde o último ciclo", goal.id))
         }
-        Some(c) if agora - c.inicio_ms >= (revisao_minima_segundos as i64) * 1000 => {
+        Some(c)
+            if revisao_permitida
+                && agora - c.inicio_ms >= (revisao_minima_segundos as i64) * 1000 =>
+        {
             Some(format!("revisão periódica do goal #{}", goal.id))
         }
         Some(_) => None,
@@ -282,6 +342,7 @@ pub fn montar_contexto(
     foco: Option<&Goal>,
     ativos: &[Goal],
     novos: &[Evento],
+    trabalhando: &[InfoSubagente],
     ultimo: Option<&Ciclo>,
     agora: i64,
 ) -> String {
@@ -305,6 +366,25 @@ pub fn montar_contexto(
         texto.push_str(&format!(
             "- #{} [{}] prioridade {} — {}: {}\n",
             g.id, g.estado, g.prioridade, g.titulo, g.nucleo
+        ));
+    }
+
+    texto.push_str("\n## Sub-agentes em andamento\n");
+    if trabalhando.is_empty() {
+        texto.push_str("(nenhum)\n");
+    }
+    for s in trabalhando {
+        let goal = s
+            .goal_id
+            .map(|g| format!(" (goal #{g})"))
+            .unwrap_or_default();
+        texto.push_str(&format!(
+            "- #{} [{}] {}{}: {}\n",
+            s.id,
+            s.nivel.como_texto(),
+            s.estado.como_texto(),
+            goal,
+            s.tarefa
         ));
     }
 
@@ -474,23 +554,26 @@ mod testes {
             conteudo: "y".into(),
         };
         let g = goal(1, 100);
+        let mudou = goal(1, 600);
+        let anterior = ciclo(500);
+        let chama =
+            |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>, ativos, agora| {
+                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60)
+            };
         // Sem goal e sem evento: não chama.
-        assert_eq!(motivo_para_chamar(&[], None, None, 1000, 60), None);
+        assert_eq!(chama(&[], None, None, 0, 1000), None);
         // Evento novo: chama.
-        assert!(motivo_para_chamar(&[evento], None, None, 1000, 60).is_some());
+        assert!(chama(std::slice::from_ref(&evento), None, None, 0, 1000).is_some());
         // Goal sem ciclo anterior: chama.
-        assert!(motivo_para_chamar(&[], Some(&g), None, 1000, 60).is_some());
+        assert!(chama(&[], Some(&g), None, 0, 1000).is_some());
         // Goal parado e ciclo recente: não chama.
-        assert_eq!(
-            motivo_para_chamar(&[], Some(&g), Some(&ciclo(500)), 1000, 60),
-            None
-        );
+        assert_eq!(chama(&[], Some(&g), Some(&anterior), 0, 1000), None);
         // Goal mudou depois do último ciclo: chama.
-        assert!(
-            motivo_para_chamar(&[], Some(&goal(1, 600)), Some(&ciclo(500)), 1000, 60).is_some()
-        );
-        // Passou a revisão mínima: chama.
-        assert!(motivo_para_chamar(&[], Some(&g), Some(&ciclo(500)), 500 + 60_000, 60).is_some());
+        assert!(chama(&[], Some(&mudou), Some(&anterior), 0, 1000).is_some());
+        // Passou a revisão mínima: chama...
+        assert!(chama(&[], Some(&g), Some(&anterior), 0, 60_500).is_some());
+        // ...a não ser que haja sub-agente trabalhando (o resultado virá como evento).
+        assert_eq!(chama(&[], Some(&g), Some(&anterior), 1, 60_500), None);
     }
 
     #[test]
@@ -498,7 +581,7 @@ mod testes {
         let mut g = goal(7, 0);
         g.titulo = "Escrever o livro".into();
         g.nucleo = "Terminar o capítulo 1 até sexta.".into();
-        let texto = montar_contexto(Some(&g), std::slice::from_ref(&g), &[], None, 0);
+        let texto = montar_contexto(Some(&g), std::slice::from_ref(&g), &[], &[], None, 0);
         assert!(texto.starts_with("### NÚCLEO DO GOAL EM FOCO — #7"));
         assert_eq!(texto.matches("Terminar o capítulo 1 até sexta.").count(), 3);
         let fim = texto.rfind("### NÚCLEO DO GOAL EM FOCO").unwrap();

@@ -13,6 +13,7 @@ use abiyss::historico;
 use abiyss::mcp::PonteMcp;
 use abiyss::nim::EventoStream;
 use abiyss::orquestrador::Orquestrador;
+use abiyss::subagentes::ControleSubagentes;
 
 pub struct OpcoesChat {
     pub continuar: bool,
@@ -28,7 +29,13 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
     // Sobe os servidores MCP (os que falharem são ignorados, com aviso no log).
     let mcp = Arc::new(PonteMcp::iniciar(&config).await);
-    let ferramentas = Arc::new(CaixaDeFerramentas::da_config(&config)?.com_mcp(mcp.clone()));
+    // `delegar` só grava o pedido: quem executa é o daemon.
+    let controle = ControleSubagentes::novo(config.clone(), banco.clone(), None);
+    let ferramentas = Arc::new(
+        CaixaDeFerramentas::da_config(&config)?
+            .com_mcp(mcp.clone())
+            .com_subagentes(controle),
+    );
 
     // Qual conversa usar: a pedida, a última, ou uma nova.
     let existente = match opcoes.conversa {

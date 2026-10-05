@@ -21,4 +21,5 @@ pub mod mcp;
 pub mod nim;
 pub mod orquestrador;
 pub mod status;
+pub mod subagentes;
 pub mod tempo;

@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::dados;
 use crate::mcp::PonteMcp;
 use crate::nim::{ChamadaFerramenta, Ferramenta};
+use crate::subagentes::ControleSubagentes;
 use workspace::Workspace;
 
 /// Nomes das ferramentas nativas.
@@ -31,12 +32,21 @@ pub struct ResultadoFerramenta {
     pub erro: bool,
 }
 
+/// Ferramentas de orquestração: só o Abiyss principal tem acesso.
+pub const DELEGAR: &str = "delegar";
+pub const STATUS: &str = "status";
+pub const CANCELAR: &str = "cancelar";
+
 /// Ferramentas nativas (as que o kernel implementa em Rust).
 const NATIVAS: &[&str] = &[LER_ARQUIVO, LISTAR_ARQUIVOS, ESCREVER_ARQUIVO];
+const ORQUESTRACAO: &[&str] = &[DELEGAR, STATUS, CANCELAR];
 
 pub struct CaixaDeFerramentas {
     workspace: Workspace,
     mcp: Arc<PonteMcp>,
+    /// Ferramentas de sub-agentes (`delegar`, `status`, `cancelar`).
+    /// `None` em caixas restritas: sub-agente nunca cria sub-agente.
+    subagentes: Option<ControleSubagentes>,
     /// Se `Some`, só estas ferramentas aparecem e podem ser executadas.
     /// Aceita curinga no fim: "exemplo__*".
     permitidas: Option<Vec<String>>,
@@ -57,8 +67,15 @@ impl CaixaDeFerramentas {
         CaixaDeFerramentas {
             workspace,
             mcp: Arc::new(PonteMcp::vazia()),
+            subagentes: None,
             permitidas: None,
         }
+    }
+
+    /// Acrescenta `delegar`, `status` e `cancelar`.
+    pub fn com_subagentes(mut self, controle: ControleSubagentes) -> CaixaDeFerramentas {
+        self.subagentes = Some(controle);
+        self
     }
 
     /// Acrescenta as ferramentas dos servidores MCP.
@@ -73,6 +90,8 @@ impl CaixaDeFerramentas {
         CaixaDeFerramentas {
             workspace: self.workspace.clone(),
             mcp: Arc::clone(&self.mcp),
+            // Regra do kernel: caixa restrita (sub-agente) não delega.
+            subagentes: None,
             permitidas: Some(nomes.to_vec()),
         }
     }
@@ -126,8 +145,14 @@ impl CaixaDeFerramentas {
                 }),
             ),
         ];
+        let orquestracao = if self.subagentes.is_some() {
+            definicoes_orquestracao()
+        } else {
+            vec![]
+        };
         todas
             .into_iter()
+            .chain(orquestracao)
             .chain(self.mcp.definicoes())
             .filter(|f| self.permitida(f.nome()))
             .collect()
@@ -144,6 +169,8 @@ impl CaixaDeFerramentas {
             ))
         } else if NATIVAS.contains(&nome) {
             self.executar_nativa(nome, &chamada.function.arguments)
+        } else if ORQUESTRACAO.contains(&nome) {
+            self.executar_orquestracao(nome, &chamada.function.arguments)
         } else if eh_mcp {
             match interpretar_argumentos(&chamada.function.arguments) {
                 Ok(args) => self.mcp.chamar(nome, args).await,
@@ -174,6 +201,40 @@ impl CaixaDeFerramentas {
         }
     }
 
+    fn executar_orquestracao(&self, nome: &str, argumentos: &str) -> anyhow::Result<String> {
+        let Some(controle) = &self.subagentes else {
+            anyhow::bail!("ferramenta '{nome}' não está disponível aqui");
+        };
+        let args = interpretar_argumentos(argumentos)?;
+        match nome {
+            DELEGAR => {
+                let pedido = ControleSubagentes::pedido_de_argumentos(&args)?;
+                let id = controle.delegar(&pedido, "chat")?;
+                Ok(json!({
+                    "id": id,
+                    "estado": "pendente",
+                    "observacao": "o sub-agente roda em segundo plano (no daemon); o resultado chega como evento na fila e pode ser consultado com status(id)"
+                })
+                .to_string())
+            }
+            STATUS => {
+                let id = args["id"]
+                    .as_i64()
+                    .ok_or_else(|| anyhow::anyhow!("falta o 'id' numérico"))?;
+                Ok(serde_json::to_string_pretty(
+                    &controle.status(id)?.como_json(),
+                )?)
+            }
+            CANCELAR => {
+                let id = args["id"]
+                    .as_i64()
+                    .ok_or_else(|| anyhow::anyhow!("falta o 'id' numérico"))?;
+                controle.cancelar(id)
+            }
+            _ => anyhow::bail!("ferramenta desconhecida: '{nome}'"),
+        }
+    }
+
     fn executar_nativa(&self, nome: &str, argumentos: &str) -> anyhow::Result<String> {
         let args = interpretar_argumentos(argumentos)?;
         match nome {
@@ -192,6 +253,37 @@ impl CaixaDeFerramentas {
             _ => anyhow::bail!("ferramenta desconhecida: '{nome}'"),
         }
     }
+}
+
+/// Definições de `delegar`, `status` e `cancelar`.
+fn definicoes_orquestracao() -> Vec<Ferramenta> {
+    vec![
+        Ferramenta::nova(
+            DELEGAR,
+            "Delega uma tarefa a um sub-agente que roda em segundo plano. Devolve um ID na hora; \
+             o relatório chega depois como evento. Níveis: ultra (mais capaz e caro), medium, low (mais barato).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "nivel": {"type": "string", "enum": ["ultra", "medium", "low"]},
+                    "tarefa": {"type": "string", "description": "O que fazer, de forma autocontida"},
+                    "contexto": {"type": "string", "description": "Informações que o sub-agente precisa (ele não vê esta conversa)"},
+                    "prazo": {"type": "integer", "description": "Prazo em segundos"}
+                },
+                "required": ["nivel", "tarefa"]
+            }),
+        ),
+        Ferramenta::nova(
+            STATUS,
+            "Consulta o estado e o relatório de um sub-agente pelo ID.",
+            json!({"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+        ),
+        Ferramenta::nova(
+            CANCELAR,
+            "Cancela um sub-agente pelo ID.",
+            json!({"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}),
+        ),
+    ]
 }
 
 /// Os argumentos chegam como TEXTO JSON. Texto vazio = sem argumentos.

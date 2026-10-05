@@ -4,9 +4,11 @@
 //! - A cada `cron_verificacao_segundos`: dispara crons vencidos e grava
 //!   um "sinal de vida" (código puro, sem modelo).
 //! - A cada `heartbeat_segundos`: um ciclo de heartbeat.
+//! - Em paralelo: o executor de sub-agentes.
 //! - SIGTERM (systemd) ou Ctrl+C: para com educação, mesmo no meio de um ciclo.
 
 use std::fs::{File, OpenOptions};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -16,8 +18,10 @@ use tokio::time::MissedTickBehavior;
 use crate::config::Config;
 use crate::cron;
 use crate::db::Banco;
+use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::Heartbeat;
 use crate::orquestrador::Orquestrador;
+use crate::subagentes::{self, ExecutorSubagentes};
 use crate::tempo::agora_ms;
 
 /// Chaves da tabela `estado_daemon`.
@@ -125,15 +129,31 @@ pub struct Daemon {
     pub config: Config,
     pub banco: Banco,
     pub heartbeat: Heartbeat,
+    pub executor: Arc<ExecutorSubagentes>,
 }
 
 impl Daemon {
-    pub fn novo(config: Config, banco: Banco, orquestrador: Orquestrador) -> Daemon {
-        let heartbeat = Heartbeat::novo(config.clone(), banco.clone(), orquestrador);
+    /// `ferramentas` é a caixa base dos sub-agentes (cada nível recebe
+    /// uma versão restrita dela).
+    pub fn novo(
+        config: Config,
+        banco: Banco,
+        orquestrador: Orquestrador,
+        ferramentas: Arc<CaixaDeFerramentas>,
+    ) -> Daemon {
+        let executor = ExecutorSubagentes::novo(
+            config.clone(),
+            banco.clone(),
+            orquestrador.clone(),
+            ferramentas,
+        );
+        let heartbeat = Heartbeat::novo(config.clone(), banco.clone(), orquestrador)
+            .com_subagentes(executor.controle());
         Daemon {
             config,
             banco,
             heartbeat,
+            executor,
         }
     }
 
@@ -179,11 +199,17 @@ impl Daemon {
         gravar_estado(&self.banco, CHAVE_INICIADO, &agora_ms().to_string())?;
 
         if opcoes.uma_vez {
+            subagentes::recuperar_interrompidos(&self.banco)?;
             self.tique_de_cron();
             self.um_ciclo().await;
+            // Sub-agentes delegados neste ciclo rodam até o fim antes de sair.
+            self.executor.executar_pendentes_e_esperar().await?;
             gravar_estado(&self.banco, CHAVE_PARADO, &agora_ms().to_string())?;
             return Ok(());
         }
+
+        // O executor de sub-agentes roda numa tarefa separada.
+        let executor = tokio::spawn(Arc::clone(&self.executor).rodar());
 
         let mut parada = SinalDeParada::novo()?;
         let mut tique_cron = tokio::time::interval(Duration::from_secs(
@@ -214,6 +240,13 @@ impl Daemon {
                 }
                 _ = parada.esperar() => break,
             }
+        }
+        // Para o executor (e os sub-agentes dele) e registra quem ficou no meio.
+        executor.abort();
+        let _ = executor.await;
+        let interrompidos = subagentes::recuperar_interrompidos(&self.banco)?;
+        if interrompidos > 0 {
+            tracing::warn!("{interrompidos} sub-agente(s) interrompido(s) pela parada");
         }
         gravar_estado(&self.banco, CHAVE_PARADO, &agora_ms().to_string())?;
         tracing::info!("daemon do Abiyss parado");

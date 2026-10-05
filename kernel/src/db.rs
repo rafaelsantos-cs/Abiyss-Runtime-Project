@@ -118,6 +118,27 @@ const MIGRACOES: &[&str] = &[
         valor TEXT NOT NULL
     );
     "#,
+    // 4 (F7) — sub-agentes assíncronos.
+    r#"
+    CREATE TABLE subagentes (
+        id             INTEGER PRIMARY KEY,
+        nivel          TEXT    NOT NULL,
+        tarefa         TEXT    NOT NULL,
+        contexto       TEXT    NOT NULL DEFAULT '',
+        prazo_segundos INTEGER NOT NULL,
+        goal_id        INTEGER,
+        origem         TEXT    NOT NULL,
+        estado         TEXT    NOT NULL,
+        criado_ms      INTEGER NOT NULL,
+        iniciado_ms    INTEGER,
+        terminado_ms   INTEGER,
+        cancelar       INTEGER NOT NULL DEFAULT 0,
+        relatorio      TEXT,
+        tokens         INTEGER NOT NULL DEFAULT 0,
+        rodadas        INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_subagentes_estado ON subagentes(estado, id);
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.

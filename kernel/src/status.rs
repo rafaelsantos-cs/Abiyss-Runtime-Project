@@ -96,6 +96,20 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         )?;
     }
 
+    // Sub-agentes
+    let vivos = crate::subagentes::ativos(banco)?;
+    writeln!(t, "Sub-agentes ativos: {}", vivos.len())?;
+    for s in vivos.iter().take(5) {
+        writeln!(
+            t,
+            "  #{} [{}] {}: {}",
+            s.id,
+            s.nivel.como_texto(),
+            s.estado.como_texto(),
+            s.tarefa
+        )?;
+    }
+
     // Último ciclo
     match heartbeat::ultimo_ciclo(banco, false)? {
         None => writeln!(t, "Último ciclo: nenhum ainda")?,

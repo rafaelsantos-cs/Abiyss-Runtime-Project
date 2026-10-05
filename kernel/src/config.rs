@@ -30,6 +30,8 @@ pub struct Config {
     pub mcp: crate::mcp::ConfigMcp,
     #[serde(default)]
     pub daemon: ConfigDaemon,
+    #[serde(default)]
+    pub subagentes: ConfigSubagentes,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -226,6 +228,83 @@ impl Default for ConfigDaemon {
             cron_verificacao_segundos: 30,
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
+        }
+    }
+}
+
+/// Orçamento e ferramentas de um nível de sub-agente.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConfigNivelSubagente {
+    /// Tokens (entrada + saída, somando todas as rodadas).
+    pub max_tokens: u64,
+    /// Tempo máximo de vida; o prazo pedido na delegação não passa disto.
+    pub max_segundos: u64,
+    /// Máximo de idas e voltas com o modelo.
+    pub max_rodadas: usize,
+    /// Ferramentas permitidas (aceita curinga no fim: "exemplo__*").
+    /// `delegar`, `status` e `cancelar` NUNCA são dadas a sub-agentes.
+    pub ferramentas: Vec<String>,
+}
+
+impl Default for ConfigNivelSubagente {
+    fn default() -> Self {
+        ConfigNivelSubagente {
+            max_tokens: 50_000,
+            max_segundos: 600,
+            max_rodadas: 8,
+            ferramentas: vec!["ler_arquivo".into(), "listar_arquivos".into()],
+        }
+    }
+}
+
+/// Seção `[subagentes]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConfigSubagentes {
+    /// De quanto em quanto tempo o executor procura pedidos pendentes
+    /// (pedidos feitos pelo próprio daemon começam na hora).
+    pub verificacao_segundos: u64,
+    /// Máximo de sub-agentes vivos ao mesmo tempo (todos os níveis).
+    pub max_simultaneos: usize,
+    pub ultra: ConfigNivelSubagente,
+    pub medium: ConfigNivelSubagente,
+    pub low: ConfigNivelSubagente,
+}
+
+impl Default for ConfigSubagentes {
+    fn default() -> Self {
+        let todas = vec![
+            "ler_arquivo".to_string(),
+            "listar_arquivos".to_string(),
+            "escrever_arquivo".to_string(),
+            "exemplo__*".to_string(),
+        ];
+        ConfigSubagentes {
+            verificacao_segundos: 5,
+            max_simultaneos: 4,
+            ultra: ConfigNivelSubagente {
+                max_tokens: 200_000,
+                max_segundos: 1_800,
+                max_rodadas: 20,
+                ferramentas: todas.clone(),
+            },
+            medium: ConfigNivelSubagente {
+                max_tokens: 100_000,
+                max_segundos: 900,
+                max_rodadas: 12,
+                ferramentas: todas,
+            },
+            low: ConfigNivelSubagente {
+                max_tokens: 50_000,
+                max_segundos: 600,
+                max_rodadas: 8,
+                ferramentas: vec![
+                    "ler_arquivo".to_string(),
+                    "listar_arquivos".to_string(),
+                    "exemplo__*".to_string(),
+                ],
+            },
         }
     }
 }

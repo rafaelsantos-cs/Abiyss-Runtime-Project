@@ -204,6 +204,7 @@ async fn daemon_uma_vez_e_status() {
         amb.config.clone(),
         amb.banco.clone(),
         amb.orquestrador.clone(),
+        amb.ferramentas.clone(),
     );
     d.rodar(&OpcoesDaemon { uma_vez: true }).await.unwrap();
 
