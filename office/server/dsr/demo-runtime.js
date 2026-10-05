@@ -85,10 +85,16 @@ export class DemoRuntimeSource {
     this.rng = new Rng(seed);
     this.started = false;
     this.polls = 0;
+    this.runId = Date.now().toString(36);
   }
 
+  /**
+   * O emulador recomeça do zero a cada processo (ids de sub-agente
+   * reiniciam), então a chave muda a cada execução: posições são
+   * restauradas, atribuições de sub-agentes não.
+   */
   get key() {
-    return `demo:${this.seed}`;
+    return `demo:${this.seed}:${this.runId}`;
   }
 
   async start() {}

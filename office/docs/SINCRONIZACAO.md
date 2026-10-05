@@ -128,7 +128,7 @@ tempo. Reconexão é automática (`retry: 2000`).
 `data/office-state.json` é gravado a cada 15 s e ao parar (`SIGINT`/`SIGTERM`),
 de forma atômica (arquivo temporário + `rename`). Guarda posições, energia,
 última atividade livre e o estado da ponte (atribuições sub-agente → IMMo),
-marcado com a **chave da fonte** (caminho do banco ou semente da demo).
+marcado com a **chave da fonte** (o caminho do banco; na demo a chave é única por execução, porque o emulador recomeça do zero — então só as posições voltam).
 
 Ao reiniciar:
 
