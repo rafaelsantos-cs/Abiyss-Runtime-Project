@@ -290,6 +290,10 @@ max_duracao_ciclo_segundos = 900
 # `max_continuacoes_seguidas` vezes em sequência.
 continuacao_segundos = 20
 max_continuacoes_seguidas = 2
+# Ao subir depois de ficar fora do ar mais que isto (queda ou parada), o
+# daemon publica um evento kernel/reinicio com o tempo de ausência; o primeiro
+# ciclo recebe a skill planejar-o-dia.
+aviso_ausencia_minutos = 10
 
 # ---------------------------------------------------------------------------
 # Ritmo do dia (fuso local da máquina; o systemd define TZ=America/Sao_Paulo).

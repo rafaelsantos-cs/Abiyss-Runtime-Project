@@ -358,6 +358,9 @@ pub struct ConfigDaemon {
     pub continuacao_segundos: u64,
     /// Máximo de ciclos de continuação seguidos (depois volta ao intervalo normal).
     pub max_continuacoes_seguidas: u32,
+    /// Ao subir depois de ficar fora do ar mais que isto, o daemon publica
+    /// um evento `kernel/reinicio` (o primeiro ciclo replaneja o dia).
+    pub aviso_ausencia_minutos: u64,
 }
 
 impl Default for ConfigDaemon {
@@ -371,6 +374,7 @@ impl Default for ConfigDaemon {
             max_duracao_ciclo_segundos: 900,
             continuacao_segundos: 20,
             max_continuacoes_seguidas: 2,
+            aviso_ausencia_minutos: 10,
         }
     }
 }

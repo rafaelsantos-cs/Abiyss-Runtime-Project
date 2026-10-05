@@ -23,6 +23,8 @@ pub const TIPO_KERNEL: &str = "kernel";
 /// Resumo do sono, publicado ao acordar.
 pub const TIPO_SONO: &str = "sono";
 /// Resposta do usuário a um pedido do Abiyss.
+/// Origem do evento `kernel` publicado ao subir depois de uma ausência.
+pub const ORIGEM_REINICIO: &str = "reinicio";
 pub const TIPO_USUARIO: &str = "usuario";
 
 #[derive(Debug, Clone, PartialEq)]

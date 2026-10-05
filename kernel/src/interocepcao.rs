@@ -160,6 +160,35 @@ fn uso_pool(
     })
 }
 
+/// Continuidade: desde quando o daemon está no ar e como foi o último sono.
+fn continuidade(banco: &Banco, agora: i64) -> anyhow::Result<Vec<String>> {
+    use crate::daemon::{CHAVE_INICIADO, CHAVE_PARADO, ler_estado};
+    use crate::tempo::{formatar_duracao, formatar_ms};
+    let numero = |chave: &str| -> anyhow::Result<Option<i64>> {
+        Ok(ler_estado(banco, chave)?.and_then(|v| v.parse().ok()))
+    };
+    let mut linhas = Vec::new();
+    // No ar = a última execução começou e ainda não parou.
+    if let Some(inicio) = numero(CHAVE_INICIADO)?
+        && numero(CHAVE_PARADO)?.is_none_or(|p| p < inicio)
+    {
+        linhas.push(format!(
+            "No ar desde {} ({})",
+            formatar_ms(inicio),
+            formatar_duracao(agora - inicio)
+        ));
+    }
+    if let Some(s) = crate::sono::ultimo(banco)? {
+        linhas.push(format!(
+            "Último sono: revisão de {}, {} (terminou há {})",
+            s.dia,
+            s.estado,
+            formatar_duracao(agora - s.fim_ms.unwrap_or(s.inicio_ms))
+        ));
+    }
+    Ok(linhas)
+}
+
 impl Interocepcao {
     /// Mede tudo agora. Não chama o modelo nem a rede.
     pub fn medir(config: &Config, banco: &Banco) -> anyhow::Result<Interocepcao> {
@@ -195,7 +224,7 @@ impl Interocepcao {
         );
         let uso = crate::orcamento::uso_desde(banco, crate::ritmo::inicio_do_dia_local_ms())?;
         let orcamento = crate::orcamento::descrever(&config.orcamento, uso);
-        let mut kernel = Vec::new();
+        let mut kernel = continuidade(banco, agora_ms())?;
         let disjuntor = crate::vigilancia::ler_disjuntor(banco)?;
         if let Some(d) = crate::vigilancia::descrever_disjuntor(&disjuntor, agora_ms()) {
             kernel.push(format!("Disjuntor do heartbeat: {d}"));

@@ -653,8 +653,10 @@ pub fn skills_para_eventos(novos: &[Evento], auto: &ConfigSkillsAutomaticas) -> 
     let mut nomes: Vec<String> = Vec::new();
     for e in novos {
         let nome = match (e.tipo.as_str(), e.origem.as_str()) {
-            (eventos::TIPO_KERNEL, "estagnacao") => &auto.estagnacao,
-            (eventos::TIPO_SONO, _) | (eventos::TIPO_KERNEL, "reinicio") => &auto.despertar,
+            (eventos::TIPO_KERNEL, vigilancia::ORIGEM_ESTAGNACAO) => &auto.estagnacao,
+            (eventos::TIPO_SONO, _) | (eventos::TIPO_KERNEL, eventos::ORIGEM_REINICIO) => {
+                &auto.despertar
+            }
             _ => continue,
         };
         let nome = nome.trim();

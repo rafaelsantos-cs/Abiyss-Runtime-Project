@@ -36,6 +36,7 @@ use tokio::time::{Instant, MissedTickBehavior};
 use crate::config::Config;
 use crate::cron;
 use crate::db::Banco;
+use crate::eventos;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::{self, Heartbeat};
 use crate::manutencao;
@@ -43,7 +44,7 @@ use crate::orquestrador::Orquestrador;
 use crate::ritmo;
 use crate::sono::{self, Gatilho, Sono};
 use crate::subagentes::{self, ExecutorSubagentes};
-use crate::tempo::agora_ms;
+use crate::tempo::{agora_ms, formatar_duracao, formatar_ms};
 
 /// Chaves da tabela `estado_daemon`.
 pub const CHAVE_PID: &str = "pid";
@@ -241,6 +242,65 @@ pub fn proxima_espera(
         *seguidas = 0;
         normal
     }
+}
+
+/// Quanto tempo o Abiyss ficou fora do ar antes desta execução.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ausencia {
+    /// Fim da execução anterior (parada limpa ou último sinal de vida).
+    pub desde_ms: i64,
+    pub ate_ms: i64,
+    /// A execução anterior parou com educação (SIGTERM, Ctrl+C)?
+    pub parada_limpa: bool,
+}
+
+/// Compara o fim da execução anterior com agora. O fim é o `parado_ms`
+/// (se a execução anterior parou com educação depois de iniciar) ou o
+/// último sinal de vida (queda). Ausência menor que o limite, ou primeira
+/// execução, não conta.
+pub fn avaliar_ausencia(
+    iniciado_antes: Option<i64>,
+    parado: Option<i64>,
+    sinal_de_vida: Option<i64>,
+    agora: i64,
+    limite_minutos: u64,
+) -> Option<Ausencia> {
+    let iniciado = iniciado_antes?;
+    let parada_limpa = parado.is_some_and(|p| p >= iniciado);
+    let desde = if parada_limpa {
+        parado?
+    } else {
+        sinal_de_vida.unwrap_or(iniciado).max(iniciado)
+    };
+    (agora - desde > limite_minutos as i64 * 60_000).then_some(Ausencia {
+        desde_ms: desde,
+        ate_ms: agora,
+        parada_limpa,
+    })
+}
+
+/// Texto do evento `kernel/reinicio`.
+pub fn texto_ausencia(
+    a: &Ausencia,
+    crons_atrasados: usize,
+    subagentes_interrompidos: usize,
+) -> String {
+    let motivo = if a.parada_limpa {
+        "parada limpa".to_string()
+    } else {
+        format!(
+            "queda (último sinal de vida em {})",
+            formatar_ms(a.desde_ms)
+        )
+    };
+    format!(
+        "Fiquei fora do ar de {} até {} ({}); motivo: {motivo}; {crons_atrasados} cron(s) \
+         atrasado(s) disparam agora uma vez só (agrupados); {subagentes_interrompidos} \
+         sub-agente(s) interrompido(s).",
+        formatar_ms(a.desde_ms),
+        formatar_ms(a.ate_ms),
+        formatar_duracao(a.ate_ms - a.desde_ms)
+    )
 }
 
 /// Opções de linha de comando do daemon.
@@ -442,17 +502,43 @@ impl Daemon {
     where
         P: Future<Output = ()>,
     {
+        // Antes de sobrescrever: como terminou a execução anterior?
+        let numero = |chave: &str| -> anyhow::Result<Option<i64>> {
+            Ok(ler_estado(&self.banco, chave)?.and_then(|v| v.parse().ok()))
+        };
+        let agora = agora_ms();
+        let ausencia = avaliar_ausencia(
+            numero(CHAVE_INICIADO)?,
+            numero(CHAVE_PARADO)?,
+            numero(CHAVE_SINAL_DE_VIDA)?,
+            agora,
+            self.config.daemon.aviso_ausencia_minutos,
+        );
         gravar_estado(&self.banco, CHAVE_PID, &std::process::id().to_string())?;
-        gravar_estado(&self.banco, CHAVE_INICIADO, &agora_ms().to_string())?;
+        gravar_estado(&self.banco, CHAVE_INICIADO, &agora.to_string())?;
         let interrompidos = sono::marcar_interrompidos(&self.banco)?;
         if interrompidos > 0 {
             tracing::warn!(
                 "um sono foi interrompido pela última parada; será refeito se der tempo"
             );
         }
+        let subagentes_interrompidos = subagentes::recuperar_interrompidos(&self.banco)?;
+        if let Some(a) = ausencia {
+            let atrasados = cron::listar(&self.banco)?
+                .iter()
+                .filter(|c| c.ativo && c.proximo_ms <= agora)
+                .count();
+            let texto = texto_ausencia(&a, atrasados, subagentes_interrompidos);
+            tracing::info!("{texto}");
+            eventos::publicar(
+                &self.banco,
+                eventos::TIPO_KERNEL,
+                eventos::ORIGEM_REINICIO,
+                &texto,
+            )?;
+        }
 
         if opcoes.uma_vez {
-            subagentes::recuperar_interrompidos(&self.banco)?;
             self.tique_de_cron();
             self.um_ciclo_supervisionado().await;
             // Sub-agentes delegados neste ciclo rodam até o fim antes de sair.
@@ -655,6 +741,40 @@ mod testes {
         assert_eq!(proxima_espera(true, &mut seguidas, 2, c, n), c);
         assert_eq!(proxima_espera(false, &mut seguidas, 2, c, n), n);
         assert_eq!(seguidas, 0);
+    }
+
+    #[test]
+    fn ausencia_por_queda_por_parada_e_curta() {
+        let min = 60_000;
+        // Primeira execução: nada a comparar.
+        assert_eq!(avaliar_ausencia(None, None, None, 100 * min, 10), None);
+        // Queda: sem parada depois do início; conta do último sinal de vida.
+        let queda = avaliar_ausencia(Some(0), None, Some(30 * min), 100 * min, 10).unwrap();
+        assert!(!queda.parada_limpa);
+        assert_eq!(queda.desde_ms, 30 * min);
+        // Uma parada ANTERIOR ao último início não vale: também é queda.
+        let velha = avaliar_ausencia(
+            Some(50 * min),
+            Some(10 * min),
+            Some(60 * min),
+            100 * min,
+            10,
+        );
+        assert!(velha.is_some_and(|a| !a.parada_limpa && a.desde_ms == 60 * min));
+        // Parada limpa: conta da parada.
+        let limpa =
+            avaliar_ausencia(Some(0), Some(40 * min), Some(39 * min), 100 * min, 10).unwrap();
+        assert!(limpa.parada_limpa);
+        assert_eq!(limpa.desde_ms, 40 * min);
+        // Ausência curta (um restart rápido): sem aviso.
+        assert_eq!(
+            avaliar_ausencia(Some(0), Some(95 * min), None, 100 * min, 10),
+            None
+        );
+        let texto = texto_ausencia(&queda, 2, 1);
+        assert!(texto.contains("(1 h 10 min); motivo: queda (último sinal de vida em"));
+        assert!(texto.contains("2 cron(s) atrasado(s)"));
+        assert!(texto.contains("1 sub-agente(s) interrompido(s)"));
     }
 
     #[test]
