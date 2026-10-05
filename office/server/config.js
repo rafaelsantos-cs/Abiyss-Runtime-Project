@@ -25,6 +25,7 @@ Uso: node server/main.js [opções]
   --port N               porta HTTP (padrão 8090)                 (OFFICE_PORT)
   --seed N               semente da simulação (determinismo)
   --fresh                ignora o estado salvo: os IMMos entram pela porta
+  --open                 abre o navegador quando o servidor estiver no ar
   --no-persist           não grava data/office-state.json
   --time-scale X         acelera a simulação (só no modo demo)
   --clock ISO            relógio do escritório começa neste instante (só demo),
@@ -69,7 +70,7 @@ function readJson(file) {
 /** Interpreta argv (sem node e script). Devolve { overrides, flags }. */
 export function parseArgs(argv) {
   const o = {};
-  const flags = { help: false, fresh: false, configFile: null };
+  const flags = { help: false, fresh: false, open: false, configFile: null };
   const need = (i, name) => {
     if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) throw new ConfigError(`${name} precisa de um valor`);
     return argv[i + 1];
@@ -84,6 +85,7 @@ export function parseArgs(argv) {
     switch (a) {
       case '-h': case '--help': flags.help = true; break;
       case '--fresh': flags.fresh = true; break;
+      case '--open': flags.open = true; break;
       case '--no-persist': o.simulation = { ...o.simulation, persist: false }; break;
       case '--config': flags.configFile = need(i, a); i++; break;
       case '--source': o.source = { ...o.source, mode: need(i, a) }; i++; break;

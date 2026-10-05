@@ -3,3 +3,4 @@ data/
 logs/
 *.log
 artifacts/tmp/
+dist/

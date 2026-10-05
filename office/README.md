@@ -20,6 +20,25 @@ sem dependências) com navegação A*, máquinas de estado, persistência e
 sincronização por SSE, mais um **cliente web three.js** que só interpola e
 desenha. Todos os modelos são procedurais (primitivas), sem assets externos.
 
+## Rodar no seu PC (o jeito mais fácil)
+
+1. Instale o **Node.js LTS** (22.13 ou mais novo): <https://nodejs.org/>.
+2. Baixe o pacote `abiyss-office-<versão>.zip` (gerado por `npm run pacote`;
+   já traz o three.js, não precisa de `npm install`) e descompacte.
+3. Rode o lançador:
+   - **Windows:** dois cliques em `iniciar-windows.bat`;
+   - **Linux/macOS:** no terminal, dentro da pasta, `./iniciar.sh`.
+4. O navegador abre em <http://127.0.0.1:8090/>. Para parar, feche a janela
+   do terminal (ou Ctrl+C). Da próxima vez ele continua de onde parou; para
+   ver a chegada dos IMMos de novo: `iniciar-windows.bat --fresh`.
+
+Também dá para clonar a branch e usar os mesmos lançadores (eles instalam
+o three.js com `npm ci --omit=dev` na primeira vez).
+
+No seu PC a cena roda na GPU (na VM de desenvolvimento, sem GPU, era 1–3
+FPS em CPU) e, com internet, o clima de Contagem vem **ao vivo** da
+Open-Meteo.
+
 ## Requisitos
 
 - Node.js **≥ 22.13** (usa o `node:sqlite` embutido) — funciona em x86_64 e arm64;

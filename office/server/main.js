@@ -7,6 +7,7 @@
 // (veja --help e o README).
 
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 import { loadConfig, ConfigError, helpText, readRuntimeToml, PROJECT_ROOT } from './config.js';
@@ -21,6 +22,20 @@ import { splitView } from '../shared/protocol.js';
 
 const log = createLogger('main');
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+
+/** Abre o navegador padrão (Windows, macOS ou Linux). Falha só gera aviso. */
+function openBrowser(url) {
+  const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url]]
+    : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  try {
+    // No Windows, `start "" URL` precisa chegar ao cmd sem as aspas escapadas pelo Node.
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true, windowsVerbatimArguments: process.platform === 'win32' });
+    child.on('error', () => log.warn(`não consegui abrir o navegador; abra ${url}`));
+    child.unref();
+  } catch {
+    log.warn(`não consegui abrir o navegador; abra ${url}`);
+  }
+}
 
 function chooseSource(config) {
   const mode = config.source.mode;
@@ -141,6 +156,7 @@ async function main() {
     process.exit(1);
   }
   log.info(`escritório no ar: http://${address.address}:${address.port}/`, { fonte: kind, horasAtivas, restaurado: restored });
+  if (flags.open) openBrowser(`http://${address.address === '0.0.0.0' || address.address === '::' ? '127.0.0.1' : address.address}:${address.port}/`);
 
   // Laço da simulação: passos fixos, acompanhando o relógio real × escala.
   const dtMs = 1000 / config.simulation.tickHz;
