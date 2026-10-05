@@ -47,6 +47,10 @@ pub struct Interocepcao {
     pub disco_total_gib: f64,
     pub disco_livre_gib: f64,
     pub pools: Vec<UsoPool>,
+    /// Fase do dia (vigília/descanso) e as horas ativas configuradas.
+    pub fase: String,
+    /// Trabalho autônomo de hoje contra o orçamento diário.
+    pub orcamento: String,
 }
 
 /// Nome do dia da semana em português.
@@ -181,7 +185,17 @@ impl Interocepcao {
             )?,
         ];
 
+        let fase = format!(
+            "{} (horas ativas {})",
+            crate::ritmo::fase_agora(&config.ritmo).como_texto(),
+            config.ritmo.horas_ativas
+        );
+        let uso = crate::orcamento::uso_desde(banco, crate::ritmo::inicio_do_dia_local_ms())?;
+        let orcamento = crate::orcamento::descrever(&config.orcamento, uso);
+
         Ok(Interocepcao {
+            fase,
+            orcamento,
             agora: agora_formatado(),
             nucleos,
             carga: (carga.one, carga.five, carga.fifteen),
@@ -197,6 +211,12 @@ impl Interocepcao {
     pub fn como_texto(&self) -> String {
         let mut t = String::new();
         let _ = writeln!(t, "Data e hora: {}", self.agora);
+        if !self.fase.is_empty() {
+            let _ = writeln!(t, "Fase do dia: {}", self.fase);
+        }
+        if !self.orcamento.is_empty() {
+            let _ = writeln!(t, "Trabalho autônomo hoje: {}", self.orcamento);
+        }
         let _ = writeln!(
             t,
             "CPU: carga {:.2} / {:.2} / {:.2} (1/5/15 min) em {} núcleo(s)",
@@ -278,6 +298,8 @@ mod testes {
         assert!(texto.starts_with("Data e hora: "));
         assert!(texto.contains("Pool cerebro: 2/40 req"));
         assert!(texto.contains("1 limite(s) 429"));
+        assert!(texto.contains("Fase do dia: vigília"));
+        assert!(texto.contains("Trabalho autônomo hoje:"));
     }
 
     #[test]

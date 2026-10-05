@@ -38,6 +38,10 @@ pub struct Config {
     pub retencao: crate::manutencao::ConfigRetencao,
     #[serde(default)]
     pub skills: ConfigSkills,
+    #[serde(default)]
+    pub ritmo: crate::ritmo::ConfigRitmo,
+    #[serde(default)]
+    pub orcamento: crate::orcamento::ConfigOrcamento,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -550,6 +554,8 @@ impl Config {
         if self.daemon.max_duracao_ciclo_segundos == 0 {
             bail!("daemon.max_duracao_ciclo_segundos precisa ser > 0");
         }
+        self.ritmo.validar()?;
+        self.orcamento.validar()?;
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");
@@ -700,6 +706,10 @@ pub fn config_de_teste(base_url: &str, raiz: &Path) -> Config {
         api_key_env = "ABIYSS_TESTE_CHAVE_CEREBRO"
         [pools.subagentes]
         api_key_env = "ABIYSS_TESTE_CHAVE_SUBAGENTES"
+
+        # Testes não podem depender da hora em que rodam: sempre vigília.
+        [ritmo]
+        horas_ativas = "00:00-00:00"
         "#
     );
     let mut config = Config::de_texto(&texto).expect("config de teste inválida");

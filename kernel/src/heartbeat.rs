@@ -25,7 +25,9 @@ use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
 use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem};
+use crate::orcamento::{self, Gasto, NivelOrcamento};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
+use crate::ritmo::{self, Fase};
 use crate::skills::Skills;
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
 use crate::tempo::{agora_ms, formatar_ms};
@@ -189,7 +191,20 @@ impl Heartbeat {
         let trabalhando = subagentes::ativos(&self.banco)?;
         resultado.goal_foco = foco.as_ref().map(|g| g.id);
 
-        // 2. Precisa mesmo chamar o modelo?
+        // 2. Ritmo e orçamento (código): orçamento esgotado = sem chamada;
+        //    fora das horas ativas ou em alerta = sem revisão periódica.
+        let nivel = self.nivel_orcamento()?;
+        if nivel == NivelOrcamento::Esgotado {
+            resultado.motivo = "orçamento diário de trabalho autônomo esgotado: \
+                                eventos ficam na fila até amanhã"
+                .into();
+            registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
+            return Ok(resultado);
+        }
+        let fase = ritmo::fase_agora(&self.config.ritmo);
+        let permitir_revisao = fase == Fase::Vigilia && nivel == NivelOrcamento::Normal;
+
+        // 3. Precisa mesmo chamar o modelo?
         let motivo = motivo_para_chamar(
             &novos,
             foco.as_ref(),
@@ -197,6 +212,7 @@ impl Heartbeat {
             trabalhando.len(),
             inicio,
             self.config.daemon.revisao_minima_segundos,
+            permitir_revisao,
         );
         let Some(motivo) = motivo else {
             resultado.motivo = "nada novo: sem eventos e sem goal que precise de atenção".into();
@@ -206,7 +222,7 @@ impl Heartbeat {
         resultado.motivo = motivo;
         resultado.chamou_modelo = true;
 
-        // 3. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
+        // 4. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
         let corpo = match Interocepcao::medir(&self.config, &self.banco) {
             Ok(i) => i.como_texto(),
             Err(e) => format!(
@@ -249,7 +265,7 @@ impl Heartbeat {
         let ids: Vec<i64> = novos.iter().map(|e| e.id).collect();
         eventos::marcar_consumidos(&self.banco, &ids)?;
 
-        // 4. Interpreta e executa as ações.
+        // 5. Interpreta e executa as ações.
         let erro = match interpretar_decisao(&texto) {
             Ok(decisao) => {
                 for acao in &decisao.acoes {
@@ -312,6 +328,16 @@ impl Heartbeat {
         )
     }
 
+    /// Como está o orçamento diário do trabalho autônomo.
+    fn nivel_orcamento(&self) -> anyhow::Result<NivelOrcamento> {
+        let uso = orcamento::uso_desde(&self.banco, ritmo::inicio_do_dia_local_ms())?;
+        Ok(orcamento::avaliar(
+            &self.config.orcamento,
+            uso,
+            Gasto::HeartbeatOuSubagentes,
+        ))
+    }
+
     /// Skills que o kernel põe sozinho no contexto deste ciclo, conforme os
     /// eventos (estagnação, despertar...). Só skills confiáveis.
     fn procedimentos_automaticos(&self, novos: &[Evento]) -> Vec<(String, String)> {
@@ -338,6 +364,11 @@ impl Heartbeat {
                 prazo_segundos,
                 goal_id,
             } => {
+                if self.nivel_orcamento()? == NivelOrcamento::Esgotado {
+                    anyhow::bail!(
+                        "orçamento diário de trabalho autônomo esgotado: delegação recusada até amanhã"
+                    );
+                }
                 let nivel = Nivel::de_texto(&nivel)
                     .with_context(|| format!("nível inválido '{nivel}' (ultra, medium ou low)"))?;
                 let pedido = PedidoDelegacao {
@@ -434,6 +465,8 @@ Toda transição precisa de motivo. Se nada precisa ser feito, use \"acoes\": []
 }
 
 /// Decide, por código, se o ciclo precisa do modelo. `None` = não precisa.
+/// `permitir_revisao = false` (fora das horas ativas ou orçamento em
+/// alerta): só eventos e mudanças de goal acordam o modelo.
 pub fn motivo_para_chamar(
     novos: &[Evento],
     foco: Option<&Goal>,
@@ -441,6 +474,7 @@ pub fn motivo_para_chamar(
     subagentes_ativos: usize,
     agora: i64,
     revisao_minima_segundos: u64,
+    permitir_revisao: bool,
 ) -> Option<String> {
     if !novos.is_empty() {
         return Some(format!("{} evento(s) novo(s) na fila", novos.len()));
@@ -448,7 +482,7 @@ pub fn motivo_para_chamar(
     let goal = foco?;
     // Com sub-agente trabalhando, o resultado chegará como evento:
     // não vale gastar uma chamada só para "ver como está".
-    let revisao_permitida = subagentes_ativos == 0;
+    let revisao_permitida = permitir_revisao && subagentes_ativos == 0;
     match ultimo {
         None => Some(format!("primeiro ciclo com o goal #{}", goal.id)),
         Some(c) if goal.atualizado_ms > c.inicio_ms => {
@@ -732,7 +766,7 @@ mod testes {
         let anterior = ciclo(500);
         let chama =
             |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>, ativos, agora| {
-                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60)
+                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60, true)
             };
         // Sem goal e sem evento: não chama.
         assert_eq!(chama(&[], None, None, 0, 1000), None);
@@ -748,6 +782,15 @@ mod testes {
         assert!(chama(&[], Some(&g), Some(&anterior), 0, 60_500).is_some());
         // ...a não ser que haja sub-agente trabalhando (o resultado virá como evento).
         assert_eq!(chama(&[], Some(&g), Some(&anterior), 1, 60_500), None);
+
+        // Descanso ou orçamento em alerta: sem revisão periódica...
+        let sem_revisao = |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>| {
+            motivo_para_chamar(novos, foco, ultimo, 0, 60_500, 60, false)
+        };
+        assert_eq!(sem_revisao(&[], Some(&g), Some(&anterior)), None);
+        // ...mas evento novo e goal que mudou ainda acordam o modelo.
+        assert!(sem_revisao(std::slice::from_ref(&evento), Some(&g), Some(&anterior)).is_some());
+        assert!(sem_revisao(&[], Some(&mudou), Some(&anterior)).is_some());
     }
 
     #[test]

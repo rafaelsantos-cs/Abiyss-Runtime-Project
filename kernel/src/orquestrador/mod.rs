@@ -45,13 +45,16 @@ pub enum Origem {
     Conversa,
     /// Trabalho autônomo (heartbeat do daemon).
     Autonomo,
+    /// Consolidação noturna (sono). Usa os mesmos baldes do autônomo; o
+    /// nome separado serve para o orçamento e o registro de chamadas.
+    Sono,
 }
 
 impl Origem {
     fn prioridade(&self) -> u8 {
         match self {
             Origem::Conversa => 2,
-            Origem::Autonomo => 1,
+            Origem::Autonomo | Origem::Sono => 1,
         }
     }
 
@@ -59,6 +62,7 @@ impl Origem {
         match self {
             Origem::Conversa => "conversa",
             Origem::Autonomo => "autonomo",
+            Origem::Sono => "sono",
         }
     }
 }
@@ -299,7 +303,9 @@ impl PoolCerebro {
         // balde autônomo, que é menor: é isso que garante a reserva.
         let baldes = match origem {
             Origem::Conversa => vec![self.balde_total.clone()],
-            Origem::Autonomo => vec![self.balde_autonomo.clone(), self.balde_total.clone()],
+            Origem::Autonomo | Origem::Sono => {
+                vec![self.balde_autonomo.clone(), self.balde_total.clone()]
+            }
         };
         self.nucleo
             .executar(

@@ -292,6 +292,36 @@ continuacao_segundos = 20
 max_continuacoes_seguidas = 2
 
 # ---------------------------------------------------------------------------
+# Ritmo do dia (fuso local da máquina; o systemd define TZ=America/Sao_Paulo).
+#   vigília  = dentro das horas ativas: heartbeat normal;
+#   descanso = fora delas: sem revisão periódica de goal; eventos e mudanças
+#              de goal ainda acordam o modelo; heartbeat mais espaçado;
+#   sono     = a consolidação noturna está rodando (heartbeat pausado).
+# ---------------------------------------------------------------------------
+
+[ritmo]
+# "HH:MM-HH:MM"; pode cruzar a meia-noite ("22:00-06:00").
+# Início igual ao fim ("00:00-00:00") = vigília o dia inteiro.
+horas_ativas = "07:00-23:00"
+heartbeat_descanso_segundos = 1800
+
+# ---------------------------------------------------------------------------
+# Orçamento diário do trabalho AUTÔNOMO (heartbeat + sub-agentes + sono),
+# contado no fuso local desde a meia-noite. Cada tentativa conta. A conversa
+# com o dono (`abiyss chat`) NUNCA entra nesta conta nem é cortada por ela.
+#   >= fracao_alerta  → só eventos acordam o modelo (sem revisão periódica);
+#   esgotado          → o heartbeat não chama o modelo e não delega até amanhã.
+# 0 = sem limite. Valores A CALIBRAR na VM com o uso real.
+# ---------------------------------------------------------------------------
+
+[orcamento]
+chamadas_autonomas_por_dia = 1500
+tokens_autonomos_por_dia = 0
+# Fatia que só o sono pode usar (o heartbeat e os sub-agentes param antes).
+reserva_sono_chamadas = 12
+fracao_alerta = 0.8
+
+# ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).

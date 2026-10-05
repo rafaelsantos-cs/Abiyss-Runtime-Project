@@ -37,6 +37,7 @@ use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::{self, Heartbeat};
 use crate::manutencao;
 use crate::orquestrador::Orquestrador;
+use crate::ritmo;
 use crate::subagentes::{self, ExecutorSubagentes};
 use crate::tempo::agora_ms;
 
@@ -403,7 +404,6 @@ impl Daemon {
         let mut tique_cron = tokio::time::interval(Duration::from_secs(
             self.config.daemon.cron_verificacao_segundos,
         ));
-        let intervalo_heartbeat = Duration::from_secs(self.config.daemon.heartbeat_segundos);
         let retencao = &self.config.retencao;
         let mut tique_manutencao =
             tokio::time::interval(Duration::from_secs(retencao.manutencao_minutos * 60));
@@ -463,12 +463,18 @@ impl Daemon {
                 _ = esperar_trabalho(&mut ciclo) => {
                     ciclo = None;
                     let pediu = self.continuacao_pedida.swap(false, Ordering::Relaxed);
+                    // Fora das horas ativas o heartbeat espera mais (descanso).
+                    let intervalo = ritmo::intervalo_heartbeat(
+                        ritmo::fase_agora(&self.config.ritmo),
+                        self.config.daemon.heartbeat_segundos,
+                        &self.config.ritmo,
+                    );
                     let espera = proxima_espera(
                         pediu,
                         &mut continuacoes_seguidas,
                         self.config.daemon.max_continuacoes_seguidas,
                         Duration::from_secs(self.config.daemon.continuacao_segundos),
-                        intervalo_heartbeat,
+                        intervalo,
                     );
                     proximo_ciclo = Instant::now() + espera;
                 }
