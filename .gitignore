@@ -17,6 +17,8 @@ __pycache__/
 data/
 workspace/
 logs/
+# Memória pessoal: cofre do Obsidian (notas sobre pessoas, diário...).
+/cofre/
 *.db
 *.db-journal
 *.db-wal

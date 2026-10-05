@@ -119,6 +119,23 @@ max_bytes_escrita = 1000000
 max_itens_listagem = 500
 
 # ---------------------------------------------------------------------------
+# Memória de longo prazo: um cofre do Obsidian com dois escopos.
+#   01_internal/  pessoas, preferências, auto-modelo, diário, procedimentos
+#   02_external/  mapa de fontes (links canônicos, nível de navegador,
+#                 revalidar_apos, resumos sempre datados)
+# O modelo só PROPÕE (memoria_propor); `abiyss sleep` aplica ou rejeita.
+# Conteúdo vindo de ferramentas/web nunca entra em 01_internal (regra do kernel).
+# ---------------------------------------------------------------------------
+
+[memoria]
+# Pasta do cofre (fora do git: tem dados pessoais). Na VM, pode apontar
+# para um cofre do Obsidian que já existe.
+cofre = "cofre"
+max_resultados = 8
+max_bytes_nota = 200000
+max_bytes_proposta = 20000
+
+# ---------------------------------------------------------------------------
 # Daemon (`abiyss daemon`): heartbeat e crons.
 # ---------------------------------------------------------------------------
 

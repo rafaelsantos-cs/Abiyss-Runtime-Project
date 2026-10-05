@@ -43,8 +43,20 @@ pub fn conversa_existe(banco: &Banco, id: i64) -> anyhow::Result<bool> {
     Ok(achou.is_some())
 }
 
-/// Grava uma mensagem no fim da conversa.
+/// Grava uma mensagem no fim da conversa (sem conteúdo externo).
 pub fn adicionar(banco: &Banco, conversa: i64, mensagem: &Mensagem) -> anyhow::Result<()> {
+    adicionar_com_origem(banco, conversa, mensagem, None)
+}
+
+/// Grava uma mensagem marcando se ela traz (ou deriva de) conteúdo externo.
+/// `origem_externa = Some("mcp:x")` em resultados de ferramentas externas e
+/// em respostas do modelo escritas logo depois deles (ver `chat`).
+pub fn adicionar_com_origem(
+    banco: &Banco,
+    conversa: i64,
+    mensagem: &Mensagem,
+    origem_externa: Option<&str>,
+) -> anyhow::Result<()> {
     let chamadas = match &mensagem.tool_calls {
         Some(lista) => Some(serde_json::to_string(lista)?),
         None => None,
@@ -52,8 +64,8 @@ pub fn adicionar(banco: &Banco, conversa: i64, mensagem: &Mensagem) -> anyhow::R
     banco.conexao().execute(
         "INSERT INTO mensagens
            (conversa_id, momento_ms, papel, conteudo, raciocinio, chamadas_json,
-            id_chamada, nome_ferramenta)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            id_chamada, nome_ferramenta, origem_externa)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             conversa,
             agora_ms(),
@@ -62,10 +74,38 @@ pub fn adicionar(banco: &Banco, conversa: i64, mensagem: &Mensagem) -> anyhow::R
             mensagem.reasoning_content,
             chamadas,
             mensagem.tool_call_id,
-            mensagem.name
+            mensagem.name,
+            origem_externa
         ],
     )?;
     Ok(())
+}
+
+/// Origens externas presentes nas últimas `limite` mensagens (a mesma
+/// janela que `carregar` coloca no contexto), sem repetição.
+/// Lista vazia = o contexto não tem conteúdo externo.
+pub fn origens_externas(
+    banco: &Banco,
+    conversa: i64,
+    limite: usize,
+) -> anyhow::Result<Vec<String>> {
+    let conexao = banco.conexao();
+    let mut consulta = conexao.prepare(
+        "SELECT origem_externa FROM
+           (SELECT id, origem_externa FROM mensagens WHERE conversa_id = ?1
+            ORDER BY id DESC LIMIT ?2)
+         WHERE origem_externa IS NOT NULL ORDER BY id ASC",
+    )?;
+    let mut origens: Vec<String> = Vec::new();
+    for origem in consulta.query_map(params![conversa, limite as i64], |l| l.get::<_, String>(0))? {
+        // Respostas derivadas guardam várias origens separadas por ", ".
+        for parte in origem?.split(", ") {
+            if !origens.iter().any(|o| o == parte) {
+                origens.push(parte.to_string());
+            }
+        }
+    }
+    Ok(origens)
 }
 
 /// Lê as últimas `limite` mensagens da conversa, em ordem cronológica,
@@ -214,6 +254,27 @@ mod testes {
     }
 
     #[test]
+    fn origem_externa_vale_so_dentro_da_janela() {
+        let banco = Banco::em_memoria().unwrap();
+        let c = criar_conversa(&banco).unwrap();
+        adicionar(&banco, c, &Mensagem::usuario("leia o site")).unwrap();
+        adicionar_com_origem(&banco, c, &pedido_ferramenta(&["k"]), None).unwrap();
+        let resultado = Mensagem::resultado_ferramenta("k", "f", "texto do site");
+        adicionar_com_origem(&banco, c, &resultado, Some("mcp:web")).unwrap();
+        let resposta = Mensagem::assistente("o site diz X");
+        adicionar_com_origem(&banco, c, &resposta, Some("mcp:web, ler_skill")).unwrap();
+        assert_eq!(
+            origens_externas(&banco, c, 10).unwrap(),
+            vec!["mcp:web", "ler_skill"]
+        );
+        // A resposta derivada continua "contaminada" mesmo sem o resultado na janela.
+        assert_eq!(origens_externas(&banco, c, 1).unwrap().len(), 2);
+        adicionar(&banco, c, &Mensagem::usuario("outra coisa")).unwrap();
+        adicionar(&banco, c, &Mensagem::assistente("ok")).unwrap();
+        assert!(origens_externas(&banco, c, 2).unwrap().is_empty());
+    }
+
+    #[test]
     fn grava_e_le_com_ferramentas_e_limite() {
         let banco = Banco::em_memoria().unwrap();
         let c = criar_conversa(&banco).unwrap();
@@ -234,6 +295,7 @@ mod testes {
         assert_eq!(recorte.len(), 3);
 
         assert_eq!(ultima_conversa(&banco).unwrap(), Some(c));
+        assert!(origens_externas(&banco, c, 100).unwrap().is_empty());
         assert!(conversa_existe(&banco, c).unwrap());
         assert!(!conversa_existe(&banco, c + 1).unwrap());
     }

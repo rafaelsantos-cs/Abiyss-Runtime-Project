@@ -22,6 +22,7 @@ pub mod historico;
 pub mod identidade;
 pub mod interocepcao;
 pub mod mcp;
+pub mod memoria;
 pub mod nim;
 pub mod orquestrador;
 pub mod skills;

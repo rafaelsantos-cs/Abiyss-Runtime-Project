@@ -18,3 +18,16 @@ pub fn formatar_ms(ms: i64) -> String {
         None => format!("{ms}ms"),
     }
 }
+
+/// Agora no fuso local, no formato das notas do cofre
+/// (ex.: "2026-10-05T14:03:11-03:00").
+pub fn agora_iso() -> String {
+    chrono::Local::now()
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
+}
+
+/// Hoje no fuso local (ex.: "2026-10-05").
+pub fn hoje() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}

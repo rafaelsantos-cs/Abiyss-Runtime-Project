@@ -46,8 +46,12 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/subagentes.rs          ← sub-agentes assíncronos
   src/diario.rs interocepcao.rs ← base da metacognição
   src/skills.rs frontmatter.rs ← skills com revelação progressiva
+  src/memoria/               ← cofre (Obsidian), propostas, sleep, busca
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
+cofre/                       ← memória de longo prazo (fora do git; criada sozinha)
+  01_internal/               ← pessoas, preferências, auto-modelo, diário, procedimentos
+  02_external/               ← mapa de fontes (links canônicos, resumos datados)
 data/abiyss.db               ← SQLite (criado sozinho)
 ```
 
@@ -228,11 +232,17 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss diario [--limite N]` | Diário: expectativa antes de cada ação e resultado depois |
 | `abiyss ferramentas` | Lista as ferramentas que o modelo enxerga |
 | `abiyss skills` | Lista as skills (nome + descrição) e as ignoradas, com o motivo |
+| `abiyss sleep` | Aplica as propostas de memória pendentes (ou rejeita, com o motivo) |
+| `abiyss memoria propostas [--todas]` | Propostas pendentes (ou recentes, com a decisão) |
+| `abiyss memoria buscar "consulta" [--escopo interno\|externo\|ambos]` | Busca no cofre (a mesma da ferramenta) |
+| `abiyss memoria esquecer CAMINHO` | Remove uma nota (ex.: `01_internal/pessoas/ana.md`) e registra só que foi removida |
+| `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
 | `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
-`escrever_arquivo` (só em `workspace/`), `ler_skill` (veja abaixo), as dos servidores MCP
+`escrever_arquivo` (só em `workspace/`), `ler_skill`, `memoria_buscar` /
+`memoria_ler` / `memoria_propor` (veja abaixo), as dos servidores MCP
 (`exemplo__contar_palavras`, ...) e `delegar` / `status` / `cancelar`
 (sub-agentes). **Os sub-agentes são executados pelo daemon**: delegar pelo
 chat só registra o pedido; com o daemon rodando, ele começa em segundos e o
@@ -248,6 +258,38 @@ progressiva:** só nome + descrição entram no system prompt (rotulados como
 dado); o texto completo vem pela ferramenta `ler_skill(nome)` e cada
 referência por `ler_skill(nome, referencia)`. As skills são só leitura para o
 Abiyss. Detalhes em [`skills/README.md`](skills/README.md).
+
+### Memória (cofre do Obsidian)
+
+O cofre (`[memoria] cofre`, padrão `cofre/`, fora do git) tem dois escopos:
+
+- `01_internal/`: pessoas, preferências, auto-modelo, diário pessoal,
+  procedimentos. Toda nota tem procedência no frontmatter, preenchida pelo
+  kernel: `fonte` (`conversa` | `sleep` | `importacao`), `tipo` (`dito` |
+  `deduzido`), `criado`, `atualizado`. Uma nota tem **um tipo só**: dito e
+  deduzido nunca se misturam (o sleep rejeita).
+- `02_external/`: **mapa de fontes**, não enciclopédia. O frontmatter exige
+  `links` (site oficial, changelog, docs), `navegador` (`rapido` |
+  `contemplativo` | `agentico`) e `revalidar_apos` (AAAA-MM-DD); resumos em
+  cache só com data no título (`## Resumo em cache (2026-10-05)`).
+- Notas se ligam por `[[wikilinks]]`; internas podem apontar para externas,
+  externas não apontam para internas.
+
+Fluxo de escrita: `memoria_propor` → fila no SQLite → `abiyss sleep` aplica
+ou rejeita → `Cofre::gravar` (único caminho de escrita; conteúdo novo é
+**acrescentado**, nunca apaga). Só `abiyss memoria esquecer` remove uma
+nota, e o registro guarda só o caminho.
+
+**Regra dura (código do kernel):** conteúdo vindo de ferramentas, web,
+sub-agentes ou qualquer fonte externa nunca entra direto em `01_internal`.
+Cada mensagem do histórico guarda se traz conteúdo externo (resultados de
+ferramentas externas e a resposta escrita logo depois deles no mesmo turno).
+Quando o modelo chama `memoria_propor`, o kernel olha a janela de contexto:
+se houver algo externo, a proposta é marcada com essa origem e o sleep a
+rejeita no escopo interno (o `Cofre::gravar` confere de novo). Leituras da
+memória interna e confirmações do kernel não contam como externas; memória
+externa, arquivos do workspace, skills, MCP e sub-agentes contam. Para
+sub-agentes, tudo conta como externo.
 
 ---
 
@@ -348,7 +390,9 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
 - **Ferramentas de arquivo** só dentro de `workspace/`: sem caminho absoluto,
   sem `..`, links simbólicos não escapam, nunca escreve através de link. O
   kernel recusa iniciar se o workspace contiver (ou estiver dentro de)
-  `kernel/`, `identity/`, `recursos/`, `skills/`, `data/`, `.git`, `.env` ou `abiyss.toml`.
+  `kernel/`, `identity/`, `recursos/`, `skills/`, o cofre, `data/`, `.git`, `.env` ou `abiyss.toml`.
+- **Memória interna** só recebe conteúdo de conversa, sleep ou importação:
+  o que veio de ferramentas/web é rejeitado por código (veja "Memória").
 - **Conteúdo externo é dado, não instrução**: todo resultado de ferramenta,
   servidor MCP, evento e relatório de sub-agente entra no contexto dentro de
   `<dados origem="...">...</dados>`; marcas que tentem fechar o bloco são

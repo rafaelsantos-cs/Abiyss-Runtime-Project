@@ -32,6 +32,8 @@ pub struct Config {
     pub daemon: ConfigDaemon,
     #[serde(default)]
     pub subagentes: ConfigSubagentes,
+    #[serde(default)]
+    pub memoria: crate::memoria::ConfigMemoria,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -461,9 +463,14 @@ impl Config {
         self.resolver(&self.caminhos.skills)
     }
 
+    /// Pasta do cofre de memória (Obsidian).
+    pub fn caminho_cofre(&self) -> PathBuf {
+        self.resolver(&self.memoria.cofre)
+    }
+
     /// Áreas que o workspace NUNCA pode conter nem ficar dentro:
-    /// código do kernel, identidade, dados, segredos, config, git, recursos
-    /// e skills (só leitura).
+    /// código do kernel, identidade, dados, segredos, config, git, recursos,
+    /// skills (só leitura) e o cofre de memória (escrita só pelo sleep).
     pub fn areas_protegidas(&self) -> Vec<PathBuf> {
         let mut areas = vec![
             self.raiz.join("kernel"),
@@ -475,6 +482,7 @@ impl Config {
             self.resolver(&self.caminhos.dados),
             self.caminho_identidade(),
             self.caminho_skills(),
+            self.caminho_cofre(),
         ];
         // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
         if let Some(pasta) = self.caminho_identidade().parent()

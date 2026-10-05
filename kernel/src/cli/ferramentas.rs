@@ -4,13 +4,19 @@
 use std::sync::Arc;
 
 use abiyss::config::Config;
+use abiyss::db::Banco;
 use abiyss::ferramentas::CaixaDeFerramentas;
 use abiyss::mcp::PonteMcp;
+use abiyss::memoria::Memoria;
 use abiyss::skills::Skills;
 
 pub async fn listar(config: &Config) -> anyhow::Result<()> {
     let mcp = Arc::new(PonteMcp::iniciar(config).await);
-    let caixa = CaixaDeFerramentas::da_config(config)?.com_mcp(mcp.clone());
+    let banco = Banco::abrir(&config.caminho_banco())?;
+    let memoria = Arc::new(Memoria::abrir(config, banco)?);
+    let caixa = CaixaDeFerramentas::da_config(config)?
+        .com_mcp(mcp.clone())
+        .com_memoria(memoria);
     let servidores = mcp.servidores();
     println!(
         "Servidores MCP ativos: {}",

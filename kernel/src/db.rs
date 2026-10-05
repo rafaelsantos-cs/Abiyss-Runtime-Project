@@ -154,6 +154,37 @@ const MIGRACOES: &[&str] = &[
     );
     CREATE INDEX idx_diario_subagente ON diario(subagente_id);
     "#,
+    // 6 (A2) — memória: fila de propostas, registro de operações e a origem
+    // de cada mensagem (para a regra "conteúdo externo nunca entra direto
+    // em 01_internal"). Resultados de ferramenta gravados antes desta
+    // migração são marcados como externos, por segurança.
+    r#"
+    ALTER TABLE mensagens ADD COLUMN origem_externa TEXT;
+    UPDATE mensagens SET origem_externa = 'ferramenta (anterior ao rastreio de origem)'
+        WHERE papel = 'tool';
+    CREATE TABLE propostas_memoria (
+        id             INTEGER PRIMARY KEY,
+        criado_ms      INTEGER NOT NULL,
+        escopo         TEXT    NOT NULL,
+        caminho        TEXT    NOT NULL,
+        conteudo       TEXT    NOT NULL,
+        tipo           TEXT    NOT NULL,
+        fonte          TEXT    NOT NULL,
+        origem_externa TEXT,
+        estado         TEXT    NOT NULL DEFAULT 'pendente',
+        motivo         TEXT,
+        decidido_ms    INTEGER
+    );
+    CREATE INDEX idx_propostas_estado ON propostas_memoria(estado, id);
+    CREATE TABLE registro_memoria (
+        id         INTEGER PRIMARY KEY,
+        momento_ms INTEGER NOT NULL,
+        acao       TEXT    NOT NULL,
+        caminho    TEXT    NOT NULL,
+        detalhe    TEXT    NOT NULL DEFAULT ''
+    );
+    CREATE INDEX idx_registro_caminho ON registro_memoria(caminho, id);
+    "#,
 ];
 
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.
