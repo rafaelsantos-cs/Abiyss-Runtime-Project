@@ -67,6 +67,22 @@ enum Comando {
     },
     /// Lista as ferramentas disponíveis (nativas + servidores MCP).
     Ferramentas,
+    /// Lista as skills (nome + descrição) e as que não puderam ser lidas.
+    Skills,
+    /// Aplica as propostas de memória pendentes (ou rejeita, com motivo).
+    Sleep,
+    /// Importa a memória do Hermes. Sem --aplicar, só mostra o relatório.
+    ImportarHermes {
+        /// Pasta do Hermes (ex.: ~/.hermes).
+        #[arg(long)]
+        origem: PathBuf,
+        /// Grava de verdade (sem isto é só simulação).
+        #[arg(long)]
+        aplicar: bool,
+    },
+    /// Memória de longo prazo (cofre do Obsidian).
+    #[command(subcommand)]
+    Memoria(ComandoMemoria),
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -116,6 +132,31 @@ enum ComandoGoal {
         estado: String,
         #[arg(long)]
         motivo: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ComandoMemoria {
+    /// Remove uma nota (ex.: 01_internal/pessoas/ana.md) e registra que foi removida.
+    Esquecer { caminho: String },
+    /// Lista as propostas pendentes (ou as recentes, com --todas).
+    Propostas {
+        #[arg(long)]
+        todas: bool,
+    },
+    /// Busca no cofre (o mesmo que a ferramenta memoria_buscar).
+    Buscar {
+        consulta: String,
+        /// interno, externo ou ambos
+        #[arg(long, default_value = "ambos")]
+        escopo: String,
+    },
+    /// Mostra a memória central (injetada em todo turno) e o uso do orçamento.
+    Central,
+    /// Mostra o registro de operações (criada, atualizada, rejeitada, esquecida).
+    Registro {
+        #[arg(long, default_value_t = 30)]
+        limite: usize,
     },
 }
 
@@ -198,6 +239,23 @@ async fn main() -> anyhow::Result<()> {
         Comando::Ferramentas => {
             let config = Config::carregar(&caminho_config)?;
             cli::ferramentas::listar(&config).await
+        }
+        Comando::Skills => cli::ferramentas::skills(&Config::carregar(&caminho_config)?),
+        Comando::Sleep => cli::memoria::sleep(&Config::carregar(&caminho_config)?),
+        Comando::ImportarHermes { origem, aplicar } => {
+            cli::hermes::importar(&Config::carregar(&caminho_config)?, &origem, aplicar)
+        }
+        Comando::Memoria(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoMemoria::Esquecer { caminho } => cli::memoria::esquecer(&config, &caminho),
+                ComandoMemoria::Propostas { todas } => cli::memoria::propostas(&config, todas),
+                ComandoMemoria::Buscar { consulta, escopo } => {
+                    cli::memoria::buscar(&config, &consulta, &escopo).await
+                }
+                ComandoMemoria::Central => cli::memoria::central(&config),
+                ComandoMemoria::Registro { limite } => cli::memoria::registro(&config, limite),
+            }
         }
         Comando::Chat {
             continuar,

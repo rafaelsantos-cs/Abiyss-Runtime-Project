@@ -17,6 +17,11 @@ __pycache__/
 data/
 workspace/
 logs/
+# Memória pessoal: cofre do Obsidian (notas sobre pessoas, diário...),
+# memória central e o rascunho de núcleo gerado pela importação do Hermes.
+/cofre/
+identity/memoria-central.md
+identity/nucleo.proposto.md
 *.db
 *.db-journal
 *.db-wal

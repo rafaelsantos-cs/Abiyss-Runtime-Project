@@ -91,8 +91,13 @@ dados = "data"
 identidade = "identity/nucleo.md"
 # ÚNICA pasta onde as ferramentas de arquivo leem e escrevem. O kernel
 # recusa iniciar se ela contiver kernel/, identity/, recursos/, data/,
-# .env, .git ou o abiyss.toml.
+# .env, .git, skills/ ou o abiyss.toml.
 workspace = "workspace"
+# Skills: cada subpasta com um SKILL.md (frontmatter `name` + `description`).
+# Só nome e descrição vão para o system prompt; o texto completo é lido
+# pela ferramenta `ler_skill`. Só leitura para o Abiyss. Pode apontar para
+# uma pasta de skills do Hermes (pastas de categoria são aceitas).
+skills = "skills"
 
 # ---------------------------------------------------------------------------
 # Conversa (`abiyss chat`).
@@ -112,6 +117,46 @@ max_rodadas_ferramentas = 8
 max_bytes_leitura = 200000
 max_bytes_escrita = 1000000
 max_itens_listagem = 500
+
+# ---------------------------------------------------------------------------
+# Memória de longo prazo: um cofre do Obsidian com dois escopos.
+#   01_internal/  pessoas, preferências, auto-modelo, diário, procedimentos
+#   02_external/  mapa de fontes (links canônicos, nível de navegador,
+#                 revalidar_apos, resumos sempre datados)
+# O modelo só PROPÕE (memoria_propor); `abiyss sleep` aplica ou rejeita.
+# Conteúdo vindo de ferramentas/web nunca entra em 01_internal (regra do kernel).
+# ---------------------------------------------------------------------------
+
+[memoria]
+# Pasta do cofre (fora do git: tem dados pessoais). Na VM, pode apontar
+# para um cofre do Obsidian que já existe.
+cofre = "cofre"
+max_resultados = 8
+max_bytes_nota = 200000
+max_bytes_proposta = 20000
+# Memória central: arquivo PEQUENO injetado no system prompt em todo turno
+# (conversa e heartbeat), ao lado do núcleo. Entradas separadas por "§",
+# cada uma marcada [dito] ou [deduzido]. Fora do git (dados pessoais).
+central = "identity/memoria-central.md"
+# Orçamento em caracteres. Escrita que passaria do limite é RECUSADA e
+# relatada (nunca cortada). O Hermes usava ~2200 (MEMORY.md) + ~1375 (USER.md).
+limite_central_caracteres = 4000
+
+# Busca: o qmd (servidor MCP HTTP, em [[mcp.servidores]] abaixo) é o motor de
+# memoria_buscar quando está no ar; senão, busca por texto simples no cofre.
+[memoria.qmd]
+# Nome do servidor qmd em [[mcp.servidores]]. Vazio = nunca usar o qmd.
+servidor = "qmd"
+# Ferramenta de busca. Vazio = a primeira que existir entre search,
+# qmd_search, query, qmd_query, vsearch, qmd_vsearch — A CONFIRMAR na VM
+# (`abiyss ferramentas` com expor = true mostra os nomes).
+ferramenta = ""
+# Coleções do qmd que indexam cada escopo (opcional, recomendado):
+#   qmd collection add <cofre>/01_internal --name abiyss-interno
+#   qmd collection add <cofre>/02_external --name abiyss-externo
+# Vazias = uma busca só, e o kernel separa os escopos pelo caminho.
+colecao_interna = ""
+colecao_externa = ""
 
 # ---------------------------------------------------------------------------
 # Daemon (`abiyss daemon`): heartbeat e crons.
@@ -160,9 +205,13 @@ max_rodadas = 8
 ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
 
 # ---------------------------------------------------------------------------
-# Servidores MCP (recursos em Python, em recursos/). O kernel sobe cada um
-# como processo filho (stdio) e expõe as ferramentas como <nome>__<ferramenta>.
-# Os processos recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# Servidores MCP. Dois tipos:
+# - processo filho (stdio): `comando` + `args` (recursos em Python, em
+#   recursos/). Recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# - HTTP "streamable": `url` de um servidor que já está rodando (ex.: qmd).
+#   Token, se precisar, só por variável de ambiente: `token_env = "NOME"`.
+# As ferramentas aparecem como <nome>__<ferramenta>; `expor = false` esconde
+# do modelo (só o kernel usa).
 # ---------------------------------------------------------------------------
 
 [mcp]
@@ -175,4 +224,15 @@ comando = "uv"
 args = ["run", "--frozen", "--quiet", "servidor.py"]
 diretorio = "recursos/mcp/exemplo"
 timeout_segundos = 60
+ativo = true
+
+[[mcp.servidores]]
+# qmd: busca em Markdown (BM25/vetores) sobre o cofre. Já roda na VM; o
+# kernel só conecta. Fora do ar = memoria_buscar usa busca por texto.
+# A CONFIRMAR: o caminho /mcp do endpoint HTTP do qmd.
+nome = "qmd"
+url = "http://localhost:8181/mcp"
+timeout_segundos = 30
+# Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
+expor = false
 ativo = true

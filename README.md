@@ -34,18 +34,27 @@ comando (`abiyss ...`); não há painel web.
 ```
 abiyss.toml  .env            ← configuração (sem segredos) + chaves (fora do git)
 identity/nucleo.md           ← núcleo de identidade (o Abiyss NÃO edita)
+identity/memoria-central.md  ← memória central com orçamento (fora do git; escrita só pelo sleep/importação)
+identity/nucleo.proposto.md  ← rascunho de núcleo gerado pela importação do Hermes (fora do git; o kernel não lê)
+skills/                      ← skills (SKILL.md); só leitura para o Abiyss
 kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/nim/                   ← cliente NIM (SSE, tool calling) + mock para testes
   src/orquestrador/          ← dois pools, token bucket, fila de prioridade
   src/chat.rs                ← conversa com tool calling
   src/ferramentas/           ← tools nativas (só dentro de workspace/)
-  src/mcp.rs                 ← ponte MCP (cliente rmcp, processos filhos)
+  src/mcp.rs                 ← ponte MCP (cliente rmcp: processos filhos e HTTP)
   src/heartbeat.rs daemon.rs ← ciclo autônomo e daemon
   src/goals.rs cron.rs       ← máquina de estados dos goals, crons
   src/subagentes.rs          ← sub-agentes assíncronos
   src/diario.rs interocepcao.rs ← base da metacognição
+  src/skills.rs frontmatter.rs ← skills com revelação progressiva
+  src/memoria/               ← cofre (Obsidian), propostas, sleep, busca (qmd/texto), memória central
+  src/hermes/                ← importador do Hermes (simulação, idempotente, sem segredos)
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
+cofre/                       ← memória de longo prazo (fora do git; criada sozinha)
+  01_internal/               ← pessoas, preferências, auto-modelo, diário, procedimentos
+  02_external/               ← mapa de fontes (links canônicos, resumos datados)
 data/abiyss.db               ← SQLite (criado sozinho)
 ```
 
@@ -172,7 +181,8 @@ O arquivo está comentado seção por seção. Os pontos principais:
 | `[pools.*]` | requisições por minuto, rajada, reserva de conversa, concorrência por nível, retentativas |
 | `[daemon]` | intervalo do heartbeat, verificação de crons, revisão mínima |
 | `[subagentes.*]` | orçamento (tokens, segundos, rodadas) e ferramentas por nível |
-| `[[mcp.servidores]]` | servidores MCP em Python |
+| `[[mcp.servidores]]` | servidores MCP: processo filho (`comando`) ou HTTP (`url`, ex.: qmd) |
+| `[memoria]` / `[memoria.qmd]` | cofre, memória central e orçamento, busca pelo qmd |
 
 > **Limite por chave ou por conta?** Ainda não confirmado. Se as duas chaves
 > forem da mesma conta NVIDIA e o limite for por conta, divida (ex.: 25 + 15)
@@ -225,17 +235,117 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss cron list` / `abiyss cron remover NOME` | Lista / remove crons |
 | `abiyss diario [--limite N]` | Diário: expectativa antes de cada ação e resultado depois |
 | `abiyss ferramentas` | Lista as ferramentas que o modelo enxerga |
+| `abiyss skills` | Lista as skills (nome + descrição) e as ignoradas, com o motivo |
+| `abiyss sleep` | Aplica as propostas de memória pendentes (ou rejeita, com o motivo) |
+| `abiyss memoria propostas [--todas]` | Propostas pendentes (ou recentes, com a decisão) |
+| `abiyss memoria buscar "consulta" [--escopo interno\|externo\|ambos]` | Busca no cofre (a mesma da ferramenta) |
+| `abiyss memoria esquecer CAMINHO` | Remove uma nota (ex.: `01_internal/pessoas/ana.md`) e registra só que foi removida |
+| `abiyss memoria central` | Mostra a memória central e o uso do orçamento |
+| `abiyss importar-hermes --origem ~/.hermes [--aplicar]` | Importa a memória do Hermes (simulação sem `--aplicar`); veja [`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md) |
+| `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
 | `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
-`escrever_arquivo` (só em `workspace/`), as dos servidores MCP
+`escrever_arquivo` (só em `workspace/`), `ler_skill`, `memoria_buscar` /
+`memoria_ler` / `memoria_propor` (veja abaixo), as dos servidores MCP
 (`exemplo__contar_palavras`, ...) e `delegar` / `status` / `cancelar`
 (sub-agentes). **Os sub-agentes são executados pelo daemon**: delegar pelo
 chat só registra o pedido; com o daemon rodando, ele começa em segundos e o
 relatório chega como evento na fila do Abiyss.
 
 Logs vão para o stderr; controle com `RUST_LOG` (ex.: `RUST_LOG=abiyss=debug`).
+
+### Skills
+
+Cada skill é uma pasta em `skills/` com um `SKILL.md` (frontmatter YAML com
+`name` e `description`) e, opcionalmente, `references/`. **Revelação
+progressiva:** só nome + descrição entram no system prompt (rotulados como
+dado); o texto completo vem pela ferramenta `ler_skill(nome)` e cada
+referência por `ler_skill(nome, referencia)`. As skills são só leitura para o
+Abiyss. Detalhes em [`skills/README.md`](skills/README.md).
+
+### Memória (cofre do Obsidian)
+
+O cofre (`[memoria] cofre`, padrão `cofre/`, fora do git) tem dois escopos:
+
+- `01_internal/`: pessoas, preferências, auto-modelo, diário pessoal,
+  procedimentos. Toda nota tem procedência no frontmatter, preenchida pelo
+  kernel: `fonte` (`conversa` | `sleep` | `importacao`), `tipo` (`dito` |
+  `deduzido`), `criado`, `atualizado`. Uma nota tem **um tipo só**: dito e
+  deduzido nunca se misturam (o sleep rejeita).
+- `02_external/`: **mapa de fontes**, não enciclopédia. O frontmatter exige
+  `links` (site oficial, changelog, docs), `navegador` (`rapido` |
+  `contemplativo` | `agentico`) e `revalidar_apos` (AAAA-MM-DD); resumos em
+  cache só com data no título (`## Resumo em cache (2026-10-05)`).
+- Notas se ligam por `[[wikilinks]]`; internas podem apontar para externas,
+  externas não apontam para internas.
+
+Fluxo de escrita: `memoria_propor` → fila no SQLite → `abiyss sleep` aplica
+ou rejeita → `Cofre::gravar` (único caminho de escrita; conteúdo novo é
+**acrescentado**, nunca apaga). Só `abiyss memoria esquecer` remove uma
+nota, e o registro guarda só o caminho.
+
+**Regra dura (código do kernel):** conteúdo vindo de ferramentas, web,
+sub-agentes ou qualquer fonte externa nunca entra direto em `01_internal`.
+Cada mensagem do histórico guarda se traz conteúdo externo (resultados de
+ferramentas externas e a resposta escrita logo depois deles no mesmo turno).
+Quando o modelo chama `memoria_propor`, o kernel olha a janela de contexto:
+se houver algo externo, a proposta é marcada com essa origem e o sleep a
+rejeita no escopo interno (o `Cofre::gravar` confere de novo). Leituras da
+memória interna e confirmações do kernel não contam como externas; memória
+externa, arquivos do workspace, skills, MCP e sub-agentes contam. Para
+sub-agentes, tudo conta como externo.
+
+### Busca: qmd com reserva por texto
+
+`memoria_buscar` usa o **qmd** (servidor MCP já rodando na VM, conectado
+por HTTP "streamable": `[[mcp.servidores]] url = "http://localhost:8181/mcp"`,
+`expor = false`) quando ele está no ar. A resposta é lida com desconfiança:
+cada resultado precisa apontar para uma nota que existe no cofre e é do
+escopo pedido; o resto é descartado. Se o qmd estiver fora do ar, responder
+algo ilegível ou nada, a busca cai na **busca por texto** simples. O motor
+usado aparece no resultado (`motor: qmd` ou `motor: texto (...)`).
+
+Para testar na VM: `abiyss memoria buscar "algo" --escopo interno`.
+
+### Memória central
+
+Arquivo pequeno (`[memoria] central`, padrão `identity/memoria-central.md`)
+injetado no system prompt **em todo turno** (conversa e heartbeat), logo
+depois do núcleo, e relido a cada turno. Entradas separadas por uma linha
+`§` (formato do Hermes), cada uma marcada `[dito]` ou `[deduzido]`:
+
+```text
+[dito] O usuário se chama Rafael.
+§
+[deduzido] Prefere respostas curtas.
+```
+
+Orçamento em caracteres (`limite_central_caracteres`, padrão 4000). Escrita
+acima do limite é **recusada e relatada** (no sleep e no aviso da
+proposta); o kernel nunca corta em silêncio. Se o arquivo for editado à mão
+e passar do limite, ele vai inteiro para o prompt e `abiyss status` avisa.
+O Abiyss escreve aqui com `memoria_propor(escopo="central", ...)` (mesma
+regra dura do escopo interno; repetições são ignoradas).
+
+### Importar do Hermes
+
+```bash
+abiyss importar-hermes --origem ~/.hermes            # simulação: só o relatório
+abiyss importar-hermes --origem ~/.hermes --aplicar  # grava
+```
+
+Simulação por padrão; idempotente (rodar de novo não duplica nada); nunca
+abre `.env`, `auth.json` nem arquivos com nome de segredo (só lista);
+campos desconhecidos são preservados e listados. Goals → tabela `goals`
+(estado desconhecido vira `proposto`, com o original no motivo); journal →
+`diario` (com sinais, risco, confiança); diário pessoal → `01_internal/diario/`;
+`SOUL.md` e `auto-modelo.json` → `01_internal/identidade/` e o rascunho
+`identity/nucleo.proposto.md` (o `nucleo.md` nunca é alterado);
+`MEMORY.md`/`USER.md` → memória central, com o excedente em `01_internal/`.
+Todas as suposições sobre os formatos e o roteiro de teste na VM estão em
+[`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md).
 
 ---
 
@@ -317,7 +427,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test                    # os testes MCP precisam do uv no PATH (sem ele, são pulados)
 ```
 
-Os testes ficam em `kernel/tests/` (um arquivo por fase, `f1_` a `f8_`) e em
+Os testes ficam em `kernel/tests/` (um arquivo por fase: `f1_` a `f8_` e
+`a1_` em diante) e em
 módulos `#[cfg(test)]` dentro de `kernel/src/`. O CI
 (`.github/workflows/ci.yml`) roda fmt, clippy e testes em x86_64 e compila o
 binário para `aarch64-unknown-linux-gnu`.
@@ -335,7 +446,9 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
 - **Ferramentas de arquivo** só dentro de `workspace/`: sem caminho absoluto,
   sem `..`, links simbólicos não escapam, nunca escreve através de link. O
   kernel recusa iniciar se o workspace contiver (ou estiver dentro de)
-  `kernel/`, `identity/`, `recursos/`, `data/`, `.git`, `.env` ou `abiyss.toml`.
+  `kernel/`, `identity/`, `recursos/`, `skills/`, o cofre, `data/`, `.git`, `.env` ou `abiyss.toml`.
+- **Memória interna** só recebe conteúdo de conversa, sleep ou importação:
+  o que veio de ferramentas/web é rejeitado por código (veja "Memória").
 - **Conteúdo externo é dado, não instrução**: todo resultado de ferramenta,
   servidor MCP, evento e relatório de sub-agente entra no contexto dentro de
   `<dados origem="...">...</dados>`; marcas que tentem fechar o bloco são

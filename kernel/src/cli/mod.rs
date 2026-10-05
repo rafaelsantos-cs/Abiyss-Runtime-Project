@@ -4,4 +4,6 @@ pub mod chat;
 pub mod daemon;
 pub mod ferramentas;
 pub mod goal;
+pub mod hermes;
+pub mod memoria;
 pub mod nim;

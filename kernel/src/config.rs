@@ -32,6 +32,8 @@ pub struct Config {
     pub daemon: ConfigDaemon,
     #[serde(default)]
     pub subagentes: ConfigSubagentes,
+    #[serde(default)]
+    pub memoria: crate::memoria::ConfigMemoria,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -194,6 +196,8 @@ pub struct ConfigCaminhos {
     pub identidade: String,
     /// Única pasta onde as ferramentas de arquivo podem ler e escrever.
     pub workspace: String,
+    /// Pasta das skills (cada skill é uma subpasta com SKILL.md). Só leitura.
+    pub skills: String,
 }
 
 impl Default for ConfigCaminhos {
@@ -202,6 +206,7 @@ impl Default for ConfigCaminhos {
             dados: "data".to_string(),
             identidade: "identity/nucleo.md".to_string(),
             workspace: "workspace".to_string(),
+            skills: "skills".to_string(),
         }
     }
 }
@@ -453,8 +458,25 @@ impl Config {
         self.resolver(&self.caminhos.workspace)
     }
 
+    /// Pasta das skills (só leitura para o Abiyss).
+    pub fn caminho_skills(&self) -> PathBuf {
+        self.resolver(&self.caminhos.skills)
+    }
+
+    /// Pasta do cofre de memória (Obsidian).
+    pub fn caminho_cofre(&self) -> PathBuf {
+        self.resolver(&self.memoria.cofre)
+    }
+
+    /// Arquivo da memória central (injetada no system prompt).
+    pub fn caminho_memoria_central(&self) -> PathBuf {
+        self.resolver(&self.memoria.central)
+    }
+
     /// Áreas que o workspace NUNCA pode conter nem ficar dentro:
-    /// código do kernel, identidade, dados, segredos, config, git e recursos.
+    /// código do kernel, identidade, dados, segredos, config, git, recursos,
+    /// skills (só leitura), o cofre de memória e a memória central (escrita
+    /// só pelo sleep e pelo importador).
     pub fn areas_protegidas(&self) -> Vec<PathBuf> {
         let mut areas = vec![
             self.raiz.join("kernel"),
@@ -465,6 +487,9 @@ impl Config {
             self.raiz.join("Cargo.toml"),
             self.resolver(&self.caminhos.dados),
             self.caminho_identidade(),
+            self.caminho_skills(),
+            self.caminho_cofre(),
+            self.caminho_memoria_central(),
         ];
         // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
         if let Some(pasta) = self.caminho_identidade().parent()

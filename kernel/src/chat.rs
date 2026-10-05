@@ -2,12 +2,24 @@
 //!
 //! A cada mensagem do usuário:
 //! 1. grava a mensagem no histórico;
-//! 2. monta o contexto: system prompt (regras + núcleo + interocepção)
-//!    + histórico recente;
+//! 2. monta o contexto: system prompt (regras + núcleo + memória central +
+//!    índice das skills + interocepção) + histórico recente;
 //! 3. chama o cérebro pelo pool, com origem `Conversa` (fatia reservada);
 //! 4. se o modelo pedir ferramentas, executa, grava os resultados
 //!    (rotulados como dado) e volta ao passo 2 — até `max_rodadas_ferramentas`;
 //! 5. grava e devolve a resposta final.
+//!
+//! Origem do conteúdo (para a regra dura da memória interna):
+//! - resultados de ferramentas externas são gravados com `origem_externa`;
+//! - respostas do modelo geradas DEPOIS de um resultado externo no mesmo
+//!   turno também (são a paráfrase mais direta daquele conteúdo);
+//! - antes de cada chamada ao modelo, o kernel olha a janela de histórico
+//!   que vai no contexto: se houver algo marcado, as ferramentas pedidas
+//!   nessa rodada recebem essa origem (é o que `memoria_propor` usa).
+//!
+//! A marca some quando as mensagens marcadas saem da janela; ela não se
+//! propaga de turno em turno (senão uma conversa longa nunca mais poderia
+//! guardar nada na memória interna).
 
 use std::sync::Arc;
 
@@ -15,10 +27,11 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::db::Banco;
-use crate::ferramentas::CaixaDeFerramentas;
+use crate::ferramentas::{CaixaDeFerramentas, ContextoChamada};
 use crate::historico;
-use crate::identidade::Identidade;
+use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
+use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem, Uso};
 use crate::orquestrador::{AoReceber, Origem, Orquestrador, reemprestar};
 
@@ -82,8 +95,9 @@ impl SessaoChat {
         })
     }
 
-    /// Monta a lista de mensagens enviada ao modelo.
-    fn montar_contexto(&self) -> anyhow::Result<Vec<Mensagem>> {
+    /// Monta a lista de mensagens enviada ao modelo e diz se essa janela
+    /// tem conteúdo externo.
+    fn montar_contexto(&self) -> anyhow::Result<(Vec<Mensagem>, ContextoChamada)> {
         // O núcleo é relido a cada turno: editar o arquivo vale na hora.
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
         // Data/hora e estado do "corpo", medidos por código a cada turno.
@@ -91,13 +105,18 @@ impl SessaoChat {
             Ok(i) => i.como_texto(),
             Err(_) => format!("Data e hora: {}", interocepcao::agora_formatado()),
         };
-        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema(Some(&corpo)))];
-        mensagens.extend(historico::carregar(
-            &self.banco,
-            self.conversa,
-            self.config.chat.historico_max_mensagens,
-        )?);
-        Ok(mensagens)
+        let blocos = BlocosPrompt {
+            // Relida a cada turno, como o núcleo.
+            memoria_central: MemoriaCentral::da_config(&self.config).bloco_para_prompt(),
+            // Só nome + descrição; o texto completo vem por `ler_skill`.
+            skills: self.ferramentas.indice_skills(),
+            contexto: Some(corpo),
+        };
+        let mut mensagens = vec![Mensagem::sistema(identidade.prompt_sistema_com(&blocos))];
+        let janela = self.config.chat.historico_max_mensagens;
+        mensagens.extend(historico::carregar(&self.banco, self.conversa, janela)?);
+        let origens = historico::origens_externas(&self.banco, self.conversa, janela)?;
+        Ok((mensagens, ContextoChamada::com_origens(&origens)))
     }
 
     /// Envia uma mensagem do usuário e devolve a resposta do Abiyss.
@@ -112,9 +131,11 @@ impl SessaoChat {
         let max_rodadas = self.config.chat.max_rodadas_ferramentas.max(1);
         let mut uso = Uso::default();
         let mut ferramentas_usadas = 0;
+        // Origens externas trazidas por ferramentas NESTE turno.
+        let mut origens_do_turno: Vec<String> = Vec::new();
 
         for rodada in 1..=max_rodadas {
-            let mensagens = self.montar_contexto()?;
+            let (mensagens, contexto) = self.montar_contexto()?;
             let mut pedido = nim::montar_pedido(
                 &self.config.modelos.cerebro,
                 mensagens,
@@ -131,7 +152,18 @@ impl SessaoChat {
                 .chamar(Origem::Conversa, &pedido, reemprestar(&mut ao_receber))
                 .await?;
             uso.somar(&resposta.uso);
-            historico::adicionar(&self.banco, self.conversa, &resposta.mensagem)?;
+            // Resposta escrita depois de conteúdo externo deste turno: derivada dele.
+            let derivada = if origens_do_turno.is_empty() {
+                None
+            } else {
+                Some(origens_do_turno.join(", "))
+            };
+            historico::adicionar_com_origem(
+                &self.banco,
+                self.conversa,
+                &resposta.mensagem,
+                derivada.as_deref(),
+            )?;
 
             let chamadas = resposta.mensagem.chamadas().to_vec();
             if chamadas.is_empty() {
@@ -145,14 +177,24 @@ impl SessaoChat {
             // Executa TODAS as chamadas pedidas (a API exige um resultado
             // para cada uma) e grava os resultados.
             for chamada in &chamadas {
-                let resultado = self.ferramentas.executar(chamada).await;
+                let resultado = self.ferramentas.executar_com(chamada, &contexto).await;
                 ferramentas_usadas += 1;
+                if let Some(origem) = &resultado.origem_externa
+                    && !origens_do_turno.contains(origem)
+                {
+                    origens_do_turno.push(origem.clone());
+                }
                 let mensagem = Mensagem::resultado_ferramenta(
                     &chamada.id,
                     &chamada.function.name,
                     resultado.texto,
                 );
-                historico::adicionar(&self.banco, self.conversa, &mensagem)?;
+                historico::adicionar_com_origem(
+                    &self.banco,
+                    self.conversa,
+                    &mensagem,
+                    resultado.origem_externa.as_deref(),
+                )?;
             }
         }
 
