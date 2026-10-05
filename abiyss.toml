@@ -89,6 +89,10 @@ backoff_maximo_ms = 60000
 dados = "data"
 # Núcleo de identidade injetado no system prompt (o Abiyss não pode editá-lo).
 identidade = "identity/nucleo.md"
+# ÚNICA pasta onde as ferramentas de arquivo leem e escrevem. O kernel
+# recusa iniciar se ela contiver kernel/, identity/, recursos/, data/,
+# .env, .git ou o abiyss.toml.
+workspace = "workspace"
 
 # ---------------------------------------------------------------------------
 # Conversa (`abiyss chat`).
@@ -97,3 +101,14 @@ identidade = "identity/nucleo.md"
 [chat]
 # Quantas mensagens anteriores entram no contexto a cada turno.
 historico_max_mensagens = 40
+# Máximo de rodadas modelo → ferramenta → modelo por mensagem do usuário.
+max_rodadas_ferramentas = 8
+
+# ---------------------------------------------------------------------------
+# Ferramentas nativas de arquivo (ler/listar/escrever dentro do workspace).
+# ---------------------------------------------------------------------------
+
+[ferramentas]
+max_bytes_leitura = 200000
+max_bytes_escrita = 1000000
+max_itens_listagem = 500

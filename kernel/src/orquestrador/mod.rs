@@ -100,6 +100,15 @@ impl Nivel {
 /// Tipo do callback de streaming (recebe cada pedaço de texto).
 pub type AoReceber<'a> = Option<&'a mut (dyn FnMut(EventoStream) + Send)>;
 
+/// Empresta de novo o callback, para usá-lo em várias chamadas seguidas
+/// (ex.: as rodadas de ferramentas de um mesmo turno de conversa).
+pub fn reemprestar<'b>(ao_receber: &'b mut AoReceber<'_>) -> AoReceber<'b> {
+    match ao_receber {
+        Some(callback) => Some(&mut **callback),
+        None => None,
+    }
+}
+
 /// O que os dois pools têm em comum: cliente, fila, banco e retentativas.
 struct NucleoPool {
     nome: &'static str,

@@ -4,14 +4,24 @@
 //! 1. grava a mensagem no histórico;
 //! 2. monta o contexto: system prompt (regras + núcleo) + histórico recente;
 //! 3. chama o cérebro pelo pool, com origem `Conversa` (fatia reservada);
-//! 4. grava a resposta.
+//! 4. se o modelo pedir ferramentas, executa, grava os resultados
+//!    (rotulados como dado) e volta ao passo 2 — até `max_rodadas_ferramentas`;
+//! 5. grava e devolve a resposta final.
+
+use std::sync::Arc;
+
+use serde_json::json;
 
 use crate::config::Config;
 use crate::db::Banco;
+use crate::ferramentas::CaixaDeFerramentas;
 use crate::historico;
 use crate::identidade::Identidade;
 use crate::nim::{self, Mensagem, Uso};
-use crate::orquestrador::{AoReceber, Origem, Orquestrador};
+use crate::orquestrador::{AoReceber, Origem, Orquestrador, reemprestar};
+
+/// Texto devolvido quando o modelo insiste em ferramentas além do limite.
+pub const AVISO_LIMITE_RODADAS: &str = "(parei: limite de rodadas de ferramentas atingido)";
 
 /// O que um turno de conversa devolve.
 #[derive(Debug, Clone)]
@@ -19,24 +29,33 @@ pub struct RespostaTurno {
     pub texto: String,
     /// Tokens somados de todas as chamadas do turno.
     pub uso: Uso,
+    /// Quantas ferramentas foram executadas no turno.
+    pub ferramentas_usadas: usize,
 }
 
 pub struct SessaoChat {
     config: Config,
     orquestrador: Orquestrador,
     banco: Banco,
+    ferramentas: Arc<CaixaDeFerramentas>,
     /// ID da conversa no banco.
     pub conversa: i64,
 }
 
 impl SessaoChat {
     /// Começa uma conversa nova.
-    pub fn nova(config: Config, orquestrador: Orquestrador, banco: Banco) -> anyhow::Result<Self> {
+    pub fn nova(
+        config: Config,
+        orquestrador: Orquestrador,
+        banco: Banco,
+        ferramentas: Arc<CaixaDeFerramentas>,
+    ) -> anyhow::Result<Self> {
         let conversa = historico::criar_conversa(&banco)?;
         Ok(SessaoChat {
             config,
             orquestrador,
             banco,
+            ferramentas,
             conversa,
         })
     }
@@ -46,6 +65,7 @@ impl SessaoChat {
         config: Config,
         orquestrador: Orquestrador,
         banco: Banco,
+        ferramentas: Arc<CaixaDeFerramentas>,
         conversa: i64,
     ) -> anyhow::Result<Self> {
         if !historico::conversa_existe(&banco, conversa)? {
@@ -55,6 +75,7 @@ impl SessaoChat {
             config,
             orquestrador,
             banco,
+            ferramentas,
             conversa,
         })
     }
@@ -77,22 +98,61 @@ impl SessaoChat {
     pub async fn enviar(
         &mut self,
         texto: &str,
-        ao_receber: AoReceber<'_>,
+        mut ao_receber: AoReceber<'_>,
     ) -> anyhow::Result<RespostaTurno> {
         historico::adicionar(&self.banco, self.conversa, &Mensagem::usuario(texto))?;
 
-        let mensagens = self.montar_contexto()?;
-        let pedido = nim::montar_pedido(&self.config.modelos.cerebro, mensagens, vec![]);
-        let resposta = self
-            .orquestrador
-            .cerebro
-            .chamar(Origem::Conversa, &pedido, ao_receber)
-            .await?;
+        let max_rodadas = self.config.chat.max_rodadas_ferramentas.max(1);
+        let mut uso = Uso::default();
+        let mut ferramentas_usadas = 0;
 
-        historico::adicionar(&self.banco, self.conversa, &resposta.mensagem)?;
+        for rodada in 1..=max_rodadas {
+            let mensagens = self.montar_contexto()?;
+            let mut pedido = nim::montar_pedido(
+                &self.config.modelos.cerebro,
+                mensagens,
+                self.ferramentas.definicoes(),
+            );
+            // Última rodada: pede uma resposta em texto, sem novas ferramentas.
+            if rodada == max_rodadas && !pedido.tools.is_empty() {
+                pedido.tool_choice = Some(json!("none"));
+            }
+
+            let resposta = self
+                .orquestrador
+                .cerebro
+                .chamar(Origem::Conversa, &pedido, reemprestar(&mut ao_receber))
+                .await?;
+            uso.somar(&resposta.uso);
+            historico::adicionar(&self.banco, self.conversa, &resposta.mensagem)?;
+
+            let chamadas = resposta.mensagem.chamadas().to_vec();
+            if chamadas.is_empty() {
+                return Ok(RespostaTurno {
+                    texto: resposta.mensagem.texto().to_string(),
+                    uso,
+                    ferramentas_usadas,
+                });
+            }
+
+            // Executa TODAS as chamadas pedidas (a API exige um resultado
+            // para cada uma) e grava os resultados.
+            for chamada in &chamadas {
+                let resultado = self.ferramentas.executar(chamada).await;
+                ferramentas_usadas += 1;
+                let mensagem = Mensagem::resultado_ferramenta(
+                    &chamada.id,
+                    &chamada.function.name,
+                    resultado.texto,
+                );
+                historico::adicionar(&self.banco, self.conversa, &mensagem)?;
+            }
+        }
+
         Ok(RespostaTurno {
-            texto: resposta.mensagem.texto().to_string(),
-            uso: resposta.uso,
+            texto: AVISO_LIMITE_RODADAS.to_string(),
+            uso,
+            ferramentas_usadas,
         })
     }
 }

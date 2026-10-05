@@ -24,6 +24,8 @@ pub struct Config {
     pub caminhos: ConfigCaminhos,
     #[serde(default)]
     pub chat: ConfigChat,
+    #[serde(default)]
+    pub ferramentas: ConfigFerramentas,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -184,6 +186,8 @@ pub struct ConfigCaminhos {
     pub dados: String,
     /// Núcleo de identidade injetado no system prompt.
     pub identidade: String,
+    /// Única pasta onde as ferramentas de arquivo podem ler e escrever.
+    pub workspace: String,
 }
 
 impl Default for ConfigCaminhos {
@@ -191,6 +195,26 @@ impl Default for ConfigCaminhos {
         ConfigCaminhos {
             dados: "data".to_string(),
             identidade: "identity/nucleo.md".to_string(),
+            workspace: "workspace".to_string(),
+        }
+    }
+}
+
+/// Limites das ferramentas nativas de arquivo.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ConfigFerramentas {
+    pub max_bytes_leitura: usize,
+    pub max_bytes_escrita: usize,
+    pub max_itens_listagem: usize,
+}
+
+impl Default for ConfigFerramentas {
+    fn default() -> Self {
+        ConfigFerramentas {
+            max_bytes_leitura: 200_000,
+            max_bytes_escrita: 1_000_000,
+            max_itens_listagem: 500,
         }
     }
 }
@@ -201,12 +225,15 @@ impl Default for ConfigCaminhos {
 pub struct ConfigChat {
     /// Quantas mensagens antigas entram no contexto a cada turno.
     pub historico_max_mensagens: usize,
+    /// Máximo de idas e voltas modelo → ferramenta → modelo por mensagem.
+    pub max_rodadas_ferramentas: usize,
 }
 
 impl Default for ConfigChat {
     fn default() -> Self {
         ConfigChat {
             historico_max_mensagens: 40,
+            max_rodadas_ferramentas: 8,
         }
     }
 }
@@ -307,6 +334,33 @@ impl Config {
     /// Caminho do núcleo de identidade.
     pub fn caminho_identidade(&self) -> PathBuf {
         self.resolver(&self.caminhos.identidade)
+    }
+
+    /// Pasta do workspace (única área de escrita das ferramentas).
+    pub fn caminho_workspace(&self) -> PathBuf {
+        self.resolver(&self.caminhos.workspace)
+    }
+
+    /// Áreas que o workspace NUNCA pode conter nem ficar dentro:
+    /// código do kernel, identidade, dados, segredos, config, git e recursos.
+    pub fn areas_protegidas(&self) -> Vec<PathBuf> {
+        let mut areas = vec![
+            self.raiz.join("kernel"),
+            self.raiz.join("recursos"),
+            self.raiz.join(".git"),
+            self.raiz.join(".env"),
+            self.raiz.join("abiyss.toml"),
+            self.raiz.join("Cargo.toml"),
+            self.resolver(&self.caminhos.dados),
+            self.caminho_identidade(),
+        ];
+        // A pasta do núcleo também é protegida (a não ser que seja a própria raiz).
+        if let Some(pasta) = self.caminho_identidade().parent()
+            && pasta != self.raiz
+        {
+            areas.push(pasta.to_path_buf());
+        }
+        areas
     }
 
     /// Caminho do banco SQLite.

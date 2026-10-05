@@ -1,12 +1,14 @@
 //! `abiyss chat`: conversa interativa no terminal.
 
 use std::io::Write;
+use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use abiyss::chat::SessaoChat;
 use abiyss::config::Config;
 use abiyss::db::Banco;
+use abiyss::ferramentas::CaixaDeFerramentas;
 use abiyss::historico;
 use abiyss::nim::EventoStream;
 use abiyss::orquestrador::Orquestrador;
@@ -23,6 +25,7 @@ const AJUDA: &str = "Comandos: /nova (nova conversa), /sair (encerra), /ajuda";
 pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> {
     let banco = Banco::abrir(&config.caminho_banco())?;
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
+    let ferramentas = Arc::new(CaixaDeFerramentas::da_config(&config)?);
 
     // Qual conversa usar: a pedida, a última, ou uma nova.
     let existente = match opcoes.conversa {
@@ -31,8 +34,19 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
         None => None,
     };
     let mut sessao = match existente {
-        Some(id) => SessaoChat::retomar(config.clone(), orquestrador.clone(), banco.clone(), id)?,
-        None => SessaoChat::nova(config.clone(), orquestrador.clone(), banco.clone())?,
+        Some(id) => SessaoChat::retomar(
+            config.clone(),
+            orquestrador.clone(),
+            banco.clone(),
+            ferramentas.clone(),
+            id,
+        )?,
+        None => SessaoChat::nova(
+            config.clone(),
+            orquestrador.clone(),
+            banco.clone(),
+            ferramentas.clone(),
+        )?,
     };
 
     // Modo "uma mensagem só" (bom para scripts).
@@ -56,7 +70,12 @@ pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> 
             "/sair" | "/exit" => break,
             "/ajuda" | "/help" => println!("{AJUDA}"),
             "/nova" => {
-                sessao = SessaoChat::nova(config.clone(), orquestrador.clone(), banco.clone())?;
+                sessao = SessaoChat::nova(
+                    config.clone(),
+                    orquestrador.clone(),
+                    banco.clone(),
+                    ferramentas.clone(),
+                )?;
                 println!("Nova conversa: {}", sessao.conversa);
             }
             texto => {

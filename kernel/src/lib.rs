@@ -7,7 +7,9 @@
 
 pub mod chat;
 pub mod config;
+pub mod dados;
 pub mod db;
+pub mod ferramentas;
 pub mod historico;
 pub mod identidade;
 pub mod nim;

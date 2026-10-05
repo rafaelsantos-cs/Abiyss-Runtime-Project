@@ -12,6 +12,7 @@ fn sessao(amb: &Ambiente) -> SessaoChat {
         amb.config.clone(),
         amb.orquestrador.clone(),
         amb.banco.clone(),
+        amb.ferramentas.clone(),
     )
     .unwrap()
 }
@@ -60,6 +61,7 @@ async fn historico_vai_no_contexto_e_sobrevive_entre_sessoes() {
         amb.config.clone(),
         amb.orquestrador.clone(),
         amb.banco.clone(),
+        amb.ferramentas.clone(),
         id,
     )
     .unwrap();

@@ -4,9 +4,11 @@
 #![allow(dead_code)] // Cada arquivo de teste usa só parte destas funções.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use abiyss::config::{Config, config_de_teste};
 use abiyss::db::Banco;
+use abiyss::ferramentas::CaixaDeFerramentas;
 use abiyss::nim::mock::MockNim;
 use abiyss::orquestrador::Orquestrador;
 use tempfile::TempDir;
@@ -20,6 +22,7 @@ pub struct Ambiente {
     pub config: Config,
     pub banco: Banco,
     pub orquestrador: Orquestrador,
+    pub ferramentas: Arc<CaixaDeFerramentas>,
 }
 
 impl Ambiente {
@@ -46,12 +49,14 @@ impl Ambiente {
         let banco = Banco::abrir(&config.caminho_banco()).unwrap();
         let orquestrador =
             Orquestrador::novo(&config, banco.clone(), "nvapi-cerebro", "nvapi-sub").unwrap();
+        let ferramentas = Arc::new(CaixaDeFerramentas::da_config(&config).unwrap());
         Ambiente {
             pasta,
             mock,
             config,
             banco,
             orquestrador,
+            ferramentas,
         }
     }
 
