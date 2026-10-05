@@ -15,7 +15,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::{Config, ConfigSkillsAutomaticas};
 use crate::dados;
 use crate::db::Banco;
 use crate::diario;
@@ -26,6 +26,7 @@ use crate::interocepcao::{self, Interocepcao};
 use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
+use crate::skills::Skills;
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
 use crate::tempo::{agora_ms, formatar_ms};
 
@@ -70,6 +71,15 @@ pub enum Acao {
     },
     /// Cancela um sub-agente em andamento.
     CancelarSubagente { id: i64 },
+    /// Pede o texto completo de uma skill. Ele chega como evento no
+    /// PRÓXIMO ciclo (que o daemon antecipa: ciclo de continuação).
+    ConsultarSkill {
+        nome: String,
+        #[serde(default)]
+        referencia: Option<String>,
+        #[serde(default)]
+        motivo: String,
+    },
     /// Não fazer nada agora.
     Aguardar {
         #[serde(default)]
@@ -86,6 +96,8 @@ struct AcaoFeita {
     texto: String,
     /// Preenchido quando a ação criou um sub-agente.
     subagente_id: Option<i64>,
+    /// A ação deixou algo para o próximo ciclo ler (ex.: uma skill).
+    continuar: bool,
 }
 
 impl AcaoFeita {
@@ -93,9 +105,15 @@ impl AcaoFeita {
         AcaoFeita {
             texto,
             subagente_id: None,
+            continuar: false,
         }
     }
 }
+
+/// Instrução que acompanha o índice de skills no heartbeat (aqui não há
+/// ferramentas: o texto vem pela ação `consultar_skill`).
+pub const INSTRUCAO_INDICE_HEARTBEAT: &str = "Abaixo estão só o nome e a descrição de cada skill. \
+Quando uma for útil para decidir, use a ação consultar_skill: o texto completo chega no ciclo seguinte.";
 
 /// Resumo de um ciclo, devolvido para quem chamou (daemon, testes, CLI).
 #[derive(Debug, Clone, Default)]
@@ -110,6 +128,9 @@ pub struct ResultadoCiclo {
     pub crons_disparados: Vec<String>,
     /// Problema na resposta do modelo (ex.: fora do formato JSON).
     pub erro: Option<String>,
+    /// Alguma ação deixou algo para o próximo ciclo ler: o daemon antecipa
+    /// esse ciclo (ciclo de continuação, com limite).
+    pub pedir_continuacao: bool,
 }
 
 /// Um ciclo como guardado no banco.
@@ -130,16 +151,19 @@ pub struct Heartbeat {
     banco: Banco,
     orquestrador: Orquestrador,
     subagentes: ControleSubagentes,
+    skills: Skills,
 }
 
 impl Heartbeat {
     pub fn novo(config: Config, banco: Banco, orquestrador: Orquestrador) -> Heartbeat {
         let subagentes = ControleSubagentes::novo(config.clone(), banco.clone(), None);
+        let skills = Skills::da_config(&config);
         Heartbeat {
             config,
             banco,
             orquestrador,
             subagentes,
+            skills,
         }
     }
 
@@ -190,6 +214,7 @@ impl Heartbeat {
                 interocepcao::agora_formatado()
             ),
         };
+        let procedimentos = self.procedimentos_automaticos(&novos);
         let mensagens = vec![
             Mensagem::sistema(self.prompt_sistema()),
             Mensagem::usuario(montar_contexto(
@@ -199,6 +224,7 @@ impl Heartbeat {
                 &trabalhando,
                 ultimo.as_ref(),
                 &corpo,
+                &procedimentos,
             )),
         ];
         let pedido = nim::montar_pedido(&self.config.modelos.cerebro, mensagens, vec![]);
@@ -237,7 +263,10 @@ impl Heartbeat {
                         expectativa,
                     )?;
                     let (linha, subagente) = match self.executar_acao(acao) {
-                        Ok(feito) => (format!("ok: {}", feito.texto), feito.subagente_id),
+                        Ok(feito) => {
+                            resultado.pedir_continuacao |= feito.continuar;
+                            (format!("ok: {}", feito.texto), feito.subagente_id)
+                        }
                         Err(e) => (format!("erro: {e:#}"), None),
                     };
                     // ...e resultado observado DEPOIS.
@@ -270,6 +299,10 @@ impl Heartbeat {
         let identidade = Identidade::carregar(&self.config.caminho_identidade());
         let blocos = BlocosPrompt {
             memoria_central: MemoriaCentral::da_config(&self.config).bloco_para_prompt(),
+            // Só nome + descrição; o texto vem pela ação `consultar_skill`.
+            skills: self
+                .skills
+                .indice_para_prompt_com(INSTRUCAO_INDICE_HEARTBEAT),
             ..Default::default()
         };
         format!(
@@ -277,6 +310,19 @@ impl Heartbeat {
             identidade.prompt_sistema_com(&blocos),
             instrucoes_heartbeat()
         )
+    }
+
+    /// Skills que o kernel põe sozinho no contexto deste ciclo, conforme os
+    /// eventos (estagnação, despertar...). Só skills confiáveis.
+    fn procedimentos_automaticos(&self, novos: &[Evento]) -> Vec<(String, String)> {
+        skills_para_eventos(novos, &self.config.skills.automaticas)
+            .into_iter()
+            .filter_map(|nome| {
+                self.skills
+                    .texto_confiavel(&nome)
+                    .map(|texto| (nome, texto))
+            })
+            .collect()
     }
 
     /// Executa uma ação já decidida, validando por código.
@@ -305,9 +351,35 @@ impl Heartbeat {
                 Ok(AcaoFeita {
                     texto: format!("sub-agente {id} ({}) delegado", nivel.como_texto()),
                     subagente_id: Some(id),
+                    continuar: false,
                 })
             }
             Acao::CancelarSubagente { id } => Ok(AcaoFeita::texto(self.subagentes.cancelar(id)?)),
+            Acao::ConsultarSkill {
+                nome,
+                referencia,
+                motivo: _,
+            } => {
+                let leitura = self.skills.ler_detalhado(&nome, referencia.as_deref())?;
+                let origem = match referencia.as_deref().map(str::trim) {
+                    Some(r) if !r.is_empty() => format!("{}/{r}", leitura.nome),
+                    _ => leitura.nome.clone(),
+                };
+                // Skill de pasta não confiável é conteúdo externo.
+                let externa = (!leitura.confiavel).then(|| format!("skill:{origem}"));
+                eventos::publicar_com_origem(
+                    &self.banco,
+                    eventos::TIPO_SKILL,
+                    &origem,
+                    &leitura.texto,
+                    externa.as_deref(),
+                )?;
+                Ok(AcaoFeita {
+                    texto: format!("skill '{origem}' chega no próximo ciclo"),
+                    subagente_id: None,
+                    continuar: true,
+                })
+            }
             Acao::TransicionarGoal {
                 goal_id,
                 para,
@@ -351,6 +423,8 @@ Ações possíveis em \"acoes\":\n\
 - {{\"tipo\": \"delegar\", \"nivel\": \"ultra|medium|low\", \"tarefa\": \"...\", \"contexto\": \"...\", \"prazo_segundos\": 600, \"goal_id\": N}}\n\
   (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento)\n\
 - {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
+- {{\"tipo\": \"consultar_skill\", \"nome\": \"...\", \"referencia\": \"(opcional)\", \"motivo\": \"...\"}}\n\
+  (o texto completo da skill chega como evento no ciclo seguinte, logo depois deste)\n\
 - {{\"tipo\": \"aguardar\", \"motivo\": \"...\"}}\n\n\
 Em CADA ação, inclua também \"expectativa\": o que você espera que aconteça \
 (o kernel anota no diário e depois compara com o resultado observado).\n\n\
@@ -390,8 +464,28 @@ pub fn motivo_para_chamar(
     }
 }
 
+/// Que skills automáticas os eventos deste ciclo pedem (em ordem, sem
+/// repetição). Estagnação → `estagnacao`; resumo do sono ou reinício →
+/// `despertar`.
+pub fn skills_para_eventos(novos: &[Evento], auto: &ConfigSkillsAutomaticas) -> Vec<String> {
+    let mut nomes: Vec<String> = Vec::new();
+    for e in novos {
+        let nome = match (e.tipo.as_str(), e.origem.as_str()) {
+            (eventos::TIPO_KERNEL, "estagnacao") => &auto.estagnacao,
+            (eventos::TIPO_SONO, _) | (eventos::TIPO_KERNEL, "reinicio") => &auto.despertar,
+            _ => continue,
+        };
+        let nome = nome.trim();
+        if !nome.is_empty() && !nomes.iter().any(|n| n == nome) {
+            nomes.push(nome.to_string());
+        }
+    }
+    nomes
+}
+
 /// Monta a mensagem de contexto do ciclo, com o núcleo do goal em foco
 /// no início e repetido no fim (contra o "perdido no meio").
+/// `procedimentos` = (nome, texto) de skills que o kernel pôs no contexto.
 pub fn montar_contexto(
     foco: Option<&Goal>,
     ativos: &[Goal],
@@ -399,6 +493,7 @@ pub fn montar_contexto(
     trabalhando: &[InfoSubagente],
     ultimo: Option<&Ciclo>,
     corpo: &str,
+    procedimentos: &[(String, String)],
 ) -> String {
     let nucleo = match foco {
         Some(g) => format!(
@@ -465,6 +560,14 @@ pub fn montar_contexto(
     for e in novos {
         let origem = format!("{}:{}", e.tipo, e.origem);
         texto.push_str(&dados::rotular(&origem, &e.conteudo));
+        texto.push('\n');
+    }
+
+    for (nome, procedimento) in procedimentos {
+        texto.push_str(&format!(
+            "\n## Procedimento sugerido pelo kernel (skill {nome})\n"
+        ));
+        texto.push_str(&dados::rotular(&format!("skill:{nome}"), procedimento));
         texto.push('\n');
     }
 
@@ -622,6 +725,7 @@ mod testes {
             tipo: "cron".into(),
             origem: "x".into(),
             conteudo: "y".into(),
+            origem_externa: None,
         };
         let g = goal(1, 100);
         let mudou = goal(1, 600);
@@ -658,6 +762,7 @@ mod testes {
             &[],
             None,
             "Data e hora: x",
+            &[],
         );
         assert!(texto.starts_with("### NÚCLEO DO GOAL EM FOCO — #7"));
         assert_eq!(texto.matches("Terminar o capítulo 1 até sexta.").count(), 3);

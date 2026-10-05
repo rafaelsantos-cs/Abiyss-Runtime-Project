@@ -380,11 +380,13 @@ fn publicar_resultado(banco: &Banco, id: i64) -> anyhow::Result<()> {
         );
         crate::diario::anexar_resultado_de_subagente(banco, id, &texto)?;
     }
-    eventos::publicar(
+    // Relatório de sub-agente é conteúdo EXTERNO (contexto sem rastreio).
+    eventos::publicar_com_origem(
         banco,
         eventos::TIPO_SUBAGENTE,
         &id.to_string(),
         &serde_json::to_string_pretty(&info.como_json())?,
+        Some(&format!("subagente:{id}")),
     )?;
     Ok(())
 }

@@ -19,8 +19,15 @@
 //!
 //! As skills são SÓ LEITURA para o Abiyss: nenhuma ferramenta escreve aqui
 //! e o workspace é recusado se contiver esta pasta.
+//!
+//! **Confiança.** Pode haver várias pastas (raízes). Skills de uma raiz
+//! confiável (por padrão, as versionadas dentro do projeto) têm a mesma
+//! confiança do núcleo: lê-las NÃO marca o contexto como externo. Skills de
+//! fora (pasta do Hermes, hubs) são conteúdo externo para a regra dura da
+//! memória.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::bail;
 
@@ -41,6 +48,13 @@ const MAX_SKILLS: usize = 500;
 /// Tamanho máximo de um `SKILL.md` ou de uma referência.
 const MAX_BYTES_ARQUIVO: usize = 256 * 1024;
 
+/// Uma pasta de skills e se ela é confiável.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaizSkills {
+    pub caminho: PathBuf,
+    pub confiavel: bool,
+}
+
 /// Uma skill válida.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skill {
@@ -48,7 +62,24 @@ pub struct Skill {
     pub descricao: String,
     /// Pasta da skill (onde está o SKILL.md).
     pub pasta: PathBuf,
+    /// Veio de uma raiz confiável?
+    pub confiavel: bool,
 }
+
+/// O texto de uma skill e se ele é confiável.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LeituraSkill {
+    pub nome: String,
+    pub texto: String,
+    pub confiavel: bool,
+}
+
+/// Instrução que acompanha o índice no chat (lá existe a ferramenta).
+pub const INSTRUCAO_INDICE_CHAT: &str = "Abaixo estão só o nome e a descrição de cada skill. \
+Quando uma for útil, leia o texto completo com a ferramenta ler_skill(nome) antes de seguir o procedimento.";
+
+/// Skills automáticas ausentes já avisadas (o aviso sai uma vez por processo).
+static AVISADAS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Uma pasta com SKILL.md que não pôde ser carregada, e por quê.
 #[derive(Debug, Clone, PartialEq)]
@@ -71,40 +102,51 @@ impl Catalogo {
     }
 }
 
-/// Acesso à pasta de skills. A pasta é relida a cada uso: editar ou
-/// acrescentar uma skill vale na hora, sem reiniciar.
+/// Acesso às pastas de skills. As pastas são relidas a cada uso: editar
+/// ou acrescentar uma skill vale na hora, sem reiniciar.
 #[derive(Debug, Clone)]
 pub struct Skills {
-    raiz: PathBuf,
+    raizes: Vec<RaizSkills>,
 }
 
 impl Skills {
+    /// Uma raiz só, NÃO confiável (o padrão conservador).
     pub fn nova(raiz: &Path) -> Skills {
-        Skills {
-            raiz: raiz.to_path_buf(),
-        }
+        Skills::com_raizes(vec![RaizSkills {
+            caminho: raiz.to_path_buf(),
+            confiavel: false,
+        }])
+    }
+
+    pub fn com_raizes(raizes: Vec<RaizSkills>) -> Skills {
+        Skills { raizes }
     }
 
     pub fn da_config(config: &Config) -> Skills {
-        Skills::nova(&config.caminho_skills())
+        Skills::com_raizes(config.raizes_skills())
     }
 
-    pub fn raiz(&self) -> &Path {
-        &self.raiz
+    pub fn raizes(&self) -> &[RaizSkills] {
+        &self.raizes
     }
 
-    /// A pasta existe? (Sem ela, a ferramenta `ler_skill` nem é oferecida.)
+    /// Alguma pasta existe? (Sem nenhuma, a ferramenta `ler_skill` nem é oferecida.)
     pub fn existe(&self) -> bool {
-        self.raiz.is_dir()
+        self.raizes.iter().any(|r| r.caminho.is_dir())
     }
 
-    /// Varre a pasta e carrega o frontmatter de cada skill.
+    /// Varre as pastas (em ordem) e carrega o frontmatter de cada skill.
+    /// Nome repetido: vale a primeira (a raiz que vem antes ganha).
     pub fn catalogo(&self) -> Catalogo {
         let mut catalogo = Catalogo::default();
         let mut pastas = Vec::new();
-        procurar_pastas_de_skill(&self.raiz, 0, &mut pastas);
-        pastas.sort();
-        for pasta in pastas {
+        for raiz in &self.raizes {
+            let mut desta = Vec::new();
+            procurar_pastas_de_skill(&raiz.caminho, 0, &mut desta);
+            desta.sort();
+            pastas.extend(desta.into_iter().map(|p| (p, raiz.confiavel)));
+        }
+        for (pasta, confiavel) in pastas {
             if catalogo.skills.len() >= MAX_SKILLS {
                 catalogo.problemas.push(ProblemaSkill {
                     caminho: pasta,
@@ -112,7 +154,7 @@ impl Skills {
                 });
                 continue;
             }
-            match carregar_skill(&pasta) {
+            match carregar_skill(&pasta, confiavel) {
                 Ok(skill) => {
                     if catalogo.buscar(&skill.nome).is_some() {
                         catalogo.problemas.push(ProblemaSkill {
@@ -132,9 +174,15 @@ impl Skills {
         catalogo
     }
 
-    /// Bloco para o system prompt: só nome e descrição de cada skill,
-    /// rotulado como dado. `None` se não houver nenhuma skill.
+    /// Bloco para o system prompt do chat: só nome e descrição de cada
+    /// skill, rotulado como dado. `None` se não houver nenhuma skill.
     pub fn indice_para_prompt(&self) -> Option<String> {
+        self.indice_para_prompt_com(INSTRUCAO_INDICE_CHAT)
+    }
+
+    /// Como `indice_para_prompt`, com outra instrução no topo (o heartbeat
+    /// não tem a ferramenta `ler_skill`: lá é a ação `consultar_skill`).
+    pub fn indice_para_prompt_com(&self, instrucao: &str) -> Option<String> {
         let catalogo = self.catalogo();
         if catalogo.skills.is_empty() {
             return None;
@@ -145,16 +193,50 @@ impl Skills {
             .map(|s| format!("- {}: {}", s.nome, uma_linha(&s.descricao)))
             .collect();
         Some(format!(
-            "Abaixo estão só o nome e a descrição de cada skill. Quando uma for útil, \
-leia o texto completo com a ferramenta ler_skill(nome) antes de seguir o procedimento.\n{}",
+            "{instrucao}\n{}",
             dados::rotular("skills:indice", &linhas.join("\n"))
         ))
+    }
+
+    /// A skill existe e é confiável? `None` se não existe.
+    pub fn confiavel(&self, nome: &str) -> Option<bool> {
+        self.catalogo().buscar(nome).map(|s| s.confiavel)
+    }
+
+    /// Texto completo de uma skill CONFIÁVEL, para o kernel colocar no
+    /// contexto sozinho (skills automáticas). Skill ausente, quebrada ou
+    /// não confiável = `None`, com um aviso no log (uma vez por nome).
+    pub fn texto_confiavel(&self, nome: &str) -> Option<String> {
+        let nome = nome.trim();
+        if nome.is_empty() {
+            return None;
+        }
+        let motivo = match self.ler_detalhado(nome, None) {
+            Ok(l) if l.confiavel => return Some(l.texto),
+            Ok(_) => "não é de uma pasta confiável".to_string(),
+            Err(e) => format!("{e:#}"),
+        };
+        let mut avisadas = AVISADAS.lock().unwrap_or_else(|e| e.into_inner());
+        if !avisadas.iter().any(|n| n == nome) {
+            avisadas.push(nome.to_string());
+            tracing::warn!("skill automática '{nome}' não será usada: {motivo}");
+        }
+        None
     }
 
     /// Texto completo do SKILL.md (ou de uma referência, se `referencia`
     /// for informada). O resultado NÃO é rotulado aqui: quem rotula é a
     /// caixa de ferramentas, como para qualquer ferramenta.
     pub fn ler(&self, nome: &str, referencia: Option<&str>) -> anyhow::Result<String> {
+        Ok(self.ler_detalhado(nome, referencia)?.texto)
+    }
+
+    /// Como `ler`, dizendo também se a skill é confiável.
+    pub fn ler_detalhado(
+        &self,
+        nome: &str,
+        referencia: Option<&str>,
+    ) -> anyhow::Result<LeituraSkill> {
         let catalogo = self.catalogo();
         let Some(skill) = catalogo.buscar(nome) else {
             let nomes: Vec<&str> = catalogo.skills.iter().map(|s| s.nome.as_str()).collect();
@@ -169,7 +251,7 @@ leia o texto completo com a ferramenta ler_skill(nome) antes de seguir o procedi
         };
 
         let pasta_refs = skill.pasta.join(PASTA_REFERENCIAS);
-        match referencia.map(str::trim).filter(|r| !r.is_empty()) {
+        let texto = match referencia.map(str::trim).filter(|r| !r.is_empty()) {
             Some(arquivo) => {
                 if !pasta_refs.is_dir() {
                     bail!(
@@ -193,7 +275,12 @@ leia o texto completo com a ferramenta ler_skill(nome) antes de seguir o procedi
                 }
                 Ok(texto)
             }
-        }
+        }?;
+        Ok(LeituraSkill {
+            nome: skill.nome.clone(),
+            texto,
+            confiavel: skill.confiavel,
+        })
     }
 }
 
@@ -221,7 +308,7 @@ fn procurar_pastas_de_skill(pasta: &Path, profundidade: usize, achadas: &mut Vec
     }
 }
 
-fn carregar_skill(pasta: &Path) -> anyhow::Result<Skill> {
+fn carregar_skill(pasta: &Path, confiavel: bool) -> anyhow::Result<Skill> {
     let texto = ler_texto_limitado(&pasta.join(ARQUIVO_SKILL), MAX_BYTES_ARQUIVO)?;
     let doc = frontmatter::separar(&texto)?;
     if !doc.tem_frontmatter {
@@ -244,6 +331,7 @@ fn carregar_skill(pasta: &Path) -> anyhow::Result<Skill> {
         nome,
         descricao,
         pasta: pasta.to_path_buf(),
+        confiavel,
     })
 }
 

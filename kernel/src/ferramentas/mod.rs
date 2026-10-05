@@ -183,6 +183,15 @@ impl CaixaDeFerramentas {
             .filter(|s| s.existe() && self.permitida(LER_SKILL))
     }
 
+    /// `ler_skill` vai ler uma skill confiável? (Skill inexistente ou de
+    /// pasta não confiável = não; na dúvida, conta como externa.)
+    fn skill_confiavel(&self, args: &Value) -> bool {
+        match (self.skills_ativas(), args["nome"].as_str()) {
+            (Some(skills), Some(nome)) => skills.confiavel(nome) == Some(true),
+            _ => false,
+        }
+    }
+
     /// Índice das skills (nome + descrição) para o system prompt.
     /// `None` se esta caixa não tem `ler_skill` ou não há skills.
     pub fn indice_skills(&self) -> Option<String> {
@@ -279,6 +288,11 @@ impl CaixaDeFerramentas {
                 Err(e) => Err(e),
                 Ok(args) => {
                     origem_externa = classificar_origem(nome, &args, eh_mcp);
+                    // Skill de pasta confiável (versionada no projeto) tem a
+                    // confiança do núcleo: não é conteúdo externo.
+                    if nome == LER_SKILL && self.skill_confiavel(&args) {
+                        origem_externa = None;
+                    }
                     if NATIVAS.contains(&nome) {
                         self.executar_nativa(nome, &args)
                     } else if MEMORIA.contains(&nome) {
@@ -488,7 +502,8 @@ fn classificar_origem(nome: &str, args: &Value, eh_mcp: bool) -> Option<String> 
             }
         }
         _ if eh_mcp => Some(format!("mcp:{nome}")),
-        // Arquivos do workspace, skills, relatórios de sub-agentes...
+        // Arquivos do workspace, skills (as confiáveis são liberadas por quem
+        // chama), relatórios de sub-agentes...
         _ => Some(nome.to_string()),
     }
 }

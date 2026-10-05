@@ -16,6 +16,14 @@ use crate::tempo::agora_ms;
 /// Tipos de evento conhecidos.
 pub const TIPO_CRON: &str = "cron";
 pub const TIPO_SUBAGENTE: &str = "subagente";
+/// Texto de uma skill pedido pelo heartbeat (`consultar_skill`).
+pub const TIPO_SKILL: &str = "skill";
+/// Avisos do próprio kernel (estagnação, reinício...).
+pub const TIPO_KERNEL: &str = "kernel";
+/// Resumo do sono, publicado ao acordar.
+pub const TIPO_SONO: &str = "sono";
+/// Resposta do usuário a um pedido do Abiyss.
+pub const TIPO_USUARIO: &str = "usuario";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Evento {
@@ -26,14 +34,37 @@ pub struct Evento {
     pub origem: String,
     /// Conteúdo livre (texto ou JSON).
     pub conteudo: String,
+    /// Calculado pelo kernel ao publicar: `Some(rótulo)` se o conteúdo veio
+    /// de fora (relatório de sub-agente, skill não confiável...). Um ciclo
+    /// que consome evento externo fica marcado como externo (ver o sono).
+    pub origem_externa: Option<String>,
 }
 
-/// Coloca um evento na fila e devolve o ID.
+impl Evento {
+    pub fn eh_externo(&self) -> bool {
+        self.origem_externa.is_some()
+    }
+}
+
+/// Coloca na fila um evento de conteúdo interno (cron, kernel...) e
+/// devolve o ID.
 pub fn publicar(banco: &Banco, tipo: &str, origem: &str, conteudo: &str) -> anyhow::Result<i64> {
+    publicar_com_origem(banco, tipo, origem, conteudo, None)
+}
+
+/// Coloca um evento na fila, dizendo se o conteúdo é externo.
+pub fn publicar_com_origem(
+    banco: &Banco,
+    tipo: &str,
+    origem: &str,
+    conteudo: &str,
+    origem_externa: Option<&str>,
+) -> anyhow::Result<i64> {
     let conexao = banco.conexao();
     conexao.execute(
-        "INSERT INTO fila_eventos (momento_ms, tipo, origem, conteudo) VALUES (?1, ?2, ?3, ?4)",
-        params![agora_ms(), tipo, origem, conteudo],
+        "INSERT INTO fila_eventos (momento_ms, tipo, origem, conteudo, origem_externa)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![agora_ms(), tipo, origem, conteudo, origem_externa],
     )?;
     Ok(conexao.last_insert_rowid())
 }
@@ -42,7 +73,7 @@ pub fn publicar(banco: &Banco, tipo: &str, origem: &str, conteudo: &str) -> anyh
 pub fn pendentes(banco: &Banco, limite: usize) -> anyhow::Result<Vec<Evento>> {
     let conexao = banco.conexao();
     let mut consulta = conexao.prepare(
-        "SELECT id, momento_ms, tipo, origem, conteudo FROM fila_eventos
+        "SELECT id, momento_ms, tipo, origem, conteudo, origem_externa FROM fila_eventos
          WHERE consumido_ms IS NULL ORDER BY id ASC LIMIT ?1",
     )?;
     let lista = consulta
@@ -53,6 +84,7 @@ pub fn pendentes(banco: &Banco, limite: usize) -> anyhow::Result<Vec<Evento>> {
                 tipo: l.get(2)?,
                 origem: l.get(3)?,
                 conteudo: l.get(4)?,
+                origem_externa: l.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -90,12 +122,16 @@ mod testes {
     fn publica_le_e_consome_em_ordem() {
         let banco = Banco::em_memoria().unwrap();
         let a = publicar(&banco, TIPO_CRON, "bom-dia", "acorde").unwrap();
-        let b = publicar(&banco, TIPO_SUBAGENTE, "7", "{}").unwrap();
+        let b =
+            publicar_com_origem(&banco, TIPO_SUBAGENTE, "7", "{}", Some("subagente:7")).unwrap();
         let lista = pendentes(&banco, 10).unwrap();
         assert_eq!(lista.iter().map(|e| e.id).collect::<Vec<_>>(), vec![a, b]);
         assert_eq!(pendentes(&banco, 1).unwrap().len(), 1);
         marcar_consumidos(&banco, &[a]).unwrap();
         assert_eq!(contar_pendentes(&banco).unwrap(), 1);
-        assert_eq!(pendentes(&banco, 10).unwrap()[0].id, b);
+        let restante = &pendentes(&banco, 10).unwrap()[0];
+        assert_eq!(restante.id, b);
+        assert!(restante.eh_externo());
+        assert!(!lista[0].eh_externo());
     }
 }

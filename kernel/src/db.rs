@@ -247,6 +247,15 @@ const MIGRACOES: &[&str] = &[
     CREATE INDEX idx_fila_momento ON fila_eventos(momento_ms);
     CREATE INDEX idx_ciclos_inicio ON ciclos(inicio_ms);
     "#,
+    // 10 (E2) — origem de cada evento da fila, calculada pelo kernel ao
+    // publicar: relatórios de sub-agente e skills não confiáveis são
+    // conteúdo EXTERNO. Eventos de sub-agente gravados antes desta migração
+    // são marcados como externos, por segurança.
+    r#"
+    ALTER TABLE fila_eventos ADD COLUMN origem_externa TEXT;
+    UPDATE fila_eventos SET origem_externa = 'subagente:' || origem
+        WHERE tipo = 'subagente';
+    "#,
 ];
 
 /// Teto do arquivo WAL depois de cada checkpoint (o SQLite trunca o que

@@ -22,7 +22,7 @@ use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -219,6 +219,25 @@ async fn esperar_trabalho(trabalho: &mut Option<Trabalho<'_>>) {
     }
 }
 
+/// Quanto esperar até o próximo ciclo. Um ciclo que pediu continuação
+/// (deixou algo para o próximo ler) antecipa o seguinte, até
+/// `max_seguidas` vezes em sequência; depois volta ao intervalo normal.
+pub fn proxima_espera(
+    pediu_continuacao: bool,
+    seguidas: &mut u32,
+    max_seguidas: u32,
+    continuacao: Duration,
+    normal: Duration,
+) -> Duration {
+    if pediu_continuacao && *seguidas < max_seguidas {
+        *seguidas += 1;
+        continuacao
+    } else {
+        *seguidas = 0;
+        normal
+    }
+}
+
 /// Opções de linha de comando do daemon.
 #[derive(Debug, Clone, Default)]
 pub struct OpcoesDaemon {
@@ -232,6 +251,8 @@ pub struct Daemon {
     pub banco: Banco,
     pub heartbeat: Heartbeat,
     pub executor: Arc<ExecutorSubagentes>,
+    /// O último ciclo pediu continuação (ex.: consultou uma skill).
+    continuacao_pedida: AtomicBool,
 }
 
 impl Daemon {
@@ -256,6 +277,7 @@ impl Daemon {
             banco,
             heartbeat,
             executor,
+            continuacao_pedida: AtomicBool::new(false),
         }
     }
 
@@ -308,6 +330,9 @@ impl Daemon {
     async fn um_ciclo(&self) {
         match self.heartbeat.ciclo().await {
             Ok(r) if r.chamou_modelo => {
+                if r.pedir_continuacao {
+                    self.continuacao_pedida.store(true, Ordering::Relaxed);
+                }
                 tracing::info!(
                     "heartbeat: chamou o modelo ({}); ações: {}",
                     r.motivo,
@@ -423,6 +448,7 @@ impl Daemon {
         let mut manutencao: Option<Trabalho<'_>> = None;
         // O primeiro ciclo roda logo ao subir (como antes).
         let mut proximo_ciclo = Instant::now();
+        let mut continuacoes_seguidas = 0;
         loop {
             tokio::select! {
                 _ = tique_cron.tick() => self.tique_de_cron(),
@@ -436,7 +462,15 @@ impl Daemon {
                 }
                 _ = esperar_trabalho(&mut ciclo) => {
                     ciclo = None;
-                    proximo_ciclo = Instant::now() + intervalo_heartbeat;
+                    let pediu = self.continuacao_pedida.swap(false, Ordering::Relaxed);
+                    let espera = proxima_espera(
+                        pediu,
+                        &mut continuacoes_seguidas,
+                        self.config.daemon.max_continuacoes_seguidas,
+                        Duration::from_secs(self.config.daemon.continuacao_segundos),
+                        intervalo_heartbeat,
+                    );
+                    proximo_ciclo = Instant::now() + espera;
                 }
                 _ = &mut parar => {
                     if ciclo.is_some() {
@@ -506,6 +540,20 @@ mod testes {
         let formatado: Desfecho<()> =
             supervisionar(curto, async move { panic!("falha {n}") }).await;
         assert_eq!(formatado, Desfecho::Panico("falha 3".into()));
+    }
+
+    #[test]
+    fn continuacao_tem_limite() {
+        let (c, n) = (Duration::from_secs(1), Duration::from_secs(300));
+        let mut seguidas = 0;
+        assert_eq!(proxima_espera(true, &mut seguidas, 2, c, n), c);
+        assert_eq!(proxima_espera(true, &mut seguidas, 2, c, n), c);
+        // Terceira seguida: passou do limite, volta ao normal e zera.
+        assert_eq!(proxima_espera(true, &mut seguidas, 2, c, n), n);
+        assert_eq!(seguidas, 0);
+        assert_eq!(proxima_espera(true, &mut seguidas, 2, c, n), c);
+        assert_eq!(proxima_espera(false, &mut seguidas, 2, c, n), n);
+        assert_eq!(seguidas, 0);
     }
 
     #[test]

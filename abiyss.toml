@@ -182,6 +182,28 @@ workspace = "workspace"
 skills = "skills"
 
 # ---------------------------------------------------------------------------
+# Skills: confiança das pastas e skills que o kernel usa sozinho.
+# ---------------------------------------------------------------------------
+
+[skills]
+# Pastas de skills, em ordem (nome repetido: vale a da primeira pasta).
+# Pasta DENTRO deste projeto (versionada no git) é confiável por padrão: ler
+# uma skill dela não marca a conversa como conteúdo externo. Pasta de fora
+# (skills do Hermes, hubs) é conteúdo EXTERNO para a regra dura da memória.
+# Sem `raizes`, vale `[caminhos] skills` (uma pasta só).
+# raizes = [
+#   { caminho = "skills", confiavel = true },
+#   { caminho = "/home/ubuntu/.hermes/skills", confiavel = false },
+# ]
+
+[skills.automaticas]
+# Skills (confiáveis) que o kernel põe no contexto sozinho quando detecta a
+# situação. Vazio = desligado.
+estagnacao = "sair-de-loops"   # mesma decisão repetida sem efeito
+sono = "dormir-bem"            # critério do sono (consolidação noturna)
+despertar = "planejar-o-dia"   # primeiro ciclo depois do sono ou de um reinício
+
+# ---------------------------------------------------------------------------
 # Conversa (`abiyss chat`).
 # ---------------------------------------------------------------------------
 
@@ -263,6 +285,11 @@ max_travado_segundos = 3600
 # ciclo, registra o erro e os eventos continuam pendentes. O loop principal
 # (crons, sinal de vida, watchdog) nunca espera o ciclo: ele anda em paralelo.
 max_duracao_ciclo_segundos = 900
+# Um ciclo que deixa algo para o próximo ler (ex.: consultar_skill) antecipa
+# o ciclo seguinte para daqui a `continuacao_segundos`, no máximo
+# `max_continuacoes_seguidas` vezes em sequência.
+continuacao_segundos = 20
+max_continuacoes_seguidas = 2
 
 # ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
