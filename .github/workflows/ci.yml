@@ -28,3 +28,29 @@ jobs:
         run: python -m pytest -q --cov=abiyss --cov-report=term-missing
       - name: Build wheel
         run: python -m build --wheel --no-isolation
+
+  robotics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest
+      - name: Install Godot 4.7.2 (SHA-512 verified)
+        run: |
+          robot_lab/tools/install_godot.sh "$HOME/godot"
+          echo "ABIYSS_GODOT=$HOME/godot/godot" >> "$GITHUB_ENV"
+      - name: Godot plant and servo tests
+        run: '"$ABIYSS_GODOT" --headless --path robot_lab --script res://tests/run_tests.gd'
+      - name: Robotics unit and integration tests
+        run: PYTHONPATH=src python -m pytest -q tests/test_robotics_unit.py tests/test_robotics_sim.py
+      - name: Validation scenarios (headless)
+        run: PYTHONPATH=src python -m abiyss.robotics scenario all --out artifacts/robotics
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robotics-validation
+          path: artifacts/robotics

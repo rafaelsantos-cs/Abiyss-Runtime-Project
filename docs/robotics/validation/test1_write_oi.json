@@ -1,0 +1,83 @@
+{
+  "name": "test1_write_oi",
+  "title": "TEST 1 - write('OI') on paper",
+  "passed": true,
+  "checks": [
+    {
+      "check": "write action completed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "ink was deposited by the physical pen contact",
+      "ok": true,
+      "detail": 677
+    },
+    {
+      "check": "both letters are present (>= 2 ink strokes)",
+      "ok": true,
+      "detail": 2
+    },
+    {
+      "check": "ink follows the letters (coverage within 1 mm >= 40%)",
+      "ok": true,
+      "detail": 0.6111
+    },
+    {
+      "check": "result is imperfect (mean deviation > 0.2 mm)",
+      "ok": true,
+      "detail": 1.116
+    },
+    {
+      "check": "no FAULT/STALL during writing",
+      "ok": true,
+      "detail": "SAFE"
+    }
+  ],
+  "metrics": {
+    "status": "done",
+    "error": null,
+    "analysis": {
+      "ink_strokes": 2,
+      "ideal_strokes": 2,
+      "ink_points": 677,
+      "deviation_mean_mm": 1.116,
+      "deviation_rms_mm": 1.513,
+      "deviation_max_mm": 5.162,
+      "coverage_1mm": 0.6111
+    },
+    "duration_s": 15.18
+  },
+  "artifacts": {
+    "ink_plot": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/test1_write_oi_ink.svg",
+    "ink_json": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/test1_write_oi_ink.json",
+    "screenshot": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/03b_OI_result.png"
+  },
+  "events": [
+    {
+      "event": "write_plan",
+      "seq": 21,
+      "text": "OI",
+      "strokes": 2,
+      "speed_mps": 0.02,
+      "pen_press_depth": 0.0015,
+      "sim_time": 0.0
+    },
+    {
+      "event": "write_stroke",
+      "seq": 131,
+      "index": 0,
+      "points": 37,
+      "sim_time": 9.34
+    },
+    {
+      "event": "write_stroke",
+      "seq": 194,
+      "index": 1,
+      "points": 2,
+      "sim_time": 15.18
+    }
+  ],
+  "wall_s": 49.89,
+  "sim_s": 16.84
+}

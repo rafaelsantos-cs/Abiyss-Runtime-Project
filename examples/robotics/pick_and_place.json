@@ -1,0 +1,9 @@
+{
+  "queue": [
+    {"action": "pick", "x": 0.105, "y": 0.095, "z": 0.0125, "label": "A"},
+    {"action": "place", "x": 0.023, "y": 0.128, "z": 0.0125, "open_width_mm": 33},
+    {"action": "pick", "x": 0.15, "y": 0.095, "z": 0.0125, "label": "B"},
+    {"action": "place", "x": 0.067, "y": 0.128, "z": 0.0125, "open_width_mm": 33},
+    {"action": "home"}
+  ]
+}

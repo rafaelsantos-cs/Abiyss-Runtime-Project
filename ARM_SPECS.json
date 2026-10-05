@@ -1,0 +1,724 @@
+{
+  "schema": "abiyss.arm_specs/1",
+  "name": "abiyss-arm-mk0",
+  "description": "Physical parameters of the Abiyss hobby arm (4 DOF + parallel gripper) used by the robotics lab simulator. Every parameter carries a verification status and its sources. Values marked 'estimated' or 'unknown' are NOT facts: they are placeholders chosen so the simulation can run and must be replaced by measurements on real hardware.",
+  "revision": "2026-10-05",
+  "conventions": {
+    "units": "SI everywhere (m, kg, s, rad, N*m, A, V) unless a field name ends in _deg, _us or _mm.",
+    "robot_frame": "Right-handed, origin at the centre of the base on the bench top, +x forward, +y left, +z up.",
+    "godot_frame": "Godot is Y-up. robot (x, y, z) -> godot (x, z, -y). The conversion is a proper rotation (det = +1).",
+    "joint_angles": "Pitch joints: positive angle raises the distal link (rotation about -y of the parent frame). q_shoulder is measured from horizontal, q_elbow and q_wrist are relative to the previous link. Tool pitch = q_shoulder + q_elbow + q_wrist.",
+    "pwm_mapping": "pulse_us = 1500 + direction * (q_deg - servo_center_deg) / 90 * 500, i.e. ~1000 us = -90 deg, 1500 us = 0, ~2000 us = +90 deg of servo travel (TowerPro datasheet diagram)."
+  },
+  "verification_legend": {
+    "datasheet": "Printed in the TowerPro datasheet PDF for that model (primary source).",
+    "manufacturer_web": "Printed on TowerPro's current product page for that model (secondary source).",
+    "datasheet_other_manufacturer": "Printed in a datasheet of a compatible servo sold under the same model name by another manufacturer. Indicative only: it may not describe a genuine TowerPro unit.",
+    "third_party": "Reported by vendors, databases or community measurements. Not verified; usually conflicting.",
+    "derived": "Computed from other listed values with the stated formula.",
+    "design": "A choice we made for this robot or test setup (geometry, operating point, test objects, safety policy). Not a claim about the world.",
+    "reference": "Physical constant or well-established reference value.",
+    "estimated": "Engineering estimate chosen for the simulation. NOT verified. Must be measured on hardware before being trusted.",
+    "tuned_in_simulation": "Chosen by running the simulator. Says nothing about the real servo electronics.",
+    "unknown": "No usable source found. The simulator value is a placeholder."
+  },
+  "research_access_note": "The datasheet PDFs and TowerPro pages could not be downloaded from the build VM: its egress policy blocks those hosts (HTTP 403 at the proxy). The values below were read from search-engine extracts of the cited documents on 2026-10-05 and cross-checked between at least two extracts where marked. A human should confirm them against the original PDFs (links in 'sources') before they are used for hardware decisions.",
+  "sources": {
+    "S1": {
+      "title": "TowerPro MG90S datasheet ('MG90S Metal gear with one bearing')",
+      "urls": ["https://www.electronicoscaldas.com/datasheet/MG90S_Tower-Pro.pdf", "https://datasheetspdf.com/pdf/1106582/ETC/MG90S/1"],
+      "kind": "datasheet",
+      "accessed": "2026-10-05 via search extracts (direct download blocked)"
+    },
+    "S2": {
+      "title": "TowerPro MG90S product page",
+      "urls": ["https://towerpro.com.tw/product/mg90s-3/"],
+      "kind": "manufacturer_web",
+      "accessed": "2026-10-05 via search extracts (direct download blocked)"
+    },
+    "S3": {
+      "title": "TowerPro SG90 datasheet ('SG90 9 g Micro Servo')",
+      "urls": ["https://www.datasheetcafe.com/sg90-datasheet-pdf-9-g-micro-servo/", "https://www.scribd.com/document/509968981/SG90-TowerPro"],
+      "kind": "datasheet",
+      "accessed": "2026-10-05 via search extracts (direct download blocked)"
+    },
+    "S4": {
+      "title": "TowerPro SG90 Analog product page",
+      "urls": ["https://towerpro.com.tw/product/sg90-analog/"],
+      "kind": "manufacturer_web",
+      "accessed": "2026-10-05 via search extracts (direct download blocked)"
+    },
+    "S5": {
+      "title": "ServoDatabase entries for TowerPro SG90 and MG90S",
+      "urls": ["https://servodatabase.com/servo/towerpro/sg90", "https://servodatabase.com/servo/towerpro/mg90s"],
+      "kind": "third_party",
+      "accessed": "2026-10-05 via search extracts"
+    },
+    "S6": {
+      "title": "Shenzhen Sky Star Technology - Data Sheet of MG90S Analog Servo Motor",
+      "urls": ["https://www.tinytronics.nl/product_files/000263_Data%20Sheet%20of%20MG90S%20Analog%20Servo%20Motor.pdf"],
+      "kind": "datasheet_other_manufacturer",
+      "accessed": "2026-10-05 via search extracts"
+    },
+    "S7": {
+      "title": "Miuzei SG90 product specification (model MS18-F)",
+      "urls": ["https://images-na.ssl-images-amazon.com/images/I/61jUf7Q-0uL.pdf"],
+      "kind": "datasheet_other_manufacturer",
+      "accessed": "2026-10-05 via search extracts"
+    },
+    "S8": {
+      "title": "Vendor / community current and backlash reports (conflicting)",
+      "urls": ["https://forum.arduino.cc/t/sg90-accuracy-tested/683299", "https://protosupplies.com/product/servo-motor-micro-sg90/", "https://protosupplies.com/product/servo-motor-micro-mg90s/", "https://www.kpower.com/insight_bldc/7870.html/"],
+      "kind": "third_party",
+      "accessed": "2026-10-05 via search extracts"
+    },
+    "S9": {
+      "title": "Godot 4.7.2-stable source: modules/jolt_physics (friction combine = min(f1, f2); restitution = clamp(r1 + r2); PhysicsServer3D.set_active(false) skips step)",
+      "urls": ["https://github.com/godotengine/godot/blob/4.7.2-stable/modules/jolt_physics/spaces/jolt_space_3d.cpp", "https://github.com/godotengine/godot/blob/4.7.2-stable/modules/jolt_physics/jolt_physics_server_3d.cpp"],
+      "kind": "reference",
+      "accessed": "2026-10-05 (downloaded and read)"
+    },
+    "S10": {
+      "title": "Standard acceleration of gravity g_n = 9.80665 m/s^2 (3rd CGPM 1901; ISO 80000-3)",
+      "urls": ["https://www.bipm.org/en/committees/cg/cgpm/3-1901/resolution-"],
+      "kind": "reference"
+    },
+    "S11": {"title": "Unit conversion: 1 kgf*cm = 0.0980665 N*m (exact, from g_n)", "urls": [], "kind": "reference"},
+    "S12": {
+      "title": "Backlash modelling as a dead-zone spring-damper: M. Nordin, P.-O. Gutman, 'Controlling mechanical systems with backlash - a survey', Automatica 38 (2002) 1633-1649",
+      "urls": ["https://doi.org/10.1016/S0005-1098(02)00047-X"],
+      "kind": "reference"
+    },
+    "S13": {
+      "title": "Permanent-magnet DC motor model: linear torque-speed line between stall torque and no-load speed; current proportional to torque",
+      "urls": [],
+      "kind": "reference"
+    }
+  },
+  "simulation": {
+    "gravity": {"value": 9.80665, "unit": "m/s^2", "status": "reference", "sources": ["S10"]},
+    "physics_rate_hz": {"value": 1000, "unit": "Hz", "status": "design", "note": "Servo electromechanics and rigid bodies are integrated at this rate."},
+    "control_rate_hz": {
+      "value": 50,
+      "unit": "Hz",
+      "status": "datasheet",
+      "sources": ["S1", "S3"],
+      "note": "PWM period 20 ms (50 Hz) from the datasheet. The controller sends one pulse width per servo per period, like a real PWM driver."
+    },
+    "pwm_resolution_us": {
+      "value": 1.0,
+      "unit": "us",
+      "status": "design",
+      "note": "Resolution of the future PWM generator. 1 us matches Arduino Servo.writeMicroseconds; a PCA9685 at 50 Hz has 4.88 us/count. Change when the hardware is chosen."
+    },
+    "supply_voltage": {
+      "value": 4.8,
+      "unit": "V",
+      "status": "design",
+      "note": "Operating point. 4.8 V is the lowest voltage at which both datasheets publish torque and speed, so no interpolation is needed."
+    },
+    "physics_engine": {"value": "Jolt Physics (Godot 4.7.2 built-in)", "status": "design"},
+    "engine_overrides": {
+      "status": "design",
+      "note": "Godot/Jolt defaults are tuned for metre-scale games. Defaults read from Godot 4.7.2 source (S9): penetration_slop 0.02 m, speculative_contact_distance 0.02 m, allow_sleep true, default damping 0.1. They are overridden because 20 mm of slop is as large as the objects being grasped and default damping would add drag that is not part of the servo model.",
+      "penetration_slop_m": 0.0002,
+      "speculative_contact_distance_m": 0.002,
+      "velocity_steps": 64,
+      "position_steps": 16,
+      "allow_sleep": false,
+      "default_linear_damp": 0.0,
+      "default_angular_damp": 0.0,
+      "solver_note": "Raised from the Jolt defaults (10/2): with 16/4 the hinge constraints of the light printed links (~1e-5 kg*m^2) could not transmit base-yaw torques to the ~1e-3 kg*m^2 arm and twisted up to 11 deg out of axis (measured 'swing' telemetry). With 64/16 the maximum swing during write('OI') is ~0.06 deg at no measurable cost in wall time."
+    },
+    "default_seed": {"value": 1337, "status": "design", "note": "Seed of the jitter noise generator. Same seed + same command sequence = same simulation (lockstep)."}
+  },
+  "servo_models": {
+    "MG90S": {
+      "manufacturer": "TowerPro (metal gear, analog)",
+      "parameters": {
+        "mass": {"value": 0.0134, "unit": "kg", "status": "datasheet", "sources": ["S1", "S2"], "datasheet_value": "13.4 g"},
+        "body_size": {
+          "value": [0.0225, 0.012, 0.0355],
+          "unit": "m",
+          "status": "datasheet",
+          "sources": ["S1"],
+          "datasheet_value": "22.5 x 12 x 35.5 mm approx.",
+          "alternatives": [
+            {"value": [0.0228, 0.0122, 0.0285], "sources": ["S2"]}
+          ]
+        },
+        "operating_voltage_range": {"value": [4.8, 6.0], "unit": "V", "status": "datasheet", "sources": ["S1"]},
+        "stall_torque_4v8": {
+          "value": 0.17652,
+          "unit": "N*m",
+          "status": "datasheet",
+          "sources": ["S1", "S2", "S6"],
+          "datasheet_value": "1.8 kgf*cm (4.8 V)",
+          "conversion": "1.8 * 0.0980665 (S11)"
+        },
+        "stall_torque_6v0": {
+          "value": 0.215746,
+          "unit": "N*m",
+          "status": "datasheet",
+          "sources": ["S1"],
+          "datasheet_value": "2.2 kgf*cm (6 V)",
+          "conflicts": "S2 lists 2.2 kg*cm at 6.6 V; S6 (other manufacturer) lists 2.0 kg*cm at 6.0 V."
+        },
+        "speed_4v8": {
+          "value": 0.1,
+          "unit": "s/60deg",
+          "status": "datasheet",
+          "sources": ["S1", "S2"],
+          "conflicts": "S6 (other manufacturer) lists 0.12 s/60deg at 4.8 V."
+        },
+        "no_load_speed_4v8": {
+          "value": 10.472,
+          "unit": "rad/s",
+          "status": "derived",
+          "formula": "(60 deg in rad) / 0.10 s. Assumes the datasheet 'operating speed' is the no-load speed (RC servo convention)."
+        },
+        "speed_6v0": {"value": 0.08, "unit": "s/60deg", "status": "datasheet", "sources": ["S1", "S2"]},
+        "dead_band_width": {"value": 5.0, "unit": "us", "status": "datasheet", "sources": ["S1", "S6"], "conflicts": "S2 (current TowerPro page) lists 1 us."},
+        "pwm_period": {"value": 0.02, "unit": "s", "status": "datasheet", "sources": ["S1"]},
+        "pulse_neutral": {"value": 1500, "unit": "us", "status": "datasheet", "sources": ["S1", "S6"]},
+        "pulse_per_90deg": {
+          "value": 500,
+          "unit": "us",
+          "status": "datasheet",
+          "sources": ["S1"],
+          "note": "~1 ms = -90 deg, ~2 ms = +90 deg ('approximately' in the datasheet).",
+          "alternatives": [
+            {"value": "500-2500 us for 180 deg +/- 3 deg", "sources": ["S6"]}
+          ]
+        },
+        "travel": {"value": 3.14159, "unit": "rad", "status": "datasheet", "sources": ["S1", "S6"], "datasheet_value": "180 deg (S6: 180 +/- 3 deg)"},
+        "temperature_range": {
+          "value": [0, 55],
+          "unit": "degC",
+          "status": "manufacturer_web",
+          "sources": ["S2"],
+          "alternatives": [
+            {"value": [-25, 70], "sources": ["S6"]}
+          ],
+          "note": "Not simulated (no thermal model)."
+        },
+        "stall_current_4v8": {
+          "value": 0.75,
+          "unit": "A",
+          "status": "datasheet_other_manufacturer",
+          "sources": ["S6", "S8"],
+          "note": "Not published by TowerPro. S6 gives 750 mA +/-10% at 4.8 V; vendor reports range 650-800 mA. Used only for current/power telemetry."
+        },
+        "no_load_current_4v8": {
+          "value": 0.09,
+          "unit": "A",
+          "status": "datasheet_other_manufacturer",
+          "sources": ["S6"],
+          "note": "S6 'running current 90 mA'. Not published by TowerPro."
+        },
+        "idle_current": {
+          "value": 0.006,
+          "unit": "A",
+          "status": "unknown",
+          "note": "Placeholder. S7 (an SG90 clone) lists 6 mA standing current; no MG90S value found."
+        },
+        "gear_material": {"value": "metal (S2: aluminium 6061-T6 gear set and shaft)", "status": "manufacturer_web", "sources": ["S2"]},
+        "backlash": {
+          "value": 0.014,
+          "unit": "rad",
+          "status": "estimated",
+          "sources": ["S8"],
+          "note": "0.8 deg lumped play between servo output (where the potentiometer sits) and the link. Not published. Community reports for 9 g servos range 0.3-2 deg; MG90S is reported to have less play than SG90. MEASURE ON HARDWARE."
+        },
+        "gear_stiffness": {
+          "value": 8.0,
+          "unit": "N*m/rad",
+          "status": "estimated",
+          "sources": ["S12"],
+          "note": "Torsional stiffness of the lumped transmission once the backlash gap is closed. Unknown."
+        },
+        "gear_damping": {"value": 0.02, "unit": "N*m*s/rad", "status": "estimated", "note": "Unknown."},
+        "reflected_inertia": {
+          "value": 0.0001,
+          "unit": "kg*m^2",
+          "status": "estimated",
+          "note": "Motor rotor inertia times gear ratio squared, seen at the output. Neither rotor inertia nor gear ratio is published. Order of magnitude only."
+        },
+        "coulomb_friction": {
+          "value": 0.004,
+          "unit": "N*m",
+          "status": "estimated",
+          "note": "Output-referred gear train friction. Unknown. It is what resists back-driving when the servo is unpowered; if the real value exceeds the gravity load the real arm would NOT fall when unpowered."
+        },
+        "viscous_friction": {"value": 0.0005, "unit": "N*m*s/rad", "status": "estimated", "note": "Unknown."},
+        "pulse_jitter_sigma": {
+          "value": 1.5,
+          "unit": "us",
+          "status": "estimated",
+          "note": "Std. dev. of the pulse width as measured by the servo (PWM source + input capture noise). Unknown."
+        },
+        "potentiometer_noise_sigma": {"value": 0.0026, "unit": "rad", "status": "estimated", "note": "0.15 deg std. dev. of the feedback potentiometer reading. Unknown."}
+      },
+      "controller": {
+        "status": "tuned_in_simulation",
+        "note": "The real MG90S has an analog proportional controller IC whose gains are not published and cannot be changed. The simulator models it as PID (Ki = 0 by default = proportional-derivative, like a hobby servo) acting on (commanded angle - potentiometer angle) with the datasheet dead band. Output is a torque request in N*m saturated by the DC motor envelope.",
+        "kp": {"value": 2.5, "unit": "N*m/rad", "status": "tuned_in_simulation", "note": "Reaches stall torque at ~4 deg of error."},
+        "ki": {"value": 0.0, "unit": "N*m/(rad*s)", "status": "tuned_in_simulation"},
+        "kd": {"value": 0.03, "unit": "N*m*s/rad", "status": "tuned_in_simulation"},
+        "integral_limit": {"value": 0.1, "unit": "N*m", "status": "design"},
+        "derivative_filter_hz": {"value": 60.0, "unit": "Hz", "status": "design"}
+      }
+    },
+    "SG90": {
+      "manufacturer": "TowerPro (plastic POM gear, analog)",
+      "parameters": {
+        "mass": {"value": 0.009, "unit": "kg", "status": "datasheet", "sources": ["S3", "S4", "S5"], "datasheet_value": "9 g"},
+        "body_size": {
+          "value": [0.0222, 0.0118, 0.031],
+          "unit": "m",
+          "status": "datasheet",
+          "sources": ["S3"],
+          "datasheet_value": "22.2 x 11.8 x 31 mm approx.",
+          "alternatives": [
+            {"value": [0.023, 0.0122, 0.029], "sources": ["S4", "S5"]}
+          ]
+        },
+        "operating_voltage": {"value": 4.8, "unit": "V", "status": "datasheet", "sources": ["S3", "S4"], "datasheet_value": "4.8 V (~5 V)"},
+        "stall_torque_4v8": {
+          "value": 0.17652,
+          "unit": "N*m",
+          "status": "datasheet",
+          "sources": ["S3", "S4", "S5"],
+          "datasheet_value": "1.8 kgf*cm",
+          "conversion": "1.8 * 0.0980665 (S11)",
+          "alternatives": [
+            {"value": "2.5 kg*cm at 6.0 V", "sources": ["S5"]},
+            {"value": "2.0 +/- 0.2 kg*cm at 4.8 V (clone)", "sources": ["S7"]}
+          ]
+        },
+        "speed_4v8": {
+          "value": 0.1,
+          "unit": "s/60deg",
+          "status": "datasheet",
+          "sources": ["S3"],
+          "conflicts": "S4 (current TowerPro page) and S5 list 0.12 s/60deg at 4.8 V; S7 (clone) 0.09 s/60deg."
+        },
+        "no_load_speed_4v8": {
+          "value": 10.472,
+          "unit": "rad/s",
+          "status": "derived",
+          "formula": "(60 deg in rad) / 0.10 s. With the S4 value (0.12 s) it would be 8.727 rad/s."
+        },
+        "dead_band_width": {
+          "value": 10.0,
+          "unit": "us",
+          "status": "datasheet",
+          "sources": ["S3"],
+          "conflicts": "S4 (current TowerPro page) lists 1 us; a clone manual lists 7 us."
+        },
+        "pwm_period": {"value": 0.02, "unit": "s", "status": "datasheet", "sources": ["S3"], "datasheet_value": "20 ms (50 Hz)"},
+        "pulse_neutral": {"value": 1500, "unit": "us", "status": "datasheet", "sources": ["S3", "S5"]},
+        "pulse_per_90deg": {
+          "value": 500,
+          "unit": "us",
+          "status": "datasheet",
+          "sources": ["S3"],
+          "note": "Position 0 = 1.5 ms, +90 = ~2 ms, -90 = ~1 ms.",
+          "alternatives": [
+            {"value": "500-2400 us for 180 deg", "sources": ["S5"]}
+          ]
+        },
+        "travel": {"value": 3.14159, "unit": "rad", "status": "datasheet", "sources": ["S3", "S5"]},
+        "temperature_range": {"value": [0, 55], "unit": "degC", "status": "datasheet", "sources": ["S3", "S4"], "note": "Not simulated."},
+        "stall_current_4v8": {
+          "value": 0.75,
+          "unit": "A",
+          "status": "unknown",
+          "sources": ["S7", "S8"],
+          "note": "Not published by TowerPro. Reports conflict strongly: 1.3 A (S7, a clone with different torque), 650-750 mA (vendors), 360 mA (one measurement). Placeholder used only for current/power telemetry."
+        },
+        "no_load_current_4v8": {
+          "value": 0.15,
+          "unit": "A",
+          "status": "unknown",
+          "sources": ["S7", "S8"],
+          "note": "Reports: 100-250 mA (vendors), 400 mA (S7 clone). Placeholder."
+        },
+        "idle_current": {"value": 0.006, "unit": "A", "status": "datasheet_other_manufacturer", "sources": ["S7"], "datasheet_value": "6 +/- 1 mA (clone)"},
+        "gear_material": {"value": "POM (plastic)", "status": "manufacturer_web", "sources": ["S4"]},
+        "backlash": {
+          "value": 0.0262,
+          "unit": "rad",
+          "status": "estimated",
+          "sources": ["S8"],
+          "note": "1.5 deg lumped play. Not published. Community reports 0.3-2 deg. MEASURE ON HARDWARE."
+        },
+        "gear_stiffness": {
+          "value": 4.0,
+          "unit": "N*m/rad",
+          "status": "estimated",
+          "sources": ["S12"],
+          "note": "Plastic gears assumed softer than MG90S metal gears. Unknown."
+        },
+        "gear_damping": {"value": 0.012, "unit": "N*m*s/rad", "status": "estimated"},
+        "reflected_inertia": {"value": 8e-05, "unit": "kg*m^2", "status": "estimated", "note": "Unknown, order of magnitude only."},
+        "coulomb_friction": {"value": 0.003, "unit": "N*m", "status": "estimated"},
+        "viscous_friction": {"value": 0.0004, "unit": "N*m*s/rad", "status": "estimated"},
+        "pulse_jitter_sigma": {"value": 2.0, "unit": "us", "status": "estimated"},
+        "potentiometer_noise_sigma": {"value": 0.0035, "unit": "rad", "status": "estimated", "note": "0.2 deg std. dev. Unknown."}
+      },
+      "controller": {
+        "status": "tuned_in_simulation",
+        "note": "Same structure as MG90S. Gains are simulator choices, not servo facts.",
+        "kp": {"value": 2.0, "unit": "N*m/rad", "status": "tuned_in_simulation"},
+        "ki": {"value": 0.0, "unit": "N*m/(rad*s)", "status": "tuned_in_simulation"},
+        "kd": {"value": 0.015, "unit": "N*m*s/rad", "status": "tuned_in_simulation"},
+        "integral_limit": {"value": 0.1, "unit": "N*m", "status": "design"},
+        "derivative_filter_hz": {"value": 60.0, "unit": "Hz", "status": "design"}
+      }
+    }
+  },
+  "materials": {
+    "PLA": {
+      "density": {
+        "value": 1240,
+        "unit": "kg/m^3",
+        "status": "estimated",
+        "note": "Commonly quoted solid PLA density; no source was verified in this session. NOT used by the simulation: printed part masses are estimated directly because print infill is unknown."
+      }
+    },
+    "friction": {
+      "status": "estimated",
+      "note": "Coulomb coefficients. Godot/Jolt combines two surfaces with min(f1, f2) (S9), so the effective coefficient of a contact is the smaller of the two values.",
+      "bench": 0.5,
+      "paper": 0.45,
+      "pla_link": 0.4,
+      "finger_pad_rubber": 1.0,
+      "pen_tip": 0.25
+    }
+  },
+  "arm": {
+    "status": "design",
+    "note": "Geometry and part layout are our design. Printed-part masses are estimated (infill unknown); servo masses come from the datasheets. Part offsets are in the link frame: origin on the joint axis that drives the link, +x along the link at zero angle, robot z up at zero angle.",
+    "base_mount": "clamped",
+    "base": {
+      "parts": [
+        {
+          "name": "base_plate",
+          "shape": "cylinder",
+          "radius": 0.045,
+          "height": 0.03,
+          "offset": [0, 0, 0.015],
+          "mass": 0.04,
+          "mass_status": "estimated",
+          "material": "PLA",
+          "color": "#2b3138"
+        },
+        {"name": "base_yaw_servo", "shape": "box", "servo": "MG90S", "size": [0.0225, 0.012, 0.0285], "offset": [0, 0, 0.012], "color": "#15181c"}
+      ]
+    },
+    "joints": [
+      {
+        "name": "base_yaw",
+        "servo": "MG90S",
+        "type": "revolute",
+        "parent": "base",
+        "child": "turret",
+        "origin": [0, 0, 0.03],
+        "axis": [0, 0, 1],
+        "servo_center_deg": 0,
+        "direction": 1,
+        "soft_limits_deg": [-85, 85],
+        "hard_stops_deg": [-93, 93],
+        "home_deg": 0
+      },
+      {
+        "name": "shoulder",
+        "servo": "MG90S",
+        "type": "revolute",
+        "parent": "turret",
+        "child": "upper_arm",
+        "origin": [0, 0, 0.045],
+        "axis": [0, -1, 0],
+        "servo_center_deg": 90,
+        "direction": 1,
+        "soft_limits_deg": [5, 175],
+        "hard_stops_deg": [-3, 183],
+        "home_deg": 110
+      },
+      {
+        "name": "elbow",
+        "servo": "MG90S",
+        "type": "revolute",
+        "parent": "upper_arm",
+        "child": "forearm",
+        "origin": [0.1, 0, 0],
+        "axis": [0, -1, 0],
+        "servo_center_deg": -60,
+        "direction": 1,
+        "soft_limits_deg": [-145, 25],
+        "hard_stops_deg": [-153, 33],
+        "home_deg": -120
+      },
+      {
+        "name": "wrist",
+        "servo": "SG90",
+        "type": "revolute",
+        "parent": "forearm",
+        "child": "gripper",
+        "origin": [0.1, 0, 0],
+        "axis": [0, -1, 0],
+        "servo_center_deg": -45,
+        "direction": 1,
+        "soft_limits_deg": [-130, 40],
+        "hard_stops_deg": [-138, 48],
+        "home_deg": -60
+      }
+    ],
+    "links": {
+      "turret": {
+        "parts": [
+          {
+            "name": "turntable",
+            "shape": "cylinder",
+            "radius": 0.04,
+            "height": 0.006,
+            "offset": [0, 0, 0.003],
+            "mass": 0.008,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {
+            "name": "bracket_left",
+            "shape": "box",
+            "size": [0.03, 0.004, 0.05],
+            "offset": [0, 0.012, 0.03],
+            "mass": 0.004,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {
+            "name": "bracket_right",
+            "shape": "box",
+            "size": [0.03, 0.004, 0.05],
+            "offset": [0, -0.012, 0.03],
+            "mass": 0.004,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {
+            "name": "shoulder_servo",
+            "shape": "box",
+            "servo": "MG90S",
+            "size": [0.0225, 0.0285, 0.012],
+            "offset": [-0.008, 0, 0.045],
+            "color": "#15181c"
+          }
+        ]
+      },
+      "upper_arm": {
+        "parts": [
+          {
+            "name": "beam",
+            "shape": "box",
+            "size": [0.1, 0.018, 0.006],
+            "offset": [0.05, 0, 0],
+            "mass": 0.008,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {"name": "elbow_servo", "shape": "box", "servo": "MG90S", "size": [0.0225, 0.0285, 0.012], "offset": [0.092, 0, 0.009], "color": "#15181c"}
+        ]
+      },
+      "forearm": {
+        "parts": [
+          {
+            "name": "beam",
+            "shape": "box",
+            "size": [0.1, 0.016, 0.006],
+            "offset": [0.05, 0, 0],
+            "mass": 0.006,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {"name": "wrist_servo", "shape": "box", "servo": "SG90", "size": [0.0222, 0.031, 0.0118], "offset": [0.092, 0, 0.009], "color": "#2d5fa8"}
+        ]
+      },
+      "gripper": {
+        "parts": [
+          {
+            "name": "palm",
+            "shape": "box",
+            "size": [0.012, 0.05, 0.02],
+            "offset": [0.03, 0, 0],
+            "mass": 0.006,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {
+            "name": "wrist_plate",
+            "shape": "box",
+            "size": [0.026, 0.012, 0.004],
+            "offset": [0.012, 0, 0],
+            "mass": 0.002,
+            "mass_status": "estimated",
+            "material": "PLA",
+            "color": "#c46a24"
+          },
+          {
+            "name": "gripper_servo",
+            "shape": "box",
+            "servo": "SG90",
+            "size": [0.0222, 0.0118, 0.031],
+            "offset": [0.022, 0, 0.0175],
+            "color": "#2d5fa8"
+          }
+        ],
+        "camera": {
+          "offset": [0.03, 0, -0.016],
+          "look_axis": [1, 0, 0],
+          "up_axis": [0, 0, 1],
+          "resolution": [320, 240],
+          "fov_deg": 70.0,
+          "near": 0.005,
+          "far": 3.0,
+          "status": "design",
+          "note": "Generic small camera module looking along the tool axis. No real camera model chosen yet."
+        },
+        "tcp_offset": [0.068, 0, 0],
+        "pen_tcp_offset": [0.092, 0, 0]
+      }
+    },
+    "gripper": {
+      "type": "parallel_jaw_rack_and_pinion",
+      "servo": "SG90",
+      "slide_axis": [0, 1, 0],
+      "pinion_radius": {"value": 0.0115, "unit": "m", "status": "design"},
+      "transmission_efficiency": {"value": 0.6, "unit": "1", "status": "estimated", "note": "Rack/pinion + printed guide friction. Unknown."},
+      "finger_travel": {"value": 0.018, "unit": "m", "status": "design", "note": "Per finger. 0 = closed."},
+      "closed_half_gap": {"value": 0.002, "unit": "m", "status": "design"},
+      "servo_closed_deg": -90,
+      "servo_center_deg": 0,
+      "soft_limits_deg": [-90, 0],
+      "home_deg": -30,
+      "finger": {"size": [0.03, 0.006, 0.018], "offset_x": 0.054, "mass": 0.003, "mass_status": "estimated", "color": "#c46a24"},
+      "pad": {"size": [0.02, 0.002, 0.016], "friction_material": "finger_pad_rubber", "color": "#1d1f22"},
+      "sync_stiffness": {
+        "value": 400.0,
+        "unit": "N/m",
+        "status": "design",
+        "note": "Virtual gear coupling keeping both jaws symmetric (simplification of the rack/pinion mesh)."
+      },
+      "sync_damping": {"value": 2.0, "unit": "N*s/m", "status": "design"}
+    },
+    "pen": {
+      "status": "design",
+      "note": "Felt pen clamped in the gripper jaws for the writing test. Only the part in front of the palm is modelled (length = visible length from x=0.02 to the tip). The pen is rigidly attached to the palm body: slip of the pen inside the jaws is not modelled.",
+      "length": 0.072,
+      "radius": 0.0045,
+      "mass": 0.006,
+      "mass_status": "estimated",
+      "tip_offset": [0.092, 0, 0],
+      "tip_radius": 0.0012,
+      "ink_width": 0.0012,
+      "color": "#d23c3c"
+    }
+  },
+  "safety": {
+    "status": "design",
+    "torque_warning_fraction": 0.85,
+    "tracking_error_warning_deg": 8.0,
+    "stall_speed_threshold": {"value": 0.35, "unit": "rad/s"},
+    "stall_saturation_ratio": {"value": 1.0, "unit": "1", "note": "Stall when |requested torque| >= ratio * available torque."},
+    "stall_min_duration": {"value": 0.3, "unit": "s"},
+    "stall_to_fault_time": {
+      "value": 2.0,
+      "unit": "s",
+      "note": "A stall that lasts this long powers the stalled servo off and latches FAULT (protects a real motor from overheating)."
+    },
+    "estop_mode": "hold",
+    "gripper_stall_is_grip": true,
+    "comm_timeout_s": 1.0
+  },
+  "workspace": {
+    "status": "design",
+    "bench": {"size": [1.2, 0.7, 0.03], "center": [0.2, 0, -0.015], "friction_material": "bench"},
+    "paper": {"size": [0.148, 0.105, 0.0005], "center": [0.165, 0.0, 0.00025], "friction_material": "paper"},
+    "writing": {
+      "origin": [0.158, 0.034],
+      "letter_height": 0.032,
+      "letter_width": 0.022,
+      "letter_spacing": 0.012,
+      "pen_up_height": 0.03,
+      "pen_press_depth": 0.0015,
+      "speed": 0.02,
+      "up_axis": [1, 0, 0],
+      "advance_axis": [0, -1, 0],
+      "note": "pen_up_height is larger than a pen plotter would need: with the default servo stiffness the arm sags ~14 mm at full reach (measured in simulation, see docs/robotics/VALIDATION.md), so a 14 mm lift left the pen on the paper."
+    },
+    "objects": [
+      {
+        "id": "A",
+        "name": "foam cube",
+        "shape": "box",
+        "size": [0.025, 0.025, 0.025],
+        "mass": 0.004,
+        "friction": 0.8,
+        "color": "#7ac77a",
+        "position": [0.105, 0.095, 0.0125],
+        "status": "design",
+        "yaw_deg": 42.14
+      },
+      {
+        "id": "B",
+        "name": "wood cube",
+        "shape": "box",
+        "size": [0.025, 0.025, 0.025],
+        "mass": 0.01,
+        "friction": 0.5,
+        "color": "#c8a170",
+        "position": [0.15, 0.095, 0.0125],
+        "status": "design",
+        "yaw_deg": 32.35
+      },
+      {
+        "id": "C",
+        "name": "solid PLA cube",
+        "shape": "box",
+        "size": [0.025, 0.025, 0.025],
+        "mass": 0.019,
+        "friction": 0.35,
+        "color": "#5b8bd9",
+        "position": [0.105, -0.095, 0.0125],
+        "status": "design",
+        "yaw_deg": -42.14
+      },
+      {
+        "id": "D",
+        "name": "steel cube",
+        "shape": "box",
+        "size": [0.025, 0.025, 0.025],
+        "mass": 0.123,
+        "friction": 0.25,
+        "color": "#9aa3ad",
+        "position": [0.15, -0.095, 0.0125],
+        "status": "design",
+        "yaw_deg": -32.35
+      }
+    ],
+    "drop_zone": {
+      "center": [0.045, 0.15, 0.0],
+      "size": [0.09, 0.09],
+      "status": "design",
+      "slots": [[0.023, 0.128, 0.0], [0.067, 0.128, 0.0], [0.023, 0.172, 0.0], [0.067, 0.172, 0.0]]
+    },
+    "note": "Object positions are chosen inside the reachable workspace for a top-down grasp (wrist distance <= 0.2 m from the shoulder axis).",
+    "objects_note": "Objects are placed in fixtures aligned with the radial direction (yaw_deg = atan2(y, x)): the arm has no wrist roll, so a top-down grasp approaches each object rotated by the base yaw angle."
+  }
+}

@@ -1,0 +1,41 @@
+; Abiyss Robotics Lab - Godot 4 project.
+; Physics engine and solver overrides are documented in ARM_SPECS.json
+; (simulation.engine_overrides) and docs/robotics/PHYSICS_MODEL.md.
+
+config_version=5
+
+[application]
+
+config/name="Abiyss Robotics Lab"
+config/description="3D robotics lab of the Abiyss runtime: physical arm simulation driven by the Robot API."
+run/main_scene="res://scenes/lab.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/stretch/mode="disabled"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+common/physics_ticks_per_second=1000
+common/max_physics_steps_per_frame=64
+common/physics_jitter_fix=0.0
+3d/default_gravity=9.80665
+3d/default_linear_damp=0.0
+3d/default_angular_damp=0.0
+3d/run_on_separate_thread=false
+jolt_physics_3d/simulation/velocity_steps=64
+jolt_physics_3d/simulation/position_steps=16
+jolt_physics_3d/simulation/penetration_slop=0.0002
+jolt_physics_3d/simulation/speculative_contact_distance=0.002
+jolt_physics_3d/simulation/allow_sleep=false
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+anti_aliasing/quality/msaa_3d=2
+environment/defaults/default_clear_color=Color(0.07, 0.08, 0.09, 1)

@@ -1,0 +1,48 @@
+{
+  "name": "extra_emergency_stop",
+  "title": "E-STOP during writing",
+  "passed": true,
+  "checks": [
+    {
+      "check": "state is EMERGENCY_STOP",
+      "ok": true,
+      "detail": "EMERGENCY_STOP"
+    },
+    {
+      "check": "queue cleared",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "new commands rejected",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "arm holds position (drift < 5 deg in 1 s)",
+      "ok": true,
+      "detail": 1.145
+    },
+    {
+      "check": "explicit reset returns to SAFE",
+      "ok": true,
+      "detail": "SAFE"
+    }
+  ],
+  "metrics": {
+    "active_before": "#146 write(text='OI')",
+    "queue_before": [
+      "#147 home()"
+    ],
+    "state_after": "EMERGENCY_STOP",
+    "queue_after": [],
+    "pose_drift_deg_1s": 1.145,
+    "rejected_while_estop": true,
+    "reset_ok": true,
+    "state_after_reset": "SAFE"
+  },
+  "artifacts": {},
+  "events": [],
+  "wall_s": 22.39,
+  "sim_s": 8.2
+}

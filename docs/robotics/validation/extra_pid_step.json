@@ -1,0 +1,84 @@
+{
+  "name": "extra_pid_step",
+  "title": "PID step response (elbow), gains changed at runtime",
+  "passed": true,
+  "checks": [
+    {
+      "check": "metrics computed for each gain set",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "changing gains changes the response",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "metrics": {
+    "runs": [
+      {
+        "label": "default",
+        "gains": {
+          "kp": 2.5,
+          "ki": 0.0,
+          "kd": 0.03
+        },
+        "overshoot_pct": 18.062,
+        "peak_normalised": 1.1806,
+        "rise_time_s": 0.18,
+        "settling_time_s": null,
+        "settling_band_pct": 5.0,
+        "oscillations": 3,
+        "final_value_deg": -70.5266,
+        "steady_state_error_deg": 0.5266,
+        "peak_torque_nm": 0.1989,
+        "joint": "elbow",
+        "step_deg": 20.0
+      },
+      {
+        "label": "Kp x2, Kd x0.3",
+        "gains": {
+          "kp": 5.0,
+          "ki": 0.0,
+          "kd": 0.009
+        },
+        "overshoot_pct": 19.523,
+        "peak_normalised": 1.1952,
+        "rise_time_s": 0.1,
+        "settling_time_s": 1.32,
+        "settling_band_pct": 5.0,
+        "oscillations": 3,
+        "final_value_deg": -71.5327,
+        "steady_state_error_deg": 1.5327,
+        "peak_torque_nm": 0.17847,
+        "joint": "elbow",
+        "step_deg": 20.0
+      },
+      {
+        "label": "with Ki",
+        "gains": {
+          "kp": 2.5,
+          "ki": 3.0,
+          "kd": 0.03
+        },
+        "overshoot_pct": 26.268,
+        "peak_normalised": 1.2627,
+        "rise_time_s": 0.1,
+        "settling_time_s": null,
+        "settling_band_pct": 5.0,
+        "oscillations": 3,
+        "final_value_deg": -70.5989,
+        "steady_state_error_deg": 0.5989,
+        "peak_torque_nm": 0.17822,
+        "joint": "elbow",
+        "step_deg": 20.0
+      }
+    ]
+  },
+  "artifacts": {
+    "step_plot": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/pid_step_elbow.svg"
+  },
+  "events": [],
+  "wall_s": 23.15,
+  "sim_s": 8.66
+}

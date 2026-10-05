@@ -9,3 +9,8 @@ venv/
 .env
 .coverage
 htmlcov/
+# robotics lab
+robot_lab/.godot/
+artifacts/
+robotics_journal.jsonl
+agent_session.jsonl

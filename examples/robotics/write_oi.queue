@@ -1,0 +1,4 @@
+# abiyss-robotics run examples/robotics/write_oi.queue
+queue:
+  write("OI")
+  home()

@@ -1,0 +1,1667 @@
+{
+  "name": "test4_repeatability",
+  "title": "TEST 4 - repeatability (20 identical moves)",
+  "passed": true,
+  "checks": [
+    {
+      "check": "20 trials recorded for the same move",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "final positions disperse (effects are physical, not cosmetic)",
+      "ok": true,
+      "detail": 1.739
+    },
+    {
+      "check": "approach direction changes the final position (backlash/dead band hysteresis)",
+      "ok": true,
+      "detail": 3.4851
+    },
+    {
+      "check": "disabling dead band/backlash/jitter collapses the dispersion",
+      "ok": true,
+      "detail": {
+        "with": 2.4009,
+        "without": 0.1384
+      }
+    }
+  ],
+  "metrics": {
+    "target_mm": [
+      160.0,
+      0.0,
+      40.0
+    ],
+    "same_side": {
+      "dispersion": {
+        "n": 20,
+        "mean_mm": [
+          155.631,
+          -0.673,
+          30.994
+        ],
+        "std_mm": [
+          1.0571,
+          1.1062,
+          0.8266
+        ],
+        "dispersion_rms_mm": 1.739,
+        "dispersion_max_mm": 3.6606,
+        "range_mm": [
+          3.7694,
+          4.3109,
+          3.2116
+        ],
+        "error_to_target_mean_mm": 10.12,
+        "error_to_target_max_mm": 12.692
+      },
+      "trials": [
+        {
+          "trial": 1,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.548,
+            -1.2934,
+            32.2955
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5298,
+            "shoulder": 44.6286,
+            "elbow": -71.415,
+            "wrist": -66.488
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1282,
+            "shoulder": 45.4789,
+            "elbow": -70.7993,
+            "wrist": -66.1708
+          }
+        },
+        {
+          "trial": 2,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.2162,
+            -2.191,
+            30.5478
+          ],
+          "joints_deg": {
+            "base_yaw": -0.9153,
+            "shoulder": 44.116,
+            "elbow": -71.7259,
+            "wrist": -67.5996
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.4149,
+            "shoulder": 45.0624,
+            "elbow": -71.0448,
+            "wrist": -66.7468
+          }
+        },
+        {
+          "trial": 3,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.3915,
+            -1.5537,
+            31.529
+          ],
+          "joints_deg": {
+            "base_yaw": -0.6998,
+            "shoulder": 44.3113,
+            "elbow": -71.3929,
+            "wrist": -67.2981
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.3441,
+            "shoulder": 45.1633,
+            "elbow": -70.7751,
+            "wrist": -66.5026
+          }
+        },
+        {
+          "trial": 4,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.1146,
+            0.2947,
+            31.1564
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0588,
+            "shoulder": 44.3895,
+            "elbow": -71.8232,
+            "wrist": -67.7135
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.3508,
+            "shoulder": 45.2932,
+            "elbow": -71.1605,
+            "wrist": -67.051
+          }
+        },
+        {
+          "trial": 5,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            157.3666,
+            0.6767,
+            32.017
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0684,
+            "shoulder": 44.7585,
+            "elbow": -71.7916,
+            "wrist": -65.2555
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0037,
+            "shoulder": 45.5543,
+            "elbow": -71.2207,
+            "wrist": -66.2306
+          }
+        },
+        {
+          "trial": 6,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            157.2927,
+            0.0961,
+            31.5602
+          ],
+          "joints_deg": {
+            "base_yaw": -0.2112,
+            "shoulder": 44.5371,
+            "elbow": -71.6947,
+            "wrist": -65.3399
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0243,
+            "shoulder": 45.4073,
+            "elbow": -71.1116,
+            "wrist": -66.1616
+          }
+        },
+        {
+          "trial": 7,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.7842,
+            -0.7581,
+            30.1398
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5535,
+            "shoulder": 44.0402,
+            "elbow": -71.7737,
+            "wrist": -66.1564
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.4731,
+            "shoulder": 44.9357,
+            "elbow": -71.1271,
+            "wrist": -66.5097
+          }
+        },
+        {
+          "trial": 8,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.6643,
+            -1.3815,
+            31.4285
+          ],
+          "joints_deg": {
+            "base_yaw": -0.825,
+            "shoulder": 44.3908,
+            "elbow": -71.5423,
+            "wrist": -66.0271
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.345,
+            "shoulder": 45.3444,
+            "elbow": -70.9216,
+            "wrist": -66.0062
+          }
+        },
+        {
+          "trial": 9,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.6199,
+            -3.6342,
+            29.0942
+          ],
+          "joints_deg": {
+            "base_yaw": -1.7071,
+            "shoulder": 43.8271,
+            "elbow": -72.1115,
+            "wrist": -66.3921
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -1.0339,
+            "shoulder": 44.7294,
+            "elbow": -71.4904,
+            "wrist": -66.677
+          }
+        },
+        {
+          "trial": 10,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.3494,
+            0.6079,
+            31.3301
+          ],
+          "joints_deg": {
+            "base_yaw": -0.1857,
+            "shoulder": 44.4377,
+            "elbow": -71.7389,
+            "wrist": -66.8434
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.2717,
+            "shoulder": 45.369,
+            "elbow": -71.1302,
+            "wrist": -66.0277
+          }
+        },
+        {
+          "trial": 11,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.6395,
+            0.3431,
+            29.898
+          ],
+          "joints_deg": {
+            "base_yaw": -0.3434,
+            "shoulder": 43.9649,
+            "elbow": -71.7641,
+            "wrist": -65.404
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.1031,
+            "shoulder": 44.8999,
+            "elbow": -71.1286,
+            "wrist": -66.1853
+          }
+        },
+        {
+          "trial": 12,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.2818,
+            -0.087,
+            32.3058
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5213,
+            "shoulder": 44.8078,
+            "elbow": -71.773,
+            "wrist": -67.081
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.217,
+            "shoulder": 45.6448,
+            "elbow": -71.1412,
+            "wrist": -66.5355
+          }
+        },
+        {
+          "trial": 13,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.5633,
+            -0.2159,
+            30.4333
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5864,
+            "shoulder": 44.1946,
+            "elbow": -71.9185,
+            "wrist": -67.0496
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0792,
+            "shoulder": 45.122,
+            "elbow": -71.2868,
+            "wrist": -66.2952
+          }
+        },
+        {
+          "trial": 14,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8439,
+            -0.9564,
+            31.5674
+          ],
+          "joints_deg": {
+            "base_yaw": -0.8565,
+            "shoulder": 44.4155,
+            "elbow": -71.4958,
+            "wrist": -65.9742
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.2598,
+            "shoulder": 45.2505,
+            "elbow": -70.9251,
+            "wrist": -66.5564
+          }
+        },
+        {
+          "trial": 15,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            153.5972,
+            -2.4493,
+            29.9713
+          ],
+          "joints_deg": {
+            "base_yaw": -1.5135,
+            "shoulder": 44.0013,
+            "elbow": -71.9295,
+            "wrist": -67.7061
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.779,
+            "shoulder": 44.9473,
+            "elbow": -71.2256,
+            "wrist": -66.8732
+          }
+        },
+        {
+          "trial": 16,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.6907,
+            0.1525,
+            30.7451
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5558,
+            "shoulder": 44.6049,
+            "elbow": -72.4248,
+            "wrist": -66.3582
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.024,
+            "shoulder": 45.5195,
+            "elbow": -71.7312,
+            "wrist": -66.0498
+          }
+        },
+        {
+          "trial": 17,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.9526,
+            -0.7193,
+            31.1037
+          ],
+          "joints_deg": {
+            "base_yaw": -0.8768,
+            "shoulder": 44.3807,
+            "elbow": -71.7607,
+            "wrist": -66.2634
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.2209,
+            "shoulder": 45.2978,
+            "elbow": -71.1251,
+            "wrist": -66.5609
+          }
+        },
+        {
+          "trial": 18,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.0948,
+            -0.0435,
+            31.6262
+          ],
+          "joints_deg": {
+            "base_yaw": -0.6212,
+            "shoulder": 44.374,
+            "elbow": -71.4173,
+            "wrist": -66.7148
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1437,
+            "shoulder": 45.2095,
+            "elbow": -70.8233,
+            "wrist": -66.4375
+          }
+        },
+        {
+          "trial": 19,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.9311,
+            0.2393,
+            30.5811
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5218,
+            "shoulder": 44.2842,
+            "elbow": -71.9209,
+            "wrist": -65.9504
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.2823,
+            "shoulder": 45.2437,
+            "elbow": -71.28,
+            "wrist": -65.7171
+          }
+        },
+        {
+          "trial": 20,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.6869,
+            -0.5916,
+            30.5505
+          ],
+          "joints_deg": {
+            "base_yaw": -0.8034,
+            "shoulder": 44.1074,
+            "elbow": -71.6436,
+            "wrist": -66.5066
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1831,
+            "shoulder": 45.0866,
+            "elbow": -71.0346,
+            "wrist": -66.1381
+          }
+        }
+      ]
+    },
+    "alternating_sides": {
+      "dispersion": {
+        "n": 20,
+        "mean_mm": [
+          155.377,
+          -0.436,
+          30.953
+        ],
+        "std_mm": [
+          0.76,
+          2.1296,
+          0.8071
+        ],
+        "dispersion_rms_mm": 2.4009,
+        "dispersion_max_mm": 4.3847,
+        "range_mm": [
+          2.7808,
+          7.3677,
+          3.0586
+        ],
+        "error_to_target_mean_mm": 10.405,
+        "error_to_target_max_mm": 12.74
+      },
+      "left": {
+        "n": 10,
+        "mean_mm": [
+          155.605,
+          -2.144,
+          30.69
+        ],
+        "std_mm": [
+          0.5867,
+          1.3389,
+          0.8981
+        ],
+        "dispersion_rms_mm": 1.7157,
+        "dispersion_max_mm": 2.8481,
+        "range_mm": [
+          1.9793,
+          4.8432,
+          2.9281
+        ],
+        "error_to_target_mean_mm": 10.594,
+        "error_to_target_max_mm": 12.74
+      },
+      "right": {
+        "n": 10,
+        "mean_mm": [
+          155.149,
+          1.271,
+          31.215
+        ],
+        "std_mm": [
+          0.8408,
+          1.202,
+          0.5985
+        ],
+        "dispersion_rms_mm": 1.5843,
+        "dispersion_max_mm": 2.2193,
+        "range_mm": [
+          2.7808,
+          3.8605,
+          2.1673
+        ],
+        "error_to_target_mean_mm": 10.215,
+        "error_to_target_max_mm": 11.269
+      },
+      "approach_hysteresis_mm": 3.4851,
+      "trials": [
+        {
+          "trial": 1,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.548,
+            -1.2934,
+            32.2955
+          ],
+          "joints_deg": {
+            "base_yaw": -0.5298,
+            "shoulder": 44.6286,
+            "elbow": -71.415,
+            "wrist": -66.488
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1282,
+            "shoulder": 45.4789,
+            "elbow": -70.7993,
+            "wrist": -66.1708
+          }
+        },
+        {
+          "trial": 2,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.0215,
+            0.9692,
+            30.4971
+          ],
+          "joints_deg": {
+            "base_yaw": 0.3253,
+            "shoulder": 44.0967,
+            "elbow": -71.736,
+            "wrist": -67.7452
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1263,
+            "shoulder": 45.0439,
+            "elbow": -71.0538,
+            "wrist": -66.8922
+          }
+        },
+        {
+          "trial": 3,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.6845,
+            -1.9347,
+            31.5478
+          ],
+          "joints_deg": {
+            "base_yaw": -0.751,
+            "shoulder": 44.3209,
+            "elbow": -71.3837,
+            "wrist": -67.0682
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.3525,
+            "shoulder": 45.1703,
+            "elbow": -70.7702,
+            "wrist": -66.7228
+          }
+        },
+        {
+          "trial": 4,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.2697,
+            2.9239,
+            31.4526
+          ],
+          "joints_deg": {
+            "base_yaw": 1.0621,
+            "shoulder": 44.4545,
+            "elbow": -71.7404,
+            "wrist": -67.7395
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.612,
+            "shoulder": 45.3386,
+            "elbow": -71.0797,
+            "wrist": -66.9511
+          }
+        },
+        {
+          "trial": 5,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.9989,
+            0.3994,
+            31.7624
+          ],
+          "joints_deg": {
+            "base_yaw": 0.1079,
+            "shoulder": 44.6889,
+            "elbow": -71.914,
+            "wrist": -67.0053
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0382,
+            "shoulder": 45.5095,
+            "elbow": -71.306,
+            "wrist": -66.296
+          }
+        },
+        {
+          "trial": 6,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.546,
+            2.7315,
+            31.5717
+          ],
+          "joints_deg": {
+            "base_yaw": 0.9807,
+            "shoulder": 44.5492,
+            "elbow": -71.8139,
+            "wrist": -67.4465
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.4228,
+            "shoulder": 45.4179,
+            "elbow": -71.1814,
+            "wrist": -66.6665
+          }
+        },
+        {
+          "trial": 7,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.9683,
+            -2.5789,
+            30.0165
+          ],
+          "joints_deg": {
+            "base_yaw": -0.973,
+            "shoulder": 43.9941,
+            "elbow": -71.7607,
+            "wrist": -65.9748
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.5437,
+            "shoulder": 44.9109,
+            "elbow": -71.1126,
+            "wrist": -66.6689
+          }
+        },
+        {
+          "trial": 8,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.4578,
+            0.8221,
+            31.3272
+          ],
+          "joints_deg": {
+            "base_yaw": 0.3002,
+            "shoulder": 44.3773,
+            "elbow": -71.5874,
+            "wrist": -66.1191
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1673,
+            "shoulder": 45.3305,
+            "elbow": -70.9502,
+            "wrist": -66.2275
+          }
+        },
+        {
+          "trial": 9,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.5687,
+            -4.4438,
+            29.3674
+          ],
+          "joints_deg": {
+            "base_yaw": -1.6437,
+            "shoulder": 43.9062,
+            "elbow": -72.0764,
+            "wrist": -66.5285
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.9802,
+            "shoulder": 44.7928,
+            "elbow": -71.4599,
+            "wrist": -66.4316
+          }
+        },
+        {
+          "trial": 10,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.2871,
+            1.8789,
+            31.3251
+          ],
+          "joints_deg": {
+            "base_yaw": 0.6934,
+            "shoulder": 44.4364,
+            "elbow": -71.7384,
+            "wrist": -66.885
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.2337,
+            "shoulder": 45.3646,
+            "elbow": -71.1253,
+            "wrist": -66.0509
+          }
+        },
+        {
+          "trial": 11,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.322,
+            -1.1792,
+            29.671
+          ],
+          "joints_deg": {
+            "base_yaw": -0.4345,
+            "shoulder": 43.9231,
+            "elbow": -71.8825,
+            "wrist": -66.2819
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0098,
+            "shoulder": 44.8476,
+            "elbow": -71.1645,
+            "wrist": -66.9316
+          }
+        },
+        {
+          "trial": 12,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.2777,
+            2.5939,
+            32.426
+          ],
+          "joints_deg": {
+            "base_yaw": 0.9589,
+            "shoulder": 44.8445,
+            "elbow": -71.7554,
+            "wrist": -67.1153
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.4501,
+            "shoulder": 45.67,
+            "elbow": -71.1301,
+            "wrist": -66.3395
+          }
+        },
+        {
+          "trial": 13,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.6836,
+            -1.7874,
+            30.6593
+          ],
+          "joints_deg": {
+            "base_yaw": -0.6159,
+            "shoulder": 44.2908,
+            "elbow": -71.885,
+            "wrist": -66.2104
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.1055,
+            "shoulder": 45.189,
+            "elbow": -71.2628,
+            "wrist": -66.5557
+          }
+        },
+        {
+          "trial": 14,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.9442,
+            -0.9366,
+            31.3056
+          ],
+          "joints_deg": {
+            "base_yaw": -0.2859,
+            "shoulder": 44.3237,
+            "elbow": -71.5743,
+            "wrist": -67.3841
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.1057,
+            "shoulder": 45.2035,
+            "elbow": -70.9944,
+            "wrist": -66.549
+          }
+        },
+        {
+          "trial": 15,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.1546,
+            -4.1252,
+            30.1062
+          ],
+          "joints_deg": {
+            "base_yaw": -1.4656,
+            "shoulder": 44.0644,
+            "elbow": -71.8605,
+            "wrist": -66.5119
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.7464,
+            "shoulder": 45.0176,
+            "elbow": -71.174,
+            "wrist": -65.6973
+          }
+        },
+        {
+          "trial": 16,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            154.7823,
+            0.9961,
+            30.563
+          ],
+          "joints_deg": {
+            "base_yaw": 0.4304,
+            "shoulder": 44.5204,
+            "elbow": -72.381,
+            "wrist": -66.2917
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.2347,
+            "shoulder": 45.4526,
+            "elbow": -71.694,
+            "wrist": -65.738
+          }
+        },
+        {
+          "trial": 17,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.6961,
+            -2.5714,
+            30.8235
+          ],
+          "joints_deg": {
+            "base_yaw": -0.89,
+            "shoulder": 44.29,
+            "elbow": -71.7802,
+            "wrist": -66.3662
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.2321,
+            "shoulder": 45.2324,
+            "elbow": -71.1486,
+            "wrist": -66.2304
+          }
+        },
+        {
+          "trial": 18,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8023,
+            0.9098,
+            31.4244
+          ],
+          "joints_deg": {
+            "base_yaw": 0.39,
+            "shoulder": 44.3333,
+            "elbow": -71.438,
+            "wrist": -66.0495
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0432,
+            "shoulder": 45.1836,
+            "elbow": -70.8369,
+            "wrist": -66.8753
+          }
+        },
+        {
+          "trial": 19,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.4273,
+            -1.9267,
+            30.6493
+          ],
+          "joints_deg": {
+            "base_yaw": -0.6733,
+            "shoulder": 44.3339,
+            "elbow": -71.9379,
+            "wrist": -65.5203
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.428,
+            "shoulder": 45.2879,
+            "elbow": -71.298,
+            "wrist": -66.32
+          }
+        },
+        {
+          "trial": 20,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            155.0993,
+            -0.1753,
+            30.2587
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0138,
+            "shoulder": 44.0773,
+            "elbow": -71.793,
+            "wrist": -66.7273
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.3433,
+            "shoulder": 45.0491,
+            "elbow": -71.1402,
+            "wrist": -66.5556
+          }
+        }
+      ]
+    },
+    "ablation_no_deadband_backlash_jitter": {
+      "dispersion": {
+        "n": 20,
+        "mean_mm": [
+          156.82,
+          0.102,
+          32.728
+        ],
+        "std_mm": [
+          0.0764,
+          0.0937,
+          0.0672
+        ],
+        "dispersion_rms_mm": 0.1384,
+        "dispersion_max_mm": 0.4509,
+        "range_mm": [
+          0.3519,
+          0.2043,
+          0.3094
+        ],
+        "error_to_target_mean_mm": 7.938,
+        "error_to_target_max_mm": 8.343
+      },
+      "trials": [
+        {
+          "trial": 1,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.4874,
+            0.1835,
+            32.4347
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0341,
+            "shoulder": 44.6867,
+            "elbow": -71.431,
+            "wrist": -66.5532
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0064,
+            "shoulder": 45.2121,
+            "elbow": -71.1685,
+            "wrist": -66.4764
+          }
+        },
+        {
+          "trial": 2,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8393,
+            -0.0038,
+            32.7404
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0289,
+            "shoulder": 44.764,
+            "elbow": -71.3619,
+            "wrist": -66.4195
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0001,
+            "shoulder": 45.2409,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 3,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8376,
+            0.1865,
+            32.7438
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0293,
+            "shoulder": 44.7655,
+            "elbow": -71.3625,
+            "wrist": -66.4208
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0001,
+            "shoulder": 45.2432,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 4,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8381,
+            0.0089,
+            32.7429
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0291,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 5,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8373,
+            0.1988,
+            32.7441
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4209
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 6,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8382,
+            0.0105,
+            32.7427
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 7,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.1981,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4208
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 8,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8382,
+            0.0099,
+            32.7428
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 9,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.2005,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0291,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4208
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 10,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8383,
+            0.0114,
+            32.7427
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 11,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.1988,
+            32.7441
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4209
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 12,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8382,
+            0.0106,
+            32.7428
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 13,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.1981,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4209
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 14,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8382,
+            0.01,
+            32.7428
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 15,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8373,
+            0.1975,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4209
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 16,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8384,
+            0.0098,
+            32.7429
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 17,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.2002,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0291,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4208
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 18,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8382,
+            0.0111,
+            32.7427
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        },
+        {
+          "trial": 19,
+          "approach_from_mm": [
+            120.0,
+            90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8374,
+            0.1986,
+            32.744
+          ],
+          "joints_deg": {
+            "base_yaw": 0.0292,
+            "shoulder": 44.7656,
+            "elbow": -71.3626,
+            "wrist": -66.4209
+          },
+          "servo_shaft_deg": {
+            "base_yaw": -0.0,
+            "shoulder": 45.2434,
+            "elbow": -71.1471,
+            "wrist": -66.4574
+          }
+        },
+        {
+          "trial": 20,
+          "approach_from_mm": [
+            120.0,
+            -90.0,
+            80.0
+          ],
+          "tcp_mm": [
+            156.8383,
+            0.0103,
+            32.7428
+          ],
+          "joints_deg": {
+            "base_yaw": -0.0293,
+            "shoulder": 44.765,
+            "elbow": -71.3623,
+            "wrist": -66.4204
+          },
+          "servo_shaft_deg": {
+            "base_yaw": 0.0,
+            "shoulder": 45.2427,
+            "elbow": -71.1469,
+            "wrist": -66.4572
+          }
+        }
+      ]
+    }
+  },
+  "artifacts": {
+    "scatter_same": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/test4_repeatability_same_side.svg",
+    "scatter_alt": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/test4_repeatability_alternating.svg"
+  },
+  "events": [],
+  "wall_s": 302.91,
+  "sim_s": 105.6
+}

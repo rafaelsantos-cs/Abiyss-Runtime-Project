@@ -87,6 +87,49 @@ The current default is `gemini-3.8-flash` with explicit `thinking_level="medium"
 
 Provider-side stateful Interactions have their own retention/data-storage semantics. See `docs/GEMINI.md` before production deployment.
 
+## Robotics lab
+
+ABIYSS can drive a hobby robot arm through the same intent-only boundary: the
+model queues actions, the Robot API turns them into servo pulses, and a
+backend turns pulses into motion. The arm does not exist yet, so the first
+backend is a **physical simulation** in Godot 4.7 (Jolt Physics); the hardware
+backend uses the same interface.
+
+```text
+ABIYSS RUNTIME -> ROBOT API -> SIMULATION BACKEND -> PHYSICS ENGINE -> 3D ROBOT
+ABIYSS RUNTIME -> ROBOT API -> HARDWARE BACKEND   -> SERVOS (future)
+```
+
+![write("OI") on the simulated arm](docs/robotics/screenshots/03b_OI_result.png)
+
+* 4-DOF arm + parallel gripper with MG90S/SG90 servo models built from datasheet
+  values: dead band, PID, torque-speed envelope, backlash, jitter, friction,
+  stall. Gravity, inertia, contacts and hard stops come from the physics engine.
+* `ARM_SPECS.json`: every physical parameter with a verification status
+  (datasheet / estimated / unknown / ...) and its sources.
+* Agent API: `arm.move_to / move_joint / stop / home / stall_check`,
+  `gripper.open / close`, `cam.frame()`, `status()`, `telemetry()`, action queue,
+  safety states (SAFE, WARNING, STALL, FAULT, EMERGENCY_STOP), JSONL journal in
+  the `AuditLog` format, runtime tools (`robot.enqueue`, ...).
+* Validation: write "OI", pick 4 objects of different mass, forced shoulder
+  stall, 20x repeatability, gravity fall - reproducible, with reports and
+  screenshots ([VALIDATION](docs/robotics/VALIDATION.md)).
+
+```bash
+robot_lab/tools/install_godot.sh                # Godot 4.7.2, SHA-512 verified
+export ABIYSS_GODOT=$HOME/.local/godot/godot
+PYTHONPATH=src python -m abiyss.robotics lab --queue 'write("OI")'   # 3D lab + Robot API service
+PYTHONPATH=src python -m abiyss.robotics ctl status                  # ask while it runs
+PYTHONPATH=src python -m abiyss.robotics scenario all                # TEST 1-5
+```
+
+Documentation: [API](docs/robotics/API.md) ·
+[physics model](docs/robotics/PHYSICS_MODEL.md) ·
+[simplifications](docs/robotics/SIMPLIFICATIONS.md) ·
+[tests](docs/robotics/TESTS.md) · [validation](docs/robotics/VALIDATION.md) ·
+[environment](docs/robotics/ENVIRONMENT.md) · [hardware path](docs/robotics/HARDWARE.md) ·
+[Abiyss Office](docs/robotics/OFFICE_INTEGRATION.md) · architecture §14.
+
 ## Documentation
 
 - `docs/ARCHITECTURE.md`: architecture and state machine;

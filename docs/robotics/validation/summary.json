@@ -1,0 +1,106 @@
+{
+  "engine": {
+    "id": 1.0,
+    "ok": true,
+    "protocol": 1,
+    "engine": "4.7.2-stable (official)",
+    "physics_engine": "Jolt Physics",
+    "physics_hz": 1000,
+    "renderer": "gl_compatibility",
+    "video_adapter": "llvmpipe (LLVM 20.1.2, 256 bits)",
+    "headless": false,
+    "camera_available": true,
+    "tool": "gripper",
+    "seed": 1337
+  },
+  "seed": 1337,
+  "results": [
+    {
+      "name": "test1_write_oi",
+      "title": "TEST 1 - write('OI') on paper",
+      "passed": true,
+      "wall_s": 49.89,
+      "sim_s": 16.84,
+      "failed_checks": []
+    },
+    {
+      "name": "test2_pick_four",
+      "title": "TEST 2 - pick and place 4 objects of different mass",
+      "passed": true,
+      "wall_s": 139.84,
+      "sim_s": 51.3,
+      "failed_checks": []
+    },
+    {
+      "name": "test3_shoulder_stall",
+      "title": "TEST 3 - force a shoulder stall",
+      "passed": true,
+      "wall_s": 23.35,
+      "sim_s": 8.32,
+      "failed_checks": []
+    },
+    {
+      "name": "test4_repeatability",
+      "title": "TEST 4 - repeatability (20 identical moves)",
+      "passed": true,
+      "wall_s": 302.91,
+      "sim_s": 105.6,
+      "failed_checks": []
+    },
+    {
+      "name": "test5_gravity",
+      "title": "TEST 5 - gravity: power off the shoulder servo",
+      "passed": true,
+      "wall_s": 14.6,
+      "sim_s": 5.1,
+      "failed_checks": []
+    },
+    {
+      "name": "extra_emergency_stop",
+      "title": "E-STOP during writing",
+      "passed": true,
+      "wall_s": 22.39,
+      "sim_s": 8.2,
+      "failed_checks": []
+    },
+    {
+      "name": "extra_pid_step",
+      "title": "PID step response (elbow), gains changed at runtime",
+      "passed": true,
+      "wall_s": 23.15,
+      "sim_s": 8.66,
+      "failed_checks": []
+    },
+    {
+      "name": "extra_camera",
+      "title": "cam.frame() from the end effector",
+      "passed": true,
+      "wall_s": 6.69,
+      "sim_s": 2.06,
+      "failed_checks": []
+    },
+    {
+      "name": "extra_stability",
+      "title": "Stability: reach out with a clamped vs a free-standing base",
+      "passed": true,
+      "wall_s": 14.08,
+      "sim_s": 4.96,
+      "failed_checks": []
+    }
+  ],
+  "screenshots": {
+    "01_lab_overview": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/01_lab_overview.png",
+    "02_arm_at_rest": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/02_arm_at_rest.png",
+    "03_writing_OI": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/03_writing_OI.png",
+    "03b_OI_result": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/03b_OI_result.png",
+    "04_pick_and_place": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/04_pick_and_place.png",
+    "06_stall": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/06_stall.png",
+    "07_backlash_jitter": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/07_backlash_jitter.png",
+    "08_gravity_fall": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/08_gravity_fall.png",
+    "10_emergency_stop": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/10_emergency_stop.png",
+    "09b_camera_hud": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/09b_camera_hud.png",
+    "11_unstable_free_base": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/11_unstable_free_base.png",
+    "05_telemetry_panel": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/05_telemetry_panel.png"
+  },
+  "all_passed": true
+}

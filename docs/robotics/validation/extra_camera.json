@@ -1,0 +1,74 @@
+{
+  "name": "extra_camera",
+  "title": "cam.frame() from the end effector",
+  "passed": true,
+  "checks": [
+    {
+      "check": "arm moved above object B before capturing",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "camera is above object B (< 30 mm horizontally)",
+      "ok": true,
+      "detail": [
+        0.1364,
+        0.0884
+      ]
+    },
+    {
+      "check": "frame has the configured resolution",
+      "ok": true,
+      "detail": [
+        320,
+        240
+      ]
+    },
+    {
+      "check": "frame is a PNG",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "frame carries pose and intrinsics",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "metrics": {
+    "frame": {
+      "frame_id": 1,
+      "sim_time": 2.059999999999884,
+      "width": 320,
+      "height": 240,
+      "format": "png",
+      "bytes": 17971,
+      "pose": {
+        "position": [
+          0.136367,
+          0.08839699999999999,
+          0.0975505
+        ],
+        "forward": [
+          -0.049771199999999995,
+          -0.030943599999999998,
+          -0.9982812
+        ]
+      },
+      "intrinsics": {
+        "fov_y_deg": 70.0,
+        "fx": 171.37776080905377,
+        "fy": 171.37776080905377,
+        "cx": 160.0,
+        "cy": 120.0
+      },
+      "sensor": "SimulationCamera"
+    }
+  },
+  "artifacts": {
+    "frame": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/f30deb19-0211-5efc-8705-667fd4739927/scratchpad/final2/screenshots/09_cam_frame.png"
+  },
+  "events": [],
+  "wall_s": 6.69,
+  "sim_s": 2.06
+}

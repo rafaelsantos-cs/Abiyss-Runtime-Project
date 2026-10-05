@@ -1,0 +1,148 @@
+{
+  "name": "test3_shoulder_stall",
+  "title": "TEST 3 - force a shoulder stall",
+  "passed": true,
+  "checks": [
+    {
+      "check": "shoulder stall detected under payload",
+      "ok": true,
+      "detail": [
+        "shoulder"
+      ]
+    },
+    {
+      "check": "requested torque exceeds the servo maximum",
+      "ok": true,
+      "detail": {
+        "requested": 0.37553,
+        "maximum": 0.17652
+      }
+    },
+    {
+      "check": "stall event is auditable (joint, torques, position, time)",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "state machine entered STALL",
+      "ok": true,
+      "detail": "STALL"
+    },
+    {
+      "check": "commands are rejected while STALL is latched",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "obstruction stall detected (tool pressed into the bench)",
+      "ok": true,
+      "detail": [
+        "shoulder"
+      ]
+    }
+  ],
+  "metrics": {
+    "payload_case": {
+      "stall_events": [
+        {
+          "event": "servo_stall",
+          "seq": 1114,
+          "joint": "shoulder",
+          "servo": "MG90S",
+          "requested_torque": 0.37553,
+          "maximum_torque": 0.17652,
+          "available_torque": 0.17652,
+          "position_deg": 24.927,
+          "target_deg": 36.65,
+          "static_torque_model": 0.0779,
+          "current_a": 0.75,
+          "probable_cause": "overload by payload: gripper is closed on an object; arm alone needs 0.078 N*m of 0.177; payload >= 61 g",
+          "payload_lower_bound_kg": 0.0612,
+          "gripper_holding": true,
+          "time": 5.56,
+          "sim_time": 5.56
+        }
+      ],
+      "status": {
+        "state": "STALL",
+        "reason": "servo stall: shoulder"
+      },
+      "new_command_rejected_while_stalled": true,
+      "stall_check": {
+        "shoulder": {
+          "stalled": false,
+          "saturated": false,
+          "requested_torque": 0.0,
+          "available_torque": 0.17818556716137673,
+          "maximum_torque": 0.17652,
+          "load_ratio": 0.0,
+          "static_gravity_torque": 0.07790244677700556,
+          "stall_time": 0.0
+        }
+      }
+    },
+    "obstruction_case": {
+      "stall_events": [
+        {
+          "event": "servo_stall",
+          "seq": 1166,
+          "joint": "shoulder",
+          "servo": "MG90S",
+          "requested_torque": -1.04924,
+          "maximum_torque": 0.17652,
+          "available_torque": 0.17527,
+          "position_deg": 37.447,
+          "target_deg": 11.942,
+          "static_torque_model": 0.06676,
+          "current_a": 0.7453,
+          "probable_cause": "external load or obstruction: arm alone needs 0.067 N*m of 0.177; the rest comes from contact, an obstacle or a hard stop",
+          "payload_lower_bound_kg": null,
+          "gripper_holding": false,
+          "time": 1.76,
+          "sim_time": 1.76
+        }
+      ]
+    }
+  },
+  "artifacts": {},
+  "events": [
+    {
+      "event": "servo_stall",
+      "seq": 1114,
+      "joint": "shoulder",
+      "servo": "MG90S",
+      "requested_torque": 0.37553,
+      "maximum_torque": 0.17652,
+      "available_torque": 0.17652,
+      "position_deg": 24.927,
+      "target_deg": 36.65,
+      "static_torque_model": 0.0779,
+      "current_a": 0.75,
+      "probable_cause": "overload by payload: gripper is closed on an object; arm alone needs 0.078 N*m of 0.177; payload >= 61 g",
+      "payload_lower_bound_kg": 0.0612,
+      "gripper_holding": true,
+      "time": 5.56,
+      "sim_time": 5.56
+    },
+    {
+      "event": "servo_stall",
+      "seq": 1166,
+      "joint": "shoulder",
+      "servo": "MG90S",
+      "requested_torque": -1.04924,
+      "maximum_torque": 0.17652,
+      "available_torque": 0.17527,
+      "position_deg": 37.447,
+      "target_deg": 11.942,
+      "static_torque_model": 0.06676,
+      "current_a": 0.7453,
+      "probable_cause": "external load or obstruction: arm alone needs 0.067 N*m of 0.177; the rest comes from contact, an obstacle or a hard stop",
+      "payload_lower_bound_kg": null,
+      "gripper_holding": false,
+      "time": 1.76,
+      "sim_time": 1.76
+    }
+  ],
+  "wall_s": 23.35,
+  "sim_s": 8.32
+}

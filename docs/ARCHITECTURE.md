@@ -185,3 +185,67 @@ The current v0.1 default is `gemini-3.8-flash` with `thinking_level=medium`.
 - automatic replay of ambiguous side effects;
 - pretending Python process controls are a hostile-code sandbox;
 - provider-side persistence of Sleep alignment requests.
+
+## 14. Robotics lab (Robot API, simulation and hardware backends)
+
+The robotics stack lets ABIYSS operate a hobby arm. The arm hardware does not
+exist yet, so the first backend is a physical simulation; the same Robot API
+will drive the real servos later.
+
+```text
+            ABIYSS RUNTIME  (model proposes; QQ validates and executes)
+                  │  robot.enqueue / robot.status / ... (Aquery tools)
+                  ▼
+            ROBOT API SERVICE (abiyss.robotics.server, JSON lines 127.0.0.1)
+                  │
+                  ▼
+            ROBOT CONTROLLER (abiyss.robotics.controller)       20 ms PWM period
+             action queue ─► motion programs ─► IK / trajectories
+             safety state machine ─► telemetry journal (JSONL, AuditLog format)
+                  │  pulse width + power per servo
+        ┌─────────┴─────────────────────────────┐
+        ▼                                       ▼
+ SIMULATION BACKEND                      HARDWARE BACKEND
+ (lockstep TCP to Godot)                 (PWMDriver -> servos; stub today)
+        │
+        ▼
+ GODOT 4 LAB (robot_lab/)
+  servo electromechanics (dead band, PID, DC envelope, backlash, friction) 1 kHz
+  JOLT PHYSICS: rigid links, hinges with hard stops, gripper, pen, contacts
+  end-effector camera, HUD, status beacon
+```
+
+Principles:
+
+1. **Intent, not transforms.** The model and the agent API express intent
+   (`move_to`, `write("OI")`). Nothing in the API can set a pose. The
+   controller turns intent into pulse widths; the backend turns pulses into
+   torque and motion.
+2. **One seam.** `RobotBackend` / `ServoChannel` / `CameraSensor` is the only
+   interface between the Robot API and the world. `SimulationBackend` and
+   `HardwareBackend` implement it; queue, IK, safety, journal and tools are
+   shared.
+3. **Deterministic simulation.** Python advances Godot in lockstep (physics
+   runs only inside a `step`); noise uses seeded generators. Same seed + same
+   commands = same trajectory, bit for bit.
+4. **The specs file is the truth.** `ARM_SPECS.json` drives Python
+   kinematics/statics and the Godot plant. Every physical value carries a
+   verification status (datasheet, estimated, unknown, ...) and sources.
+5. **Visualisation is a view.** The HUD only reads telemetry; its buttons
+   become events the controller may accept or reject. Physics never depends
+   on rendering (headless runs give the same numbers).
+
+### Robotics safety state machine
+
+| State | Entered when | Effect | Leaves when |
+|---|---|---|---|
+| `SAFE` | normal | - | - |
+| `WARNING` | torque >= 85 % of stall, tracking error >= 8 deg or unexpected collision, persisting 0.1 s | operation continues | conditions absent for 0.3 s |
+| `STALL` | a servo is saturated and not moving for 0.3 s | queue cancelled, arm holds the measured pose, commands rejected, `servo_stall` event with torques and probable cause | `reset()` once the servo is no longer stalled |
+| `FAULT` | stall longer than 2 s, invalid physics state, backend error | stalled servo powered off, queue cancelled, commands rejected | `reset()` |
+| `EMERGENCY_STOP` | `emergency_stop()` (API, HUD, service, runtime tool) | queue cleared, hold (or power off when `estop_mode = "power_off"`), commands rejected | `reset()` |
+
+A stalled *gripper* servo is a grip, not a fault.
+
+Further reading: `docs/robotics/` (API, physics model, simplifications,
+tests, validation results, environment, hardware path, office integration).

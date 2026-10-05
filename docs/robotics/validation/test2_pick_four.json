@@ -1,0 +1,498 @@
+{
+  "name": "test2_pick_four",
+  "title": "TEST 2 - pick and place 4 objects of different mass",
+  "passed": true,
+  "checks": [
+    {
+      "check": "objects of 4 different masses were attempted",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "check": "a light object is held, lifted and placed",
+      "ok": true,
+      "detail": {
+        "A": "held_and_placed",
+        "B": "held_and_placed",
+        "C": "held_and_placed",
+        "D": "torque_insufficient",
+        "C_light_grip": "escaped"
+      }
+    },
+    {
+      "check": "insufficient torque is detected for the heavy object",
+      "ok": true,
+      "detail": [
+        {
+          "event": "servo_stall",
+          "seq": 903,
+          "joint": "shoulder",
+          "servo": "MG90S",
+          "requested_torque": 0.44789,
+          "maximum_torque": 0.17652,
+          "available_torque": 0.17671,
+          "position_deg": 24.502,
+          "target_deg": 38.206,
+          "static_torque_model": 0.07824,
+          "current_a": 0.7508,
+          "probable_cause": "overload by payload: gripper is closed on an object; arm alone needs 0.078 N*m of 0.177; payload >= 61 g",
+          "payload_lower_bound_kg": 0.061,
+          "gripper_holding": true,
+          "time": 44.04,
+          "sim_time": 44.04
+        }
+      ]
+    },
+    {
+      "check": "an object escapes when the grip force is too low",
+      "ok": true,
+      "detail": -0.0
+    },
+    {
+      "check": "placed objects are not disturbed by later placements (< 5 mm, < 10 deg)",
+      "ok": true,
+      "detail": {
+        "A": {
+          "moved_mm": 0.38,
+          "tilt_deg": 0.66
+        },
+        "B": {
+          "moved_mm": 0.05,
+          "tilt_deg": 0.0
+        },
+        "C": {
+          "moved_mm": 0.04,
+          "tilt_deg": 0.0
+        }
+      }
+    }
+  ],
+  "metrics": {
+    "objects": {
+      "A": {
+        "name": "foam cube",
+        "mass_g": 4.0,
+        "friction": 0.8,
+        "pick_status": "done",
+        "lifted": true,
+        "lift_mm": 48.34,
+        "grip_opening_mm": 25.02,
+        "finger_force_n": -4.526646190037491,
+        "place_status": "done",
+        "place_error": null,
+        "placement_error_mm": 2.68,
+        "peak_torque_fraction": {
+          "shoulder": 1.036,
+          "elbow": 0.952
+        },
+        "stalls": [],
+        "final_position_mm": [
+          23.6,
+          125.3,
+          12.8
+        ],
+        "final_tilt_deg": 1.5,
+        "outcome": "held_and_placed"
+      },
+      "B": {
+        "name": "wood cube",
+        "mass_g": 10.0,
+        "friction": 0.5,
+        "pick_status": "done",
+        "lifted": true,
+        "lift_mm": 47.83,
+        "grip_opening_mm": 25.03,
+        "finger_force_n": -4.527255137480431,
+        "place_status": "done",
+        "place_error": null,
+        "placement_error_mm": 2.58,
+        "peak_torque_fraction": {
+          "shoulder": 1.211,
+          "elbow": 1.223
+        },
+        "stalls": [],
+        "final_position_mm": [
+          66.3,
+          130.5,
+          12.5
+        ],
+        "final_tilt_deg": 0.0,
+        "outcome": "held_and_placed"
+      },
+      "C": {
+        "name": "solid PLA cube",
+        "mass_g": 19.0,
+        "friction": 0.35,
+        "pick_status": "done",
+        "lifted": true,
+        "lift_mm": 44.45,
+        "grip_opening_mm": 25.03,
+        "finger_force_n": -4.5264908575438385,
+        "place_status": "done",
+        "place_error": null,
+        "placement_error_mm": 5.11,
+        "peak_torque_fraction": {
+          "shoulder": 1.174,
+          "elbow": 0.852
+        },
+        "stalls": [],
+        "final_position_mm": [
+          21.7,
+          167.1,
+          12.5
+        ],
+        "final_tilt_deg": 0.0,
+        "outcome": "held_and_placed"
+      },
+      "D": {
+        "name": "steel cube",
+        "mass_g": 123.0,
+        "friction": 0.25,
+        "pick_status": "cancelled",
+        "lifted": null,
+        "lift_mm": null,
+        "grip_opening_mm": null,
+        "finger_force_n": null,
+        "place_status": "cancelled",
+        "place_error": "safety: servo stall: shoulder",
+        "placement_error_mm": null,
+        "peak_torque_fraction": {
+          "shoulder": 2.844,
+          "elbow": 1.084
+        },
+        "stalls": [
+          {
+            "event": "servo_stall",
+            "seq": 903,
+            "joint": "shoulder",
+            "servo": "MG90S",
+            "requested_torque": 0.44789,
+            "maximum_torque": 0.17652,
+            "available_torque": 0.17671,
+            "position_deg": 24.502,
+            "target_deg": 38.206,
+            "static_torque_model": 0.07824,
+            "current_a": 0.7508,
+            "probable_cause": "overload by payload: gripper is closed on an object; arm alone needs 0.078 N*m of 0.177; payload >= 61 g",
+            "payload_lower_bound_kg": 0.061,
+            "gripper_holding": true,
+            "time": 44.04,
+            "sim_time": 44.04
+          }
+        ],
+        "final_position_mm": [
+          145.9,
+          -93.5,
+          14.5
+        ],
+        "final_tilt_deg": 9.72,
+        "outcome": "torque_insufficient"
+      },
+      "placed_objects_after_run": {
+        "A": {
+          "moved_mm": 0.38,
+          "tilt_deg": 0.66
+        },
+        "B": {
+          "moved_mm": 0.05,
+          "tilt_deg": 0.0
+        },
+        "C": {
+          "moved_mm": 0.04,
+          "tilt_deg": 0.0
+        }
+      },
+      "C_light_grip": {
+        "commanded_width_mm": 24.6,
+        "grip": {
+          "command": "close",
+          "target_opening_mm": 24.6,
+          "measured_opening_mm": 25.01,
+          "finger_force_n": -0.08454120368848392,
+          "stalled": false,
+          "held": []
+        },
+        "lift_mm": -0.0,
+        "outcome": "escaped",
+        "explanation": "A closing command only 0.4 mm narrower than the object asks for ~1 deg of servo travel, inside the SG90 dead band (10 us = 1.8 deg): the amplifier never drives, the jaws exert ~no force and the object stays behind."
+      }
+    },
+    "outcomes": {
+      "A": "held_and_placed",
+      "B": "held_and_placed",
+      "C": "held_and_placed",
+      "D": "torque_insufficient",
+      "C_light_grip": "escaped"
+    }
+  },
+  "artifacts": {},
+  "events": [
+    {
+      "event": "gripper",
+      "seq": 236,
+      "command": "open",
+      "target_opening_mm": 40.0,
+      "measured_opening_mm": 40.0,
+      "finger_force_n": 0.0486375,
+      "stalled": false,
+      "held": [],
+      "sim_time": 0.3
+    },
+    {
+      "event": "gripper",
+      "seq": 286,
+      "command": "close",
+      "target_opening_mm": 4.0,
+      "measured_opening_mm": 25.02,
+      "finger_force_n": -4.5266462,
+      "stalled": true,
+      "held": [
+        "A"
+      ],
+      "sim_time": 4.24
+    },
+    {
+      "event": "pick_result",
+      "seq": 310,
+      "object": "A",
+      "lift_mm": 48.34,
+      "held": true,
+      "lifted": true,
+      "sim_time": 6.42
+    },
+    {
+      "event": "safety_state",
+      "seq": 319,
+      "from": "SAFE",
+      "to": "WARNING",
+      "reason": "base_yaw torque 0.188/0.177 N*m",
+      "warnings": [
+        "base_yaw torque 0.188/0.177 N*m"
+      ],
+      "sim_time": 6.68
+    },
+    {
+      "event": "safety_state",
+      "seq": 329,
+      "from": "WARNING",
+      "to": "SAFE",
+      "reason": "conditions cleared",
+      "sim_time": 7.2
+    },
+    {
+      "event": "gripper",
+      "seq": 366,
+      "command": "open",
+      "target_opening_mm": 33.0,
+      "measured_opening_mm": 33.35,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 9.52
+    },
+    {
+      "event": "place_result",
+      "seq": 387,
+      "object": "A",
+      "placement_error_mm": 2.68,
+      "sim_time": 11.08
+    },
+    {
+      "event": "gripper",
+      "seq": 419,
+      "command": "open",
+      "target_opening_mm": 40.0,
+      "measured_opening_mm": 39.95,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 12.68
+    },
+    {
+      "event": "gripper",
+      "seq": 483,
+      "command": "close",
+      "target_opening_mm": 4.0,
+      "measured_opening_mm": 25.03,
+      "finger_force_n": -4.5272551,
+      "stalled": true,
+      "held": [
+        "B"
+      ],
+      "sim_time": 16.98
+    },
+    {
+      "event": "pick_result",
+      "seq": 509,
+      "object": "B",
+      "lift_mm": 47.83,
+      "held": true,
+      "lifted": true,
+      "sim_time": 19.16
+    },
+    {
+      "event": "gripper",
+      "seq": 559,
+      "command": "open",
+      "target_opening_mm": 33.0,
+      "measured_opening_mm": 32.39,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 22.24
+    },
+    {
+      "event": "place_result",
+      "seq": 581,
+      "object": "B",
+      "placement_error_mm": 2.58,
+      "sim_time": 23.8
+    },
+    {
+      "event": "gripper",
+      "seq": 610,
+      "command": "open",
+      "target_opening_mm": 40.0,
+      "measured_opening_mm": 39.99,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 25.18
+    },
+    {
+      "event": "gripper",
+      "seq": 667,
+      "command": "close",
+      "target_opening_mm": 4.0,
+      "measured_opening_mm": 25.03,
+      "finger_force_n": -4.5264909,
+      "stalled": true,
+      "held": [
+        "C"
+      ],
+      "sim_time": 29.12
+    },
+    {
+      "event": "pick_result",
+      "seq": 691,
+      "object": "C",
+      "lift_mm": 44.45,
+      "held": true,
+      "lifted": true,
+      "sim_time": 31.3
+    },
+    {
+      "event": "gripper",
+      "seq": 780,
+      "command": "open",
+      "target_opening_mm": 33.0,
+      "measured_opening_mm": 32.55,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 35.48
+    },
+    {
+      "event": "place_result",
+      "seq": 797,
+      "object": "C",
+      "placement_error_mm": 5.11,
+      "sim_time": 37.04
+    },
+    {
+      "event": "gripper",
+      "seq": 829,
+      "command": "open",
+      "target_opening_mm": 40.0,
+      "measured_opening_mm": 39.99,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 38.68
+    },
+    {
+      "event": "gripper",
+      "seq": 885,
+      "command": "close",
+      "target_opening_mm": 4.0,
+      "measured_opening_mm": 25.03,
+      "finger_force_n": -4.5268378,
+      "stalled": true,
+      "held": [
+        "D"
+      ],
+      "sim_time": 42.98
+    },
+    {
+      "event": "safety_state",
+      "seq": 893,
+      "from": "SAFE",
+      "to": "WARNING",
+      "reason": "shoulder torque 0.212/0.177 N*m",
+      "warnings": [
+        "shoulder torque 0.212/0.177 N*m"
+      ],
+      "sim_time": 43.62
+    },
+    {
+      "event": "servo_stall",
+      "seq": 903,
+      "joint": "shoulder",
+      "servo": "MG90S",
+      "requested_torque": 0.44789,
+      "maximum_torque": 0.17652,
+      "available_torque": 0.17671,
+      "position_deg": 24.502,
+      "target_deg": 38.206,
+      "static_torque_model": 0.07824,
+      "current_a": 0.7508,
+      "probable_cause": "overload by payload: gripper is closed on an object; arm alone needs 0.078 N*m of 0.177; payload >= 61 g",
+      "payload_lower_bound_kg": 0.061,
+      "gripper_holding": true,
+      "time": 44.04,
+      "sim_time": 44.04
+    },
+    {
+      "event": "safety_state",
+      "seq": 904,
+      "from": "WARNING",
+      "to": "STALL",
+      "reason": "servo stall: shoulder",
+      "joint": "shoulder",
+      "sim_time": 44.04
+    },
+    {
+      "event": "safety_state",
+      "seq": 928,
+      "from": "STALL",
+      "to": "SAFE",
+      "reason": "reset by operator",
+      "restored_power": [],
+      "sim_time": 45.04
+    },
+    {
+      "event": "gripper",
+      "seq": 946,
+      "command": "open",
+      "target_opening_mm": 40.0,
+      "measured_opening_mm": 39.98,
+      "finger_force_n": 0.0,
+      "stalled": false,
+      "held": [],
+      "sim_time": 0.5
+    },
+    {
+      "event": "gripper",
+      "seq": 1002,
+      "command": "close",
+      "target_opening_mm": 24.6,
+      "measured_opening_mm": 25.01,
+      "finger_force_n": -0.0845412,
+      "stalled": false,
+      "held": [],
+      "sim_time": 4.02
+    }
+  ],
+  "wall_s": 139.84,
+  "sim_s": 51.3
+}

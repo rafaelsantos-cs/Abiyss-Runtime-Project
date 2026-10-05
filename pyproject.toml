@@ -23,6 +23,7 @@ dev = ["pytest>=8.0", "pytest-cov>=5.0", "build>=1.2"]
 
 [project.scripts]
 abiyss = "abiyss.cli:main"
+abiyss-robotics = "abiyss.robotics.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -34,3 +35,4 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+markers = ["sim: integration tests that drive the Godot/Jolt robot lab (skipped without Godot)"]
