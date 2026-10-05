@@ -17,6 +17,7 @@ use crate::memoria::central::MemoriaCentral;
 use crate::memoria::propostas;
 use crate::sono;
 use crate::tempo::{agora_ms, formatar_ms};
+use crate::vigilancia;
 
 /// Resultado de `abiyss status --verificar`, para monitor externo
 /// (timer do systemd, healthcheck): código de saída + uma linha.
@@ -93,6 +94,12 @@ const SONO_ATRASADO_MS: i64 = 50 * 3_600_000;
 /// Problemas registrados por outras partes do kernel.
 fn problemas_conhecidos(config: &Config, banco: &Banco, agora: i64) -> anyhow::Result<Vec<String>> {
     let mut problemas = Vec::new();
+    let disjuntor = vigilancia::ler_disjuntor(banco)?;
+    if disjuntor.aberto_ate_ms.is_some()
+        && let Some(d) = vigilancia::descrever_disjuntor(&disjuntor, agora)
+    {
+        problemas.push(format!("disjuntor do heartbeat {d}"));
+    }
     if let Some(s) = sono::ultimo(banco)? {
         if s.estado == "falhou" {
             problemas.push(format!(
@@ -209,6 +216,29 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
             if let Some(e) = s.erro {
                 writeln!(t, "  problemas: {e}")?;
             }
+        }
+    }
+    // Vigilância: disjuntor e estagnação.
+    let disjuntor = vigilancia::ler_disjuntor(banco)?;
+    writeln!(
+        t,
+        "Disjuntor do heartbeat: {}",
+        vigilancia::descrever_disjuntor(&disjuntor, agora).unwrap_or_else(|| "fechado".into())
+    )?;
+    if let Some(e) = vigilancia::ler_estagnacao(banco)? {
+        let ativa = match e.goal_id {
+            Some(id) => goals::obter(banco, id)
+                .map(|g| g.atualizado_ms == e.goal_atualizado_ms)
+                .unwrap_or(false),
+            None => false,
+        };
+        if ativa {
+            writeln!(
+                t,
+                "Estagnação: goal #{} parado; revisão periódica a cada {}× o intervalo",
+                e.goal_id.unwrap_or_default(),
+                e.multiplicador
+            )?;
         }
     }
     for p in problemas_conhecidos(config, banco, agora)? {

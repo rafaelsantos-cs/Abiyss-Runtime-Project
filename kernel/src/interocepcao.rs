@@ -51,6 +51,9 @@ pub struct Interocepcao {
     pub fase: String,
     /// Trabalho autônomo de hoje contra o orçamento diário.
     pub orcamento: String,
+    /// Situação do próprio kernel (disjuntor, continuidade...), uma linha
+    /// por item; vazio quando não há nada a dizer.
+    pub kernel: Vec<String>,
 }
 
 /// Nome do dia da semana em português.
@@ -192,10 +195,16 @@ impl Interocepcao {
         );
         let uso = crate::orcamento::uso_desde(banco, crate::ritmo::inicio_do_dia_local_ms())?;
         let orcamento = crate::orcamento::descrever(&config.orcamento, uso);
+        let mut kernel = Vec::new();
+        let disjuntor = crate::vigilancia::ler_disjuntor(banco)?;
+        if let Some(d) = crate::vigilancia::descrever_disjuntor(&disjuntor, agora_ms()) {
+            kernel.push(format!("Disjuntor do heartbeat: {d}"));
+        }
 
         Ok(Interocepcao {
             fase,
             orcamento,
+            kernel,
             agora: agora_formatado(),
             nucleos,
             carga: (carga.one, carga.five, carga.fifteen),
@@ -216,6 +225,9 @@ impl Interocepcao {
         }
         if !self.orcamento.is_empty() {
             let _ = writeln!(t, "Trabalho autônomo hoje: {}", self.orcamento);
+        }
+        for linha in &self.kernel {
+            let _ = writeln!(t, "{linha}");
         }
         let _ = writeln!(
             t,

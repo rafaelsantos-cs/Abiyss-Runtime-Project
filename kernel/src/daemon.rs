@@ -376,6 +376,16 @@ impl Daemon {
         if let Err(e) = heartbeat::registrar_ciclo_interrompido(&self.banco, inicio, &erro) {
             tracing::warn!("não consegui registrar o ciclo interrompido: {e:#}");
         }
+        // Ciclo interrompido conta como falha para o disjuntor.
+        if let Err(e) = crate::vigilancia::registrar_no_disjuntor(
+            &self.banco,
+            &self.config.vigilancia,
+            false,
+            Some(&erro),
+            agora_ms(),
+        ) {
+            tracing::warn!("não consegui atualizar o disjuntor: {e:#}");
+        }
     }
 
     /// É hora de dormir? (Janela, recuperação ou pedido manual.)

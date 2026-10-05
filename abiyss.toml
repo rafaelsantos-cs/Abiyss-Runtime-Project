@@ -322,6 +322,27 @@ reserva_sono_chamadas = 12
 fracao_alerta = 0.8
 
 # ---------------------------------------------------------------------------
+# Vigilância do heartbeat (código, sem modelo).
+# Estagnação: a mesma decisão (goal em foco + ações normalizadas) em
+# `repeticoes_estagnacao` ciclos seguidos sem o goal mudar, ou a mesma ação
+# falhando `erros_mesma_acao` vezes seguidas → evento kernel/estagnacao (com a
+# skill sair-de-loops) e a revisão periódica do goal fica 2×, 4×... até
+# `max_multiplicador_revisao`× mais espaçada, até ele mudar.
+# Disjuntor: `falhas_para_abrir` ciclos seguidos com falha do modelo (erro,
+# resposta fora do formato, ciclo interrompido) → sem chamadas por
+# min(base·2^k, teto) segundos (±20%); depois UMA tentativa decide.
+# O estado aparece em `abiyss status` e no `--verificar`.
+# ---------------------------------------------------------------------------
+
+[vigilancia]
+repeticoes_estagnacao = 3
+erros_mesma_acao = 3
+max_multiplicador_revisao = 8
+falhas_para_abrir = 3
+disjuntor_base_segundos = 300
+disjuntor_teto_segundos = 3600
+
+# ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).
 # Vai para <dados>/backups/AAAA-MM-DD/: banco (VACUUM INTO, consistente
 # mesmo com o daemon rodando), cofre, memória central e núcleo. Links

@@ -284,6 +284,11 @@ const MIGRACOES: &[&str] = &[
         ate_id INTEGER NOT NULL
     );
     "#,
+    // 12 (E7) — impressão digital de cada ciclo que chamou o modelo (goal
+    // em foco + ações normalizadas), para detectar estagnação.
+    r#"
+    ALTER TABLE ciclos ADD COLUMN impressao TEXT;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

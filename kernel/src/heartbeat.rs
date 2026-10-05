@@ -31,6 +31,7 @@ use crate::ritmo::{self, Fase};
 use crate::skills::Skills;
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
 use crate::tempo::{agora_ms, formatar_ms};
+use crate::vigilancia::{self, Situacao};
 
 /// Autor registrado nas transições feitas pelo heartbeat.
 const AUTOR: &str = "abiyss";
@@ -213,6 +214,12 @@ impl Heartbeat {
         }
         let fase = ritmo::fase_agora(&self.config.ritmo);
         let permitir_revisao = fase == Fase::Vigilia && nivel == NivelOrcamento::Normal;
+        // Goal estagnado: a revisão periódica dele fica mais espaçada.
+        let estagnacao = vigilancia::ler_estagnacao(&self.banco)?;
+        let multiplicador = foco
+            .as_ref()
+            .map(|g| vigilancia::multiplicador_revisao(estagnacao.as_ref(), g.id, g.atualizado_ms))
+            .unwrap_or(1);
 
         // 3. Precisa mesmo chamar o modelo?
         let motivo = motivo_para_chamar(
@@ -221,7 +228,7 @@ impl Heartbeat {
             ultimo.as_ref(),
             trabalhando.len(),
             inicio,
-            self.config.daemon.revisao_minima_segundos,
+            self.config.daemon.revisao_minima_segundos * multiplicador as u64,
             permitir_revisao,
         );
         let Some(motivo) = motivo else {
@@ -229,6 +236,18 @@ impl Heartbeat {
             registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
             return Ok(resultado);
         };
+        // Disjuntor aberto (o modelo vinha falhando): sem chamada até a
+        // espera passar. Os eventos continuam na fila.
+        if let Situacao::Aberto { ate_ms } =
+            vigilancia::situacao(&vigilancia::ler_disjuntor(&self.banco)?, inicio)
+        {
+            resultado.motivo = format!(
+                "disjuntor aberto até {} (o modelo vinha falhando); adiado: {motivo}",
+                formatar_ms(ate_ms)
+            );
+            registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
+            return Ok(resultado);
+        }
         resultado.motivo = motivo;
         resultado.chamou_modelo = true;
 
@@ -265,6 +284,13 @@ impl Heartbeat {
                 // Eventos NÃO são consumidos: serão vistos no próximo ciclo.
                 let erro = format!("{e:#}");
                 registrar_ciclo(&self.banco, inicio, &resultado, None, Some(&erro), 0)?;
+                vigilancia::registrar_no_disjuntor(
+                    &self.banco,
+                    &self.config.vigilancia,
+                    false,
+                    Some(&erro),
+                    agora_ms(),
+                )?;
                 return Err(e.context("heartbeat: chamada ao modelo falhou"));
             }
         };
@@ -313,7 +339,11 @@ impl Heartbeat {
             }
             Err(e) => Some(format!("resposta fora do formato: {e:#}")),
         };
-        registrar_ciclo_com_origem(
+        let impressao = resultado
+            .decisao
+            .as_ref()
+            .and_then(|d| vigilancia::impressao(resultado.goal_foco, &d.acoes));
+        registrar_ciclo_completo(
             &self.banco,
             inicio,
             &resultado,
@@ -321,9 +351,110 @@ impl Heartbeat {
             erro.as_deref(),
             tokens,
             origem_externa.as_deref(),
+            impressao.as_deref(),
         )?;
+        vigilancia::registrar_no_disjuntor(
+            &self.banco,
+            &self.config.vigilancia,
+            erro.is_none(),
+            erro.as_deref(),
+            agora_ms(),
+        )?;
+        if let Err(e) = self.vigiar_estagnacao(
+            &resultado,
+            impressao.as_deref(),
+            estagnacao.as_ref(),
+            origem_externa.as_deref(),
+        ) {
+            tracing::warn!("não consegui verificar estagnação: {e:#}");
+        }
         resultado.erro = erro;
         Ok(resultado)
+    }
+
+    /// Depois de um ciclo com modelo: a mesma decisão repetida sem o goal
+    /// mudar, ou a mesma ação falhando seguidas vezes, vira um evento
+    /// `kernel/estagnacao` (com a skill `sair-de-loops` junto) e espaça a
+    /// revisão periódica do goal.
+    fn vigiar_estagnacao(
+        &self,
+        resultado: &ResultadoCiclo,
+        impressao: Option<&str>,
+        anterior: Option<&vigilancia::EstadoEstagnacao>,
+        origem_externa: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let config = &self.config.vigilancia;
+        let agora = agora_ms();
+        let desde = anterior.map(|e| e.desde_ms).unwrap_or(0);
+        let goal_atual = match resultado.goal_foco {
+            Some(id) => goals::obter(&self.banco, id).ok(),
+            None => None,
+        };
+
+        let mut aviso = None;
+        if impressao.is_some() {
+            let n = config.repeticoes_estagnacao as usize;
+            let ultimas = vigilancia::ultimas_impressoes(&self.banco, desde, n)?;
+            let impressoes: Vec<Option<String>> = ultimas.iter().map(|(_, i)| i.clone()).collect();
+            let vezes = vigilancia::repeticoes(&impressoes);
+            let mais_antigo = ultimas.last().map(|(inicio, _)| *inicio).unwrap_or(0);
+            // O goal em foco mudou durante essas repetições? Então não é estagnação.
+            let goal_mudou = goal_atual
+                .as_ref()
+                .is_some_and(|g| g.atualizado_ms >= mais_antigo);
+            if vezes >= n && !goal_mudou {
+                aviso = Some(vigilancia::aviso_repeticao(
+                    vezes,
+                    resultado.goal_foco,
+                    impressao.unwrap_or_default(),
+                ));
+            }
+        }
+        if aviso.is_none() {
+            let n = config.erros_mesma_acao as usize;
+            let tentativas = vigilancia::tentativas_recentes(&self.banco)?;
+            let acoes = resultado
+                .decisao
+                .as_ref()
+                .map(|d| d.acoes.as_slice())
+                .unwrap_or(&[]);
+            for (acao, linha) in acoes.iter().zip(&resultado.resultados) {
+                let Some(chave) = vigilancia::chave_acao(acao) else {
+                    continue;
+                };
+                let vezes = vigilancia::erros_seguidos(&tentativas, &chave);
+                if linha.starts_with("erro:") && vezes >= n && vezes.is_multiple_of(n) {
+                    let erro = linha.trim_start_matches("erro:").trim();
+                    aviso = Some(vigilancia::aviso_erros(vezes, &chave, erro));
+                    break;
+                }
+            }
+        }
+        let Some(aviso) = aviso else {
+            return Ok(());
+        };
+        tracing::warn!("heartbeat estagnado: {aviso}");
+        // Texto escrito a partir de um ciclo externo continua externo.
+        eventos::publicar_com_origem(
+            &self.banco,
+            eventos::TIPO_KERNEL,
+            vigilancia::ORIGEM_ESTAGNACAO,
+            &aviso,
+            origem_externa,
+        )?;
+        let estado = vigilancia::nova_estagnacao(
+            anterior,
+            resultado.goal_foco,
+            goal_atual.map(|g| g.atualizado_ms).unwrap_or(0),
+            agora + 1,
+            config.max_multiplicador_revisao,
+        );
+        crate::daemon::gravar_estado(
+            &self.banco,
+            vigilancia::CHAVE_ESTAGNACAO,
+            &serde_json::to_string(&estado)?,
+        )?;
+        Ok(())
     }
 
     /// System prompt do heartbeat: regras + núcleo + memória central +
@@ -668,12 +799,14 @@ fn registrar_ciclo(
     erro: Option<&str>,
     tokens: i64,
 ) -> anyhow::Result<()> {
-    registrar_ciclo_com_origem(banco, inicio, resultado, resposta, erro, tokens, None)
+    registrar_ciclo_completo(banco, inicio, resultado, resposta, erro, tokens, None, None)
 }
 
 /// Como `registrar_ciclo`, marcando se o contexto do ciclo tinha conteúdo
-/// externo (o sono não usa decisões desses ciclos como material interno).
-fn registrar_ciclo_com_origem(
+/// externo (o sono não usa decisões desses ciclos como material interno) e
+/// a impressão digital das ações (estagnação).
+#[allow(clippy::too_many_arguments)]
+fn registrar_ciclo_completo(
     banco: &Banco,
     inicio: i64,
     resultado: &ResultadoCiclo,
@@ -681,6 +814,7 @@ fn registrar_ciclo_com_origem(
     erro: Option<&str>,
     tokens: i64,
     origem_externa: Option<&str>,
+    impressao: Option<&str>,
 ) -> anyhow::Result<()> {
     let resumo = if resultado.resultados.is_empty() {
         None
@@ -689,8 +823,8 @@ fn registrar_ciclo_com_origem(
     };
     banco.conexao().execute(
         "INSERT INTO ciclos (inicio_ms, fim_ms, chamou_modelo, motivo, goal_foco,
-                             resposta, resultado, erro, tokens, origem_externa)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                             resposta, resultado, erro, tokens, origem_externa, impressao)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             inicio,
             agora_ms(),
@@ -701,7 +835,8 @@ fn registrar_ciclo_com_origem(
             resumo,
             erro,
             tokens,
-            origem_externa
+            origem_externa,
+            impressao
         ],
     )?;
     Ok(())
