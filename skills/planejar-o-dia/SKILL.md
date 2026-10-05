@@ -16,12 +16,14 @@ O evento do sono traz o resumo da noite:
 - **descartadas pelo kernel**: itens sem evidência ou com evidência
   inventada. Se forem muitas, o critério do sono precisa de ajuste:
   lembre de comentar com o usuário.
-- **perguntas para o usuário**: guarde-as para a próxima conversa.
+- **perguntas para o usuário**: o kernel já as guardou como pedidos
+  (aparecem na interocepção); não pergunte de novo.
 - **problemas no sono**: backup que falhou, passada interrompida. Se
   repetir em duas noites, avise o usuário.
 
 Depois de um reinício sem sono, olhe o tempo que ficou fora: eventos e
-sub-agentes podem ter ficado para trás.
+sub-agentes podem ter ficado para trás. Pedidos pendentes há muito tempo
+podem expirar: decida o que fazer sem a resposta.
 
 ## 2. Os goals
 

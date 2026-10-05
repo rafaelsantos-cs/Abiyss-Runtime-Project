@@ -101,6 +101,15 @@ enum Comando {
     /// Memória de longo prazo (cofre do Obsidian).
     #[command(subcommand)]
     Memoria(ComandoMemoria),
+    /// Pedidos do Abiyss para você (perguntas do ciclo autônomo e do sono).
+    /// Sem subcomando, lista os pendentes.
+    Pedidos {
+        #[command(subcommand)]
+        acao: Option<ComandoPedidos>,
+        /// Lista também os respondidos, expirados e cancelados.
+        #[arg(long)]
+        todos: bool,
+    },
     /// Faz UMA chamada simples ao NIM para conferir chave, URL e ID do modelo.
     TestarNim {
         /// Qual modelo da config usar.
@@ -167,6 +176,18 @@ enum ComandoGoal {
         #[arg(long)]
         motivo: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ComandoPedidos {
+    /// Responde a um pedido (a resposta chega ao heartbeat como evento).
+    Responder {
+        id: i64,
+        /// A resposta, nas suas palavras.
+        resposta: String,
+    },
+    /// Cancela um pedido pendente (você não vai responder).
+    Cancelar { id: i64 },
 }
 
 #[derive(Subcommand)]
@@ -300,6 +321,16 @@ async fn main() -> anyhow::Result<()> {
         }
         Comando::ImportarHermes { origem, aplicar } => {
             cli::hermes::importar(&Config::carregar(&caminho_config)?, &origem, aplicar)
+        }
+        Comando::Pedidos { acao, todos } => {
+            let config = Config::carregar(&caminho_config)?;
+            match acao {
+                None => cli::pedidos::listar(&config, todos),
+                Some(ComandoPedidos::Responder { id, resposta }) => {
+                    cli::pedidos::responder(&config, id, &resposta)
+                }
+                Some(ComandoPedidos::Cancelar { id }) => cli::pedidos::cancelar(&config, id),
+            }
         }
         Comando::Memoria(sub) => {
             let config = Config::carregar(&caminho_config)?;

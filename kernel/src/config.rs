@@ -50,6 +50,8 @@ pub struct Config {
     pub sono: crate::sono::ConfigSono,
     #[serde(default)]
     pub vigilancia: crate::vigilancia::ConfigVigilancia,
+    #[serde(default)]
+    pub pedidos: crate::pedidos::ConfigPedidos,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -589,6 +591,7 @@ impl Config {
         self.orcamento.validar()?;
         self.sono.validar()?;
         self.vigilancia.validar()?;
+        self.pedidos.validar()?;
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");

@@ -29,6 +29,7 @@ skills/<nome>/
 | `dormir-bem` | o critério do sono (o kernel injeta na passada interna) | sono |
 | `planejar-o-dia` | o primeiro ciclo depois do sono ou de um reinício (injetada) | heartbeat |
 | `sair-de-loops` | estagnação e falhas repetidas (injetada com o aviso do kernel) | heartbeat |
+| `pedir-ao-usuario` | quando e como perguntar ao dono; registrar a resposta | heartbeat e chat |
 
 ## Como escrever uma skill
 

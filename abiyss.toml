@@ -347,6 +347,19 @@ disjuntor_base_segundos = 300
 disjuntor_teto_segundos = 3600
 
 # ---------------------------------------------------------------------------
+# Pedidos ao usuário (caixa de entrada assíncrona). O heartbeat pede com a
+# ação pedir_ao_usuario; as perguntas do sono também viram pedidos. Você
+# responde com `abiyss pedidos responder <id> "texto"` ou na conversa (o
+# Abiyss registra com responder_pedido). A resposta chega como evento.
+# ---------------------------------------------------------------------------
+
+[pedidos]
+# Teto de pendentes; a mesma pergunta pendente não duplica.
+max_pendentes = 10
+# Sem resposta depois disto, o pedido expira (e o Abiyss é avisado).
+expira_apos_horas = 72
+
+# ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).
 # Vai para <dados>/backups/AAAA-MM-DD/: banco (VACUUM INTO, consistente
 # mesmo com o daemon rodando), cofre, memória central e núcleo. Links

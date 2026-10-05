@@ -11,8 +11,9 @@ use abiyss::heartbeat::NOMES_ACOES;
 use abiyss::skills::{ARQUIVO_SKILL, PASTA_REFERENCIAS, RaizSkills, Skill, Skills};
 use serde_json::Value;
 
-const ESPERADAS: [&str; 6] = [
+const ESPERADAS: [&str; 7] = [
     "registrar-memoria",
+    "pedir-ao-usuario",
     "conduzir-goals",
     "delegar-bem",
     "dormir-bem",
@@ -51,6 +52,7 @@ fn nomes_conhecidos(skills: &[Skill]) -> HashSet<String> {
         ferramentas::DELEGAR,
         ferramentas::STATUS,
         ferramentas::CANCELAR,
+        ferramentas::RESPONDER_PEDIDO,
     ]
     .iter()
     .map(|n| n.to_string())

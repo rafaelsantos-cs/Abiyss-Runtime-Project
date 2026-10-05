@@ -19,7 +19,8 @@ pronto. Ele aparece no começo e no fim do seu contexto. Um bom núcleo:
 - cabe numa frase. Se não cabe, o goal é grande demais: proponha dividir.
 
 Quem cria goals é o usuário (`abiyss goal add`). Se o núcleo de um goal
-não tiver critério de pronto, peça ao usuário antes de comprometer.
+não tiver critério de pronto, peça ao usuário (skill `pedir-ao-usuario`)
+antes de comprometer.
 
 ## Os estados e as transições
 
@@ -75,4 +76,5 @@ as diferenças viram lições.
 - `delegar`: manda um passo para um sub-agente (inclua o goal_id).
 - `cancelar_subagente`: quando o passo delegado deixou de fazer sentido.
 - `consultar_skill`: para ler `delegar-bem` ou `sair-de-loops` quando precisar.
+- `pedir_ao_usuario`: o que só o dono decide (critério de pronto, acesso).
 - `aguardar`: nada a fazer agora, com motivo.

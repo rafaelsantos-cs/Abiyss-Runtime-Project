@@ -32,6 +32,7 @@ pub mod memoria;
 pub mod nim;
 pub mod orcamento;
 pub mod orquestrador;
+pub mod pedidos;
 pub mod processos;
 pub mod ritmo;
 pub mod skills;

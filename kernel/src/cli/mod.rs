@@ -7,3 +7,4 @@ pub mod goal;
 pub mod hermes;
 pub mod memoria;
 pub mod nim;
+pub mod pedidos;

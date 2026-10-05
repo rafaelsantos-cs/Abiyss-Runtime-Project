@@ -245,6 +245,22 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         writeln!(t, "ATENÇÃO: {p}")?;
     }
 
+    // Pedidos ao usuário
+    let pendentes = crate::pedidos::pendentes(banco)?;
+    writeln!(
+        t,
+        "Pedidos ao usuário pendentes: {}{}",
+        pendentes.len(),
+        if pendentes.is_empty() {
+            ""
+        } else {
+            " (responda com `abiyss pedidos responder <id> \"texto\"`)"
+        }
+    )?;
+    for p in pendentes.iter().take(5) {
+        writeln!(t, "  #{} [{}] {}", p.id, p.urgencia, p.pergunta)?;
+    }
+
     // Goals
     let contagem = goals::contar_por_estado(banco)?;
     let partes: Vec<String> = contagem

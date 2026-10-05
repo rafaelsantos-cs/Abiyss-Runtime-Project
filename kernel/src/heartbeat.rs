@@ -27,6 +27,7 @@ use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Mensagem};
 use crate::orcamento::{self, Gasto, NivelOrcamento};
 use crate::orquestrador::{Nivel, Origem, Orquestrador};
+use crate::pedidos;
 use crate::ritmo::{self, Fase};
 use crate::skills::Skills;
 use crate::subagentes::{self, ControleSubagentes, InfoSubagente, PedidoDelegacao};
@@ -83,6 +84,16 @@ pub enum Acao {
         #[serde(default)]
         motivo: String,
     },
+    /// Guarda uma pergunta para o dono (caixa de entrada assíncrona).
+    PedirAoUsuario {
+        pergunta: String,
+        #[serde(default)]
+        contexto: String,
+        #[serde(default)]
+        urgencia: String,
+        #[serde(default)]
+        goal_id: Option<i64>,
+    },
     /// Não fazer nada agora.
     Aguardar {
         #[serde(default)]
@@ -92,11 +103,12 @@ pub enum Acao {
 
 /// Nome (`tipo`) de cada ação, como o modelo escreve no JSON. As skills
 /// citam estes nomes; o teste de coerência confere.
-pub const NOMES_ACOES: [&str; 5] = [
+pub const NOMES_ACOES: [&str; 6] = [
     "transicionar_goal",
     "delegar",
     "cancelar_subagente",
     "consultar_skill",
+    "pedir_ao_usuario",
     "aguardar",
 ];
 
@@ -320,13 +332,14 @@ impl Heartbeat {
                         &acao.to_string(),
                         expectativa,
                     )?;
-                    let (linha, subagente) = match self.executar_acao(acao) {
-                        Ok(feito) => {
-                            resultado.pedir_continuacao |= feito.continuar;
-                            (format!("ok: {}", feito.texto), feito.subagente_id)
-                        }
-                        Err(e) => (format!("erro: {e:#}"), None),
-                    };
+                    let (linha, subagente) =
+                        match self.executar_acao(acao, origem_externa.as_deref()) {
+                            Ok(feito) => {
+                                resultado.pedir_continuacao |= feito.continuar;
+                                (format!("ok: {}", feito.texto), feito.subagente_id)
+                            }
+                            Err(e) => (format!("erro: {e:#}"), None),
+                        };
                     // ...e resultado observado DEPOIS.
                     diario::registrar_resultado(&self.banco, id_diario, &linha)?;
                     if let Some(id) = subagente {
@@ -500,11 +513,45 @@ impl Heartbeat {
     }
 
     /// Executa uma ação já decidida, validando por código.
-    fn executar_acao(&self, bruta: &Value) -> anyhow::Result<AcaoFeita> {
+    /// `origem_externa`: o ciclo consumiu conteúdo externo (o texto escrito
+    /// a partir dele, como uma pergunta ao dono, carrega essa origem).
+    fn executar_acao(
+        &self,
+        bruta: &Value,
+        origem_externa: Option<&str>,
+    ) -> anyhow::Result<AcaoFeita> {
         let acao: Acao = serde_json::from_value(bruta.clone())
             .with_context(|| format!("ação não reconhecida: {bruta}"))?;
         match acao {
             Acao::Aguardar { motivo } => Ok(AcaoFeita::texto(format!("aguardando ({motivo})"))),
+            Acao::PedirAoUsuario {
+                pergunta,
+                contexto,
+                urgencia,
+                goal_id,
+            } => {
+                let urgencia = pedidos::Urgencia::de_texto(&urgencia).with_context(|| {
+                    format!("urgência inválida '{urgencia}' (baixa, normal ou alta)")
+                })?;
+                let novo = pedidos::NovoPedido {
+                    origem: "heartbeat".into(),
+                    goal_id,
+                    pergunta,
+                    contexto,
+                    urgencia,
+                    origem_externa: origem_externa.map(str::to_string),
+                };
+                Ok(AcaoFeita::texto(
+                    match pedidos::criar(&self.banco, &self.config.pedidos, &novo)? {
+                        pedidos::Criacao::Novo(id) => {
+                            format!("pedido #{id} guardado para o usuário")
+                        }
+                        pedidos::Criacao::Duplicado(id) => {
+                            format!("a mesma pergunta já está pendente (pedido #{id}); nada novo")
+                        }
+                    },
+                ))
+            }
             Acao::Delegar {
                 nivel,
                 tarefa,
@@ -604,6 +651,8 @@ Ações possíveis em \"acoes\":\n\
 - {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
 - {{\"tipo\": \"consultar_skill\", \"nome\": \"...\", \"referencia\": \"(opcional)\", \"motivo\": \"...\"}}\n\
   (o texto completo da skill chega como evento no ciclo seguinte, logo depois deste)\n\
+- {{\"tipo\": \"pedir_ao_usuario\", \"pergunta\": \"...\", \"contexto\": \"...\", \"urgencia\": \"baixa|normal|alta\", \"goal_id\": N}}\n\
+  (guarda a pergunta para o dono responder quando puder; a resposta chega como evento)\n\
 - {{\"tipo\": \"aguardar\", \"motivo\": \"...\"}}\n\n\
 Em CADA ação, inclua também \"expectativa\": o que você espera que aconteça \
 (o kernel anota no diário e depois compara com o resultado observado).\n\n\
@@ -902,6 +951,7 @@ mod testes {
             Acao::Delegar { .. } => "delegar",
             Acao::CancelarSubagente { .. } => "cancelar_subagente",
             Acao::ConsultarSkill { .. } => "consultar_skill",
+            Acao::PedirAoUsuario { .. } => "pedir_ao_usuario",
             Acao::Aguardar { .. } => "aguardar",
         }
     }
@@ -911,7 +961,7 @@ mod testes {
         for nome in NOMES_ACOES {
             let acao: Acao = serde_json::from_value(serde_json::json!({
                 "tipo": nome, "goal_id": 1, "para": "executando", "motivo": "m",
-                "nivel": "low", "tarefa": "t", "id": 1, "nome": "s"
+                "nivel": "low", "tarefa": "t", "id": 1, "nome": "s", "pergunta": "p"
             }))
             .unwrap_or_else(|e| panic!("ação '{nome}' não existe: {e}"));
             assert_eq!(nome_da_acao(&acao), nome);

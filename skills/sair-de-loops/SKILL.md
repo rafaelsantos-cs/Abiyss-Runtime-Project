@@ -33,6 +33,7 @@ Responda, em uma frase cada:
 | falta de capacidade | subir um nível (`low` → `medium` → `ultra`) |
 | tarefa grande demais | dividir: delegar um passo menor, com critério próprio |
 | fora do alcance | `bloqueado` com o motivo exato do que destrava |
+| só o dono sabe ou decide | pergunte (veja a skill `pedir-ao-usuario`) e bloqueie até a resposta |
 | o goal não faz mais sentido | `abandonado`, explicando por quê |
 
 Mude UMA coisa por vez e diga na `expectativa` o que vai mostrar que
@@ -51,5 +52,6 @@ hora de o usuário decidir.
 - `delegar`: com outra abordagem, outro nível ou um passo menor.
 - `cancelar_subagente`: o sub-agente atual está seguindo o caminho errado.
 - `transicionar_goal`: para `bloqueado` ou `abandonado`, sempre com motivo.
+- `pedir_ao_usuario`: quando só o dono destrava (decisão, acesso, preferência).
 - `consultar_skill`: `delegar-bem`, para reescrever a delegação.
 - `aguardar`: só quando algo externo vai mudar a situação sozinho.

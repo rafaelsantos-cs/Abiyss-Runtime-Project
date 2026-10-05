@@ -362,6 +362,11 @@ impl Daemon {
         if let Err(e) = gravar_estado(&self.banco, CHAVE_SINAL_DE_VIDA, &agora.to_string()) {
             tracing::warn!("não consegui gravar o sinal de vida: {e:#}");
         }
+        match crate::pedidos::expirar_vencidos(&self.banco, &self.config.pedidos, agora) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("{n} pedido(s) ao usuário expiraram sem resposta"),
+            Err(e) => tracing::warn!("falha ao expirar pedidos: {e:#}"),
+        }
     }
 
     /// Retenção + vacuum, fora das threads do tokio (pode demorar no

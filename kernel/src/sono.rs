@@ -1615,6 +1615,21 @@ impl Sono {
             .await;
         self.fase(id, "externo")?;
 
+        // As perguntas da passada interna viram pedidos ao usuário.
+        for pergunta in &r.perguntas {
+            let novo = crate::pedidos::NovoPedido {
+                origem: "sono".into(),
+                goal_id: None,
+                pergunta: pergunta.clone(),
+                contexto: format!("pergunta do sono (revisão de {dia_texto})"),
+                urgencia: crate::pedidos::Urgencia::Baixa,
+                origem_externa: None,
+            };
+            if let Err(e) = crate::pedidos::criar(&self.banco, &self.config.pedidos, &novo) {
+                tracing::debug!("pergunta do sono não virou pedido: {e:#}");
+            }
+        }
+
         // Fase 4: aplicar com as regras de sempre.
         match memoria.sleep() {
             Ok(rel) => r.decisoes.decisoes.extend(rel.decisoes),

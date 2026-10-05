@@ -289,6 +289,29 @@ const MIGRACOES: &[&str] = &[
     r#"
     ALTER TABLE ciclos ADD COLUMN impressao TEXT;
     "#,
+    // 13 (E9) — pedidos ao usuário (caixa de entrada assíncrona). A mesma
+    // pergunta pendente não duplica (`chave` normalizada, única entre os
+    // pendentes).
+    r#"
+    CREATE TABLE pedidos_usuario (
+        id               INTEGER PRIMARY KEY,
+        criado_ms        INTEGER NOT NULL,
+        origem           TEXT    NOT NULL,
+        goal_id          INTEGER,
+        pergunta         TEXT    NOT NULL,
+        contexto         TEXT    NOT NULL DEFAULT '',
+        urgencia         TEXT    NOT NULL,
+        estado           TEXT    NOT NULL,
+        resposta         TEXT,
+        respondido_ms    INTEGER,
+        origem_externa   TEXT,
+        resposta_externa TEXT,
+        chave            TEXT    NOT NULL
+    );
+    CREATE INDEX idx_pedidos_estado ON pedidos_usuario(estado, id);
+    CREATE UNIQUE INDEX idx_pedidos_chave_pendente
+        ON pedidos_usuario(chave) WHERE estado = 'pendente';
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

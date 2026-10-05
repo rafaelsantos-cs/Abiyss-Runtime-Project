@@ -186,6 +186,9 @@ fn continuidade(banco: &Banco, agora: i64) -> anyhow::Result<Vec<String>> {
             formatar_duracao(agora - s.fim_ms.unwrap_or(s.inicio_ms))
         ));
     }
+    if let Some(p) = crate::pedidos::resumo(banco, agora)? {
+        linhas.push(p);
+    }
     Ok(linhas)
 }
 
