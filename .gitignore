@@ -1,11 +1,36 @@
-__pycache__/
-.pytest_cache/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
+# --- Rust ---
+target/
+
+# --- Segredos (nunca entram em commit) ---
 .env
-.coverage
-htmlcov/
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# --- Dados locais do Abiyss (gerados em tempo de execução) ---
+data/
+workspace/
+logs/
+# Memória pessoal: cofre do Obsidian (notas sobre pessoas, diário...),
+# memória central e o rascunho de núcleo gerado pela importação do Hermes.
+/cofre/
+identity/memoria-central.md
+identity/nucleo.proposto.md
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Editor / SO ---
+.idea/
+.vscode/
+*.swp
+.DS_Store

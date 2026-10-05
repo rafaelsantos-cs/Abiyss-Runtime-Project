@@ -1,0 +1,7 @@
+# Configuração do Hermes (não é importada: só aparece como "não mapeado").
+model:
+  provider: nvidia
+  default: z-ai/glm-5.3
+memory:
+  memory_enabled: true
+  user_profile_enabled: true

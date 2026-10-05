@@ -1,0 +1,13 @@
+# Workspace Cargo do Abiyss.
+#
+# O kernel (parte que o Abiyss NÃO pode modificar) fica em `kernel/`.
+# Os recursos editáveis (servidores MCP em Python) ficam em `recursos/`.
+[workspace]
+members = ["kernel"]
+resolver = "3"
+
+[profile.release]
+# Binário menor e um pouco mais rápido para a VM.
+lto = "thin"
+codegen-units = 4
+strip = "symbols"

@@ -1,0 +1,6 @@
+{"id": "j-0001", "ts": "2026-09-28T09:14:02-03:00", "action": "Ler a documentação do qmd", "expectation": "Entender como indexar o cofre", "signals": ["README menciona collections", "existe modo MCP"], "risk": "baixo", "confidence": 0.8, "outcome": "Entendi collections e o modo HTTP", "goal": "g-001"}
+{"id": "j-0002", "timestamp": 1759150800, "acao": "Rodar backup do cofre", "expectativa": "Backup completo em menos de 1 minuto", "sinais": "disco com 40% livre", "risco": "médio", "confianca": 65, "mood": "focado", "tags": ["infra", "backup"]}
+{"id": "j-0003", "ts": "2026-09-30 22:05:00", "action": "Propor goal de ajudar o usuário com Rust", "expectation": "O usuário aceita", "confidence": "alta", "goal": "g-002"}
+isto não é JSON
+{"id": "j-0004", "ts": "2026-10-01T08:00:00Z", "decision": "Adiar a limpeza de logs", "expected": "Nada quebra até sexta", "risk": 0.2, "outcome": null, "context": {"disk": "38%"}}
+{"ts": "2026-10-02", "action": "Revisar o diário da semana", "expectation": "Achar dois padrões de erro"}

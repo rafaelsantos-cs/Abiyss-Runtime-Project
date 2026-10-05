@@ -1,0 +1,14 @@
+{
+  "id": "g-001",
+  "title": "Migrar do Hermes para o runtime em Rust",
+  "description": "Levar memória, diário e goals sem perder quem eu sou.",
+  "success_criteria": "Abiyss rodando no runtime novo com a memória importada e revisada.",
+  "status": "active",
+  "priority": "alta",
+  "created_at": "2026-09-28T10:00:00-03:00",
+  "history": [
+    {"status": "proposed", "at": "2026-09-28"},
+    {"status": "active", "at": "2026-09-29"}
+  ],
+  "owner": "abiyss"
+}

@@ -1,0 +1,238 @@
+# Configuração do Abiyss (sem segredos — as chaves ficam no .env).
+#
+# Caminhos relativos são resolvidos a partir da pasta deste arquivo.
+# Itens marcados "A CONFIRMAR" não puderam ser verificados na documentação
+# oficial durante o desenvolvimento e precisam ser testados na VM com o
+# NIM real (`abiyss testar-nim --modelo ...`).
+
+[nim]
+# Endpoint OpenAI-compatível do NVIDIA NIM hospedado.
+base_url = "https://integrate.api.nvidia.com/v1"
+# Segundos SEM receber nenhum byte antes de desistir (raciocínio longo demora).
+timeout_leitura_segundos = 600
+timeout_conexao_segundos = 15
+
+# ---------------------------------------------------------------------------
+# Modelos. `extra` é copiado como está para o corpo da requisição.
+# ---------------------------------------------------------------------------
+
+[modelos.cerebro]
+# GLM 5.3 — A CONFIRMAR o ID exato no catálogo do NIM (build.nvidia.com).
+id = "z-ai/glm-5.3"
+max_tokens = 32768
+# Modo de raciocínio. Formato usado pelo NIM para a família GLM segundo
+# fontes de terceiros — A CONFIRMAR. Se o modelo aceitar um nível de esforço
+# (ex.: reasoning_effort = "max"), acrescente aqui.
+extra = { chat_template_kwargs = { enable_thinking = true, clear_thinking = false } }
+
+[modelos.sub_ultra]
+# Kimi K3 — PLACEHOLDER: ID não encontrado; confirme no catálogo.
+id = "moonshotai/kimi-k3"
+max_tokens = 16384
+
+[modelos.sub_medium]
+# GLM 5.3 Flash — A CONFIRMAR o ID exato.
+id = "z-ai/glm-5.3-flash"
+max_tokens = 8192
+
+[modelos.sub_low]
+# Nemotron 120b — A CONFIRMAR o ID exato.
+id = "nvidia/nemotron-3-super-120b-a12b"
+max_tokens = 8192
+
+# ---------------------------------------------------------------------------
+# Pools de chamadas. Cada pool tem a SUA chave (nome da variável no .env)
+# e o SEU limite; um pool nunca usa a capacidade do outro.
+#
+# ATENÇÃO: ainda não está confirmado se o limite do NIM (40 req/min) é por
+# CHAVE ou por CONTA. Relatos no fórum da NVIDIA indicam que é por conta.
+# Se as duas chaves forem da mesma conta, divida o limite entre os pools
+# (ex.: 25 + 15) para não tomar 429.
+# ---------------------------------------------------------------------------
+
+[pools.cerebro]
+api_key_env = "NIM_API_KEY_CEREBRO"
+requisicoes_por_minuto = 40
+# 1 = sem rajadas: no máximo uma requisição a cada 60/40 = 1,5 s.
+rajada = 1
+# Fatia reservada para conversa com o usuário: o trabalho autônomo do
+# daemon usa no máximo 40 - 10 = 30 req/min.
+reserva_conversa_por_minuto = 10
+
+[pools.cerebro.retentativas]
+max_tentativas = 5
+backoff_inicial_ms = 2000
+backoff_maximo_ms = 60000
+
+[pools.subagentes]
+api_key_env = "NIM_API_KEY_SUBAGENTES"
+requisicoes_por_minuto = 40
+rajada = 1
+
+# Fila com prioridade Ultra > Medium > Low; máximo de chamadas simultâneas por nível.
+[pools.subagentes.concorrencia]
+ultra = 1
+medium = 2
+low = 3
+
+[pools.subagentes.retentativas]
+max_tentativas = 5
+backoff_inicial_ms = 2000
+backoff_maximo_ms = 60000
+
+# ---------------------------------------------------------------------------
+# Caminhos (relativos a esta pasta).
+# ---------------------------------------------------------------------------
+
+[caminhos]
+# Dados locais; o banco SQLite fica em <dados>/abiyss.db.
+dados = "data"
+# Núcleo de identidade injetado no system prompt (o Abiyss não pode editá-lo).
+identidade = "identity/nucleo.md"
+# ÚNICA pasta onde as ferramentas de arquivo leem e escrevem. O kernel
+# recusa iniciar se ela contiver kernel/, identity/, recursos/, data/,
+# .env, .git, skills/ ou o abiyss.toml.
+workspace = "workspace"
+# Skills: cada subpasta com um SKILL.md (frontmatter `name` + `description`).
+# Só nome e descrição vão para o system prompt; o texto completo é lido
+# pela ferramenta `ler_skill`. Só leitura para o Abiyss. Pode apontar para
+# uma pasta de skills do Hermes (pastas de categoria são aceitas).
+skills = "skills"
+
+# ---------------------------------------------------------------------------
+# Conversa (`abiyss chat`).
+# ---------------------------------------------------------------------------
+
+[chat]
+# Quantas mensagens anteriores entram no contexto a cada turno.
+historico_max_mensagens = 40
+# Máximo de rodadas modelo → ferramenta → modelo por mensagem do usuário.
+max_rodadas_ferramentas = 8
+
+# ---------------------------------------------------------------------------
+# Ferramentas nativas de arquivo (ler/listar/escrever dentro do workspace).
+# ---------------------------------------------------------------------------
+
+[ferramentas]
+max_bytes_leitura = 200000
+max_bytes_escrita = 1000000
+max_itens_listagem = 500
+
+# ---------------------------------------------------------------------------
+# Memória de longo prazo: um cofre do Obsidian com dois escopos.
+#   01_internal/  pessoas, preferências, auto-modelo, diário, procedimentos
+#   02_external/  mapa de fontes (links canônicos, nível de navegador,
+#                 revalidar_apos, resumos sempre datados)
+# O modelo só PROPÕE (memoria_propor); `abiyss sleep` aplica ou rejeita.
+# Conteúdo vindo de ferramentas/web nunca entra em 01_internal (regra do kernel).
+# ---------------------------------------------------------------------------
+
+[memoria]
+# Pasta do cofre (fora do git: tem dados pessoais). Na VM, pode apontar
+# para um cofre do Obsidian que já existe.
+cofre = "cofre"
+max_resultados = 8
+max_bytes_nota = 200000
+max_bytes_proposta = 20000
+# Memória central: arquivo PEQUENO injetado no system prompt em todo turno
+# (conversa e heartbeat), ao lado do núcleo. Entradas separadas por "§",
+# cada uma marcada [dito] ou [deduzido]. Fora do git (dados pessoais).
+central = "identity/memoria-central.md"
+# Orçamento em caracteres. Escrita que passaria do limite é RECUSADA e
+# relatada (nunca cortada). O Hermes usava ~2200 (MEMORY.md) + ~1375 (USER.md).
+limite_central_caracteres = 4000
+
+# Busca: o qmd (servidor MCP HTTP, em [[mcp.servidores]] abaixo) é o motor de
+# memoria_buscar quando está no ar; senão, busca por texto simples no cofre.
+[memoria.qmd]
+# Nome do servidor qmd em [[mcp.servidores]]. Vazio = nunca usar o qmd.
+servidor = "qmd"
+# Ferramenta de busca. Vazio = a primeira que existir entre search,
+# qmd_search, query, qmd_query, vsearch, qmd_vsearch — A CONFIRMAR na VM
+# (`abiyss ferramentas` com expor = true mostra os nomes).
+ferramenta = ""
+# Coleções do qmd que indexam cada escopo (opcional, recomendado):
+#   qmd collection add <cofre>/01_internal --name abiyss-interno
+#   qmd collection add <cofre>/02_external --name abiyss-externo
+# Vazias = uma busca só, e o kernel separa os escopos pelo caminho.
+colecao_interna = ""
+colecao_externa = ""
+
+# ---------------------------------------------------------------------------
+# Daemon (`abiyss daemon`): heartbeat e crons.
+# ---------------------------------------------------------------------------
+
+[daemon]
+# Intervalo entre ciclos de heartbeat. Cada ciclo faz no máximo UMA chamada
+# ao modelo — e nenhuma se não houver novidade.
+heartbeat_segundos = 300
+# Verificação de crons (código puro, não chama o modelo).
+cron_verificacao_segundos = 30
+# Sem eventos novos e sem mudança no goal em foco, o modelo só é chamado de
+# novo depois deste tempo.
+revisao_minima_segundos = 1800
+# Máximo de eventos da fila colocados no contexto de um ciclo.
+max_eventos_por_ciclo = 20
+
+# ---------------------------------------------------------------------------
+# Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
+# ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
+# (delegar/status/cancelar não são dadas a eles, independente desta lista).
+# ---------------------------------------------------------------------------
+
+[subagentes]
+# Intervalo para procurar pedidos feitos por outros processos (ex.: chat).
+verificacao_segundos = 5
+# Máximo de sub-agentes vivos ao mesmo tempo (todos os níveis).
+max_simultaneos = 4
+
+[subagentes.ultra]
+max_tokens = 200000
+max_segundos = 1800
+max_rodadas = 20
+ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+
+[subagentes.medium]
+max_tokens = 100000
+max_segundos = 900
+max_rodadas = 12
+ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+
+[subagentes.low]
+max_tokens = 50000
+max_segundos = 600
+max_rodadas = 8
+ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
+
+# ---------------------------------------------------------------------------
+# Servidores MCP. Dois tipos:
+# - processo filho (stdio): `comando` + `args` (recursos em Python, em
+#   recursos/). Recebem um ambiente limpo: as chaves do NIM NÃO são repassadas.
+# - HTTP "streamable": `url` de um servidor que já está rodando (ex.: qmd).
+#   Token, se precisar, só por variável de ambiente: `token_env = "NOME"`.
+# As ferramentas aparecem como <nome>__<ferramenta>; `expor = false` esconde
+# do modelo (só o kernel usa).
+# ---------------------------------------------------------------------------
+
+[mcp]
+# Na primeira execução o uv pode precisar baixar dependências.
+timeout_inicio_segundos = 120
+
+[[mcp.servidores]]
+nome = "exemplo"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "servidor.py"]
+diretorio = "recursos/mcp/exemplo"
+timeout_segundos = 60
+ativo = true
+
+[[mcp.servidores]]
+# qmd: busca em Markdown (BM25/vetores) sobre o cofre. Já roda na VM; o
+# kernel só conecta. Fora do ar = memoria_buscar usa busca por texto.
+# A CONFIRMAR: o caminho /mcp do endpoint HTTP do qmd.
+nome = "qmd"
+url = "http://localhost:8181/mcp"
+timeout_segundos = 30
+# Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
+expor = false
+ativo = true

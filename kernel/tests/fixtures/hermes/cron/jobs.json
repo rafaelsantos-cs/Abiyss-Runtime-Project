@@ -1,0 +1,1 @@
+[{"name": "rss-diario", "schedule": "0 7 * * *", "script": "rss.sh"}]
