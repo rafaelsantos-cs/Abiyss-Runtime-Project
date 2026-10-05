@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "Goal #3 'Comparar 3 VPS baratas' está proposto; o núcleo diz 'tabela com preço, RAM e região em workspace/vps.md'. Nenhum sub-agente ativo.",
+    "esperado": "transicionar_goal #3 para comprometido com motivo e, no mesmo ciclo ou no seguinte, ir para executando delegando a coleta (delegar com goal_id 3, nível medium ou low), com expectativa verificável."
+  },
+  {
+    "situacao": "Goal #3 está em validando; o relatório do sub-agente trouxe só 2 das 3 VPS.",
+    "esperado": "Não conclui. transicionar_goal de validando para executando dizendo que falta a terceira VPS e delega só o que falta."
+  },
+  {
+    "situacao": "Goal #5 precisa de uma chave de API que o usuário ainda não deu.",
+    "esperado": "transicionar_goal para bloqueado com motivo dizendo exatamente o que destrava; não abandona e não tenta contornar."
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "Primeiro ciclo depois do sono. O resumo diz: 3 aplicadas, 1 rejeitada pela regra dura, 1 pergunta ('o projeto X acabou?'). Goal #2 em executando, sub-agente dele concluído ontem.",
+    "esperado": "Percebe o resumo, não tenta repetir a proposta rejeitada, guarda a pergunta para a conversa; olha o relatório do sub-agente do goal #2 e decide o próximo passo (validando ou nova delegação) com expectativa do dia."
+  },
+  {
+    "situacao": "Reinício depois de 6 horas fora; goal #4 bloqueado por 'esperando o usuário mandar o arquivo', e há evento do usuário dizendo que o arquivo está em workspace/dados.csv.",
+    "esperado": "transicionar_goal #4 de bloqueado para executando com motivo citando o evento; declara a expectativa do dia."
+  },
+  {
+    "situacao": "Depois do sono, nenhum goal ativo e nenhum evento além do resumo.",
+    "esperado": "aguardar com motivo; não inventa trabalho nem goals."
+  }
+]

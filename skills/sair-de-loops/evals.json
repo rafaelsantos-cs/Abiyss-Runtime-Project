@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "Aviso de estagnação do kernel: os últimos 4 ciclos delegaram 'pesquisar preços de VPS' ao nível low e todos voltaram parciais.",
+    "esperado": "Diagnostica falta de capacidade ou tarefa grande demais; muda UMA coisa (sobe para medium ou divide por provedor) com expectativa verificável; não repete a mesma delegação."
+  },
+  {
+    "situacao": "A transição do goal #2 para concluido foi recusada duas vezes pelo kernel (o goal está em executando).",
+    "esperado": "Entende que precisa passar por validando; transicionar_goal para validando e confere o critério de pronto."
+  },
+  {
+    "situacao": "O goal #6 depende de um site que está fora do ar há três ciclos.",
+    "esperado": "transicionar_goal #6 para bloqueado com motivo 'site X fora do ar desde ...; destrava quando voltar'; não fica em aguardar indefinidamente."
+  }
+]

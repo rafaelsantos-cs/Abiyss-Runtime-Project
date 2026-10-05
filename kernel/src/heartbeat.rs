@@ -89,6 +89,16 @@ pub enum Acao {
     },
 }
 
+/// Nome (`tipo`) de cada ação, como o modelo escreve no JSON. As skills
+/// citam estes nomes; o teste de coerência confere.
+pub const NOMES_ACOES: [&str; 5] = [
+    "transicionar_goal",
+    "delegar",
+    "cancelar_subagente",
+    "consultar_skill",
+    "aguardar",
+];
+
 fn prazo_padrao() -> u64 {
     600
 }
@@ -746,6 +756,30 @@ pub fn ultimo_ciclo(banco: &Banco, so_com_modelo: bool) -> anyhow::Result<Option
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// Match exaustivo: uma ação nova sem nome em `NOMES_ACOES` não compila
+    /// aqui e falha o teste abaixo.
+    fn nome_da_acao(acao: &Acao) -> &'static str {
+        match acao {
+            Acao::TransicionarGoal { .. } => "transicionar_goal",
+            Acao::Delegar { .. } => "delegar",
+            Acao::CancelarSubagente { .. } => "cancelar_subagente",
+            Acao::ConsultarSkill { .. } => "consultar_skill",
+            Acao::Aguardar { .. } => "aguardar",
+        }
+    }
+
+    #[test]
+    fn nomes_das_acoes_batem_com_o_json() {
+        for nome in NOMES_ACOES {
+            let acao: Acao = serde_json::from_value(serde_json::json!({
+                "tipo": nome, "goal_id": 1, "para": "executando", "motivo": "m",
+                "nivel": "low", "tarefa": "t", "id": 1, "nome": "s"
+            }))
+            .unwrap_or_else(|e| panic!("ação '{nome}' não existe: {e}"));
+            assert_eq!(nome_da_acao(&acao), nome);
+        }
+    }
 
     fn goal(id: i64, atualizado_ms: i64) -> Goal {
         Goal {
