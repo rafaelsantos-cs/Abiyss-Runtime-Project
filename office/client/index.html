@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Abiyss Office</title>
+  <link rel="stylesheet" href="/client/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="viewport"></div>
+
+  <div id="loading" class="loading">
+    <div class="loading-card">
+      <div class="logo-mark"></div>
+      <div class="loading-title">Abiyss Office</div>
+      <div id="loading-text" class="loading-text">conectando à simulação…</div>
+    </div>
+  </div>
+
+  <header id="hud" class="hud" hidden>
+    <div class="hud-card hud-main">
+      <div class="hud-title"><span class="logo-dot"></span>Abiyss Office <span id="hud-source" class="tag"></span></div>
+      <div class="hud-row">
+        <span id="hud-time" class="hud-time">--:--</span>
+        <span id="hud-date" class="muted"></span>
+      </div>
+      <div class="hud-row">
+        <span id="hud-weather-icon" class="wx-icon"></span>
+        <span id="hud-weather" class="muted">clima…</span>
+      </div>
+      <div class="hud-row chips">
+        <span id="hud-daemon" class="chip">daemon</span>
+        <span id="hud-fase" class="chip">fase</span>
+        <span id="hud-conn" class="chip"><span class="dot"></span><span>conectando</span></span>
+      </div>
+    </div>
+    <div id="hud-focus" class="hud-card hud-focus" hidden></div>
+  </header>
+
+  <nav id="controls" class="controls" hidden>
+    <div class="btn-group" role="group" aria-label="Câmera">
+      <button data-preset="overview" title="Visão geral (1)">Geral</button>
+      <button data-preset="abiyss" title="Sala do Abiyss (2)">Abiyss</button>
+      <button data-preset="desks" title="Mesas (3)">Mesas</button>
+      <button data-preset="lounge" title="Descanso (4)">Descanso</button>
+      <button data-preset="top" title="Planta (5)">Planta</button>
+      <button id="btn-follow" title="Seguir entidade (F)">Seguir</button>
+    </div>
+    <div class="btn-group">
+      <button id="btn-labels" class="on" title="Rótulos (L)">Rótulos</button>
+      <button id="btn-legend" title="Legenda (?)">Legenda</button>
+      <button id="btn-debug" title="Debug (D)">Debug</button>
+    </div>
+  </nav>
+
+  <aside id="legend" class="panel legend" hidden></aside>
+  <aside id="debug" class="panel debug" hidden></aside>
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="/client/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8090,
+    "broadcastHz": 10
+  },
+  "simulation": {
+    "tickHz": 10,
+    "seed": 20260927,
+    "timeScale": 1,
+    "persistIntervalSec": 15,
+    "stateFile": "data/office-state.json"
+  },
+  "source": {
+    "mode": "auto",
+    "pollIntervalMs": 1000,
+    "runtime": {
+      "db": "../data/abiyss.db",
+      "config": "../abiyss.toml",
+      "cronVerificacaoSegundos": 30,
+      "recentFinishedMinutes": 10
+    },
+    "demo": {
+      "seed": 7
+    }
+  },
+  "ritmo": {
+    "horasAtivas": "07:00-23:00"
+  },
+  "location": {
+    "name": "Contagem, MG",
+    "latitude": -19.9317,
+    "longitude": -44.0536,
+    "timezone": "America/Sao_Paulo"
+  },
+  "weather": {
+    "provider": "open-meteo",
+    "refreshMinutes": 10,
+    "timeoutMs": 8000,
+    "cacheFile": "data/weather-cache.json",
+    "override": null
+  },
+  "clock": {
+    "start": null
+  },
+  "log": {
+    "level": "info",
+    "file": null
+  },
+  "privacy": {
+    "showTaskText": true,
+    "maxTaskChars": 90
+  }
+}

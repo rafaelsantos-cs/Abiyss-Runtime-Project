@@ -1,0 +1,259 @@
+{
+ "when": "2026-10-05T16:33:00.440Z",
+ "runtimeBinary": "/tmp/claude-0/-home-user-Abiyss-Runtime-Project/fdf7413a-a281-51d7-a60b-b87125b07320/scratchpad/runtime/target/release/abiyss",
+ "results": [
+  {
+   "name": "lê o banco real do runtime",
+   "ok": true,
+   "detail": "migração 10"
+  },
+  {
+   "name": "daemon real aparece como rodando",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "IMMo trabalha num sub-agente real",
+   "ok": true,
+   "detail": "immo-2 ↔ subagentes.id=2 (ultra, banco: executando)"
+  },
+  {
+   "name": "IMMo trabalha na própria mesa",
+   "ok": true,
+   "detail": "desk-2"
+  },
+  {
+   "name": "relatório só depois do fim no banco",
+   "ok": true,
+   "detail": "subagentes.id=1 → concluido"
+  },
+  {
+   "name": "ciclos reais do heartbeat viram \"pensando\"",
+   "ok": true,
+   "detail": "2 ciclo(s) com chamada ao modelo no banco"
+  },
+  {
+   "name": "PID do daemon conhecido",
+   "ok": true,
+   "detail": "8365"
+  },
+  {
+   "name": "daemon parado → Abiyss desliga",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "nenhuma invariante violada",
+   "ok": true,
+   "detail": "{\"v\":0,\"r\":0,\"stuck\":0}"
+  },
+  {
+   "name": "banco do runtime não foi escrito pelo escritório",
+   "ok": true,
+   "detail": "conexão somente leitura"
+  }
+ ],
+ "journal": [
+  {
+   "seq": 23,
+   "simMs": 32100,
+   "wallMs": 1791217958871,
+   "level": "info",
+   "text": "IMMo-3 assumiu o sub-agente #5 (medium): Resumir o changelog do qmd"
+  },
+  {
+   "seq": 24,
+   "simMs": 33300,
+   "wallMs": 1791217960078,
+   "level": "info",
+   "text": "IMMo-1 entregou o relatório do sub-agente #1: concluido (concluido, confiança 80%)"
+  },
+  {
+   "seq": 25,
+   "simMs": 38000,
+   "wallMs": 1791217964890,
+   "level": "info",
+   "text": "Abiyss delegou o sub-agente #6 (low) → IMMo-1"
+  },
+  {
+   "seq": 26,
+   "simMs": 38000,
+   "wallMs": 1791217964890,
+   "level": "info",
+   "text": "heartbeat #2: 1 evento(s) novo(s) na fila → ok: sub-agente 6 (low) delegado"
+  },
+  {
+   "seq": 27,
+   "simMs": 38100,
+   "wallMs": 1791217964890,
+   "level": "info",
+   "text": "IMMo-1 assumiu o sub-agente #6 (low): tarefa de resistência 4"
+  },
+  {
+   "seq": 28,
+   "simMs": 40000,
+   "wallMs": 1791217966890,
+   "level": "info",
+   "text": "Abiyss delegou o sub-agente #7 (low) → IMMo-2"
+  },
+  {
+   "seq": 29,
+   "simMs": 40100,
+   "wallMs": 1791217966890,
+   "level": "info",
+   "text": "IMMo-2 assumiu o sub-agente #7 (low): Resumir o changelog do qmd"
+  },
+  {
+   "seq": 30,
+   "simMs": 40100,
+   "wallMs": 1791217966891,
+   "level": "info",
+   "text": "IMMo-4 terminou o sub-agente #4: concluido"
+  },
+  {
+   "seq": 31,
+   "simMs": 45000,
+   "wallMs": 1791217971935,
+   "level": "warn",
+   "text": "daemon do runtime: rodando → parado"
+  },
+  {
+   "seq": 32,
+   "simMs": 45100,
+   "wallMs": 1791217971935,
+   "level": "info",
+   "text": "Abiyss desligado (daemon do runtime parado ou inacessível)"
+  },
+  {
+   "seq": 33,
+   "simMs": 45100,
+   "wallMs": 1791217971935,
+   "level": "info",
+   "text": "IMMo-1 terminou o sub-agente #6: falhou"
+  },
+  {
+   "seq": 34,
+   "simMs": 45100,
+   "wallMs": 1791217971935,
+   "level": "info",
+   "text": "IMMo-2 terminou o sub-agente #7: falhou"
+  },
+  {
+   "seq": 35,
+   "simMs": 45100,
+   "wallMs": 1791217971935,
+   "level": "info",
+   "text": "IMMo-3 terminou o sub-agente #5: falhou"
+  },
+  {
+   "seq": 36,
+   "simMs": 53600,
+   "wallMs": 1791217980366,
+   "level": "info",
+   "text": "IMMo-4 entregou o relatório do sub-agente #4: concluido (concluido, confiança 80%)"
+  }
+ ],
+ "runtime": {
+  "source": "runtime-sqlite",
+  "ok": true,
+  "error": null,
+  "capturedAtMs": 1791217979866,
+  "runtimeSchemaVersion": 10,
+  "daemon": "parado",
+  "fase": "vigília",
+  "horasAtivas": "07:00-23:00",
+  "sono": false,
+  "subagentes": {
+   "pendente": 1,
+   "falhou": 3,
+   "concluido": 4
+  },
+  "goalFoco": {
+   "id": 1,
+   "titulo": "Migrar a memória do Hermes",
+   "estado": "executando"
+  },
+  "goals": [
+   {
+    "id": 1,
+    "titulo": "Migrar a memória do Hermes",
+    "estado": "executando",
+    "prioridade": 2
+   },
+   {
+    "id": 2,
+    "titulo": "Calibrar o orçamento diário",
+    "estado": "proposto",
+    "prioridade": 1
+   }
+  ],
+  "goalsContagem": {
+   "executando": 1,
+   "proposto": 1
+  },
+  "eventosPendentes": 6,
+  "eventosRecentes": [
+   {
+    "id": 7,
+    "momentoMs": 1791217971333,
+    "tipo": "subagente",
+    "origem": "7",
+    "consumido": false
+   },
+   {
+    "id": 6,
+    "momentoMs": 1791217971331,
+    "tipo": "subagente",
+    "origem": "6",
+    "consumido": false
+   },
+   {
+    "id": 5,
+    "momentoMs": 1791217971325,
+    "tipo": "subagente",
+    "origem": "5",
+    "consumido": false
+   },
+   {
+    "id": 4,
+    "momentoMs": 1791217966581,
+    "tipo": "subagente",
+    "origem": "4",
+    "consumido": false
+   },
+   {
+    "id": 3,
+    "momentoMs": 1791217956589,
+    "tipo": "subagente",
+    "origem": "3",
+    "consumido": false
+   },
+   {
+    "id": 2,
+    "momentoMs": 1791217951569,
+    "tipo": "subagente",
+    "origem": "2",
+    "consumido": false
+   }
+  ],
+  "ultimoCiclo": {
+   "id": 2,
+   "fimMs": 1791217964603,
+   "chamouModelo": true,
+   "motivo": "1 evento(s) novo(s) na fila",
+   "erro": null
+  },
+  "conversaMs": null,
+  "status": {
+   "source": "runtime-sqlite",
+   "db": "/tmp/abiyss-office-it-x1ytwg/data/abiyss.db",
+   "connected": true,
+   "lastError": null,
+   "lastOkMs": 1791217979866,
+   "polls": 54,
+   "failures": 0,
+   "schemaVersion": 10
+  },
+  "overflow": []
+ }
+}

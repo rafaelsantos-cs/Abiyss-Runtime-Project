@@ -1,0 +1,26 @@
+{
+  "name": "abiyss-office",
+  "version": "0.1.0",
+  "description": "Abiyss Office: frontend 3D (simulação autoritativa + cliente web) do runtime multi-agente do Abiyss.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/main.js",
+    "demo": "node --disable-warning=ExperimentalWarning server/main.js --source demo --fresh",
+    "runtime": "node --disable-warning=ExperimentalWarning server/main.js --source runtime",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"tests/*.test.js\"",
+    "check": "node scripts/check-syntax.mjs",
+    "soak": "node --disable-warning=ExperimentalWarning scripts/soak.mjs",
+    "screenshots": "node --disable-warning=ExperimentalWarning scripts/screenshots.mjs"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
