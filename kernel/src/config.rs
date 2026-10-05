@@ -42,6 +42,8 @@ pub struct Config {
     pub ritmo: crate::ritmo::ConfigRitmo,
     #[serde(default)]
     pub orcamento: crate::orcamento::ConfigOrcamento,
+    #[serde(default)]
+    pub backup: crate::backup::ConfigBackup,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.

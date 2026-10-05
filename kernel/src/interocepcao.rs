@@ -88,7 +88,7 @@ fn inicio_do_dia_ms() -> i64 {
 }
 
 /// Disco onde está `caminho` (ponto de montagem mais específico).
-fn disco_de(caminho: &Path) -> (f64, f64) {
+pub fn disco_de(caminho: &Path) -> (f64, f64) {
     let caminho = caminho
         .canonicalize()
         .unwrap_or_else(|_| caminho.to_path_buf());

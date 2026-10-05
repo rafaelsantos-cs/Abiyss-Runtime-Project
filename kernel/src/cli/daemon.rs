@@ -69,3 +69,12 @@ pub fn manutencao(config: &Config) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `abiyss backup`: um backup agora.
+pub fn backup(config: &Config) -> anyhow::Result<()> {
+    let hoje = chrono::Local::now().date_naive();
+    let (_, livre) = abiyss::interocepcao::disco_de(&config.resolver(&config.caminhos.dados));
+    let relatorio = abiyss::backup::fazer_backup(config, hoje, livre)?;
+    println!("{}", relatorio.resumo());
+    Ok(())
+}

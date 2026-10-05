@@ -103,6 +103,9 @@ enum Comando {
     /// Roda a manutenção do banco agora (retenção, checkpoint do WAL e
     /// vacuum incremental) — o daemon faz o mesmo periodicamente.
     Manutencao,
+    /// Faz o backup agora (banco, cofre, memória central e núcleo) em
+    /// <dados>/backups/AAAA-MM-DD/. O sono faz isso sozinho toda noite.
+    Backup,
     /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
     /// resolvida a partir do abiyss.toml (não chama o modelo).
     Esforco,
@@ -208,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
             cli::daemon::executar(config, OpcoesDaemon { uma_vez }).await
         }
         Comando::Manutencao => cli::daemon::manutencao(&Config::carregar(&caminho_config)?),
+        Comando::Backup => cli::daemon::backup(&Config::carregar(&caminho_config)?),
         Comando::Esforco => cli::nim::esforco(&Config::carregar(&caminho_config)?),
         Comando::Status { verificar } => {
             cli::daemon::status(&Config::carregar(&caminho_config)?, verificar)

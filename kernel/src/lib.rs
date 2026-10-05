@@ -5,6 +5,7 @@
 //! ferramentas e o loop do daemon. O que o Abiyss poderá editar no futuro
 //! fica fora daqui, em `recursos/` (servidores MCP em Python).
 
+pub mod backup;
 pub mod caminho_seguro;
 pub mod chat;
 pub mod config;

@@ -322,6 +322,24 @@ reserva_sono_chamadas = 12
 fracao_alerta = 0.8
 
 # ---------------------------------------------------------------------------
+# Backup (feito no início de cada sono; `abiyss backup` faz na hora).
+# Vai para <dados>/backups/AAAA-MM-DD/: banco (VACUUM INTO, consistente
+# mesmo com o daemon rodando), cofre, memória central e núcleo. Links
+# simbólicos não são seguidos. Restaurar é manual: veja docs/SONO.md.
+# Para ter cópia FORA da VM, use um timer do systemd com rsync/rclone.
+# ---------------------------------------------------------------------------
+
+[backup]
+ativo = true
+manter_diarios = 7
+# Além dos diários, quantos domingos anteriores guardar.
+manter_semanais = 4
+# Abaixo disto de disco livre, o backup é pulado (com aviso).
+disco_minimo_gb = 2.0
+# Cofre maior que isto não é copiado (o banco ainda é).
+max_megabytes_cofre = 2048
+
+# ---------------------------------------------------------------------------
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
