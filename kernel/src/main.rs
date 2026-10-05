@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use abiyss::config::Config;
 use abiyss::daemon::OpcoesDaemon;
 use abiyss::goals::NovoGoal;
-use cli::nim::QualModelo;
+use cli::nim::{QualModelo, RoteiroMock};
 
 #[derive(Parser)]
 #[command(
@@ -113,6 +113,13 @@ enum Comando {
     MockNim {
         #[arg(long, default_value_t = 8089)]
         porta: u16,
+        /// "eco" repete a mensagem; "resistencia" responde como heartbeat e
+        /// sub-agentes de verdade (usado por tools/resistencia.sh).
+        #[arg(long, value_enum, default_value_t = RoteiroMock::Eco)]
+        roteiro: RoteiroMock,
+        /// Latência de mentira de cada resposta (só no roteiro "resistencia").
+        #[arg(long, default_value_t = 200)]
+        atraso_ms: u64,
     },
 }
 
@@ -197,7 +204,11 @@ async fn main() -> anyhow::Result<()> {
     let caminho_config = Config::caminho_padrao(cli.config.as_deref());
 
     match cli.comando {
-        Comando::MockNim { porta } => cli::nim::rodar_mock(porta).await,
+        Comando::MockNim {
+            porta,
+            roteiro,
+            atraso_ms,
+        } => cli::nim::rodar_mock(porta, roteiro, atraso_ms).await,
         Comando::TestarNim {
             modelo,
             sem_stream,

@@ -23,6 +23,7 @@ comando (`abiyss ...`); não há painel web.
 4. [Comandos da CLI](#comandos-da-cli)
 5. [Daemon com systemd](#daemon-com-systemd)
 6. [Testar sem gastar cota (mock do NIM)](#testar-sem-gastar-cota-mock-do-nim)
+   — inclui o [teste de resistência](#teste-de-resistência-soak)
 7. [Desenvolvimento](#desenvolvimento)
 8. [Regras de segurança](#regras-de-segurança)
 9. [Itens a confirmar](#itens-a-confirmar)
@@ -226,7 +227,9 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss chat --mostrar-raciocinio` | Mostra o raciocínio do modelo em cinza |
 | `abiyss daemon` | Roda o Abiyss 24/7 (heartbeat, crons, sub-agentes) |
 | `abiyss daemon --uma-vez` | Um ciclo de heartbeat (+ sub-agentes pendentes) e sai |
-| `abiyss status` | Estado geral: daemon, identidade, goals, fila, crons, sub-agentes, interocepção |
+| `abiyss status` | Estado geral: daemon, identidade, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` |
+| `abiyss manutencao` | Roda agora a retenção (detalhe antigo → agregado diário), o vacuum incremental e o checkpoint do WAL |
 | `abiyss goal add "Título" --nucleo "essência + critério de pronto" [--descricao ..] [--prioridade N]` | Cria um goal (estado `proposto`) |
 | `abiyss goal list [--todos]` | Lista goals (`*` = em foco) |
 | `abiyss goal show ID` | Detalhes e histórico de transições |
@@ -244,7 +247,7 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss importar-hermes --origem ~/.hermes [--aplicar]` | Importa a memória do Hermes (simulação sem `--aplicar`); veja [`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md) |
 | `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
-| `abiyss mock-nim [--porta 8089]` | NIM de mentira local (veja abaixo) |
+| `abiyss mock-nim [--porta 8089] [--roteiro eco\|resistencia] [--atraso-ms 200]` | NIM de mentira local (veja abaixo) |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
 `escrever_arquivo` (só em `workspace/`), `ler_skill`, `memoria_buscar` /
@@ -433,6 +436,21 @@ atrasos — **nenhum teste usa rede externa nem chaves reais**.
 
 > Use um `data/` separado se não quiser misturar o histórico do mock com o
 > real (ajuste `[caminhos] dados` no `abiyss.mock.toml`).
+
+### Teste de resistência (soak)
+
+[`tools/resistencia.sh`](tools/resistencia.sh) roda o daemon de verdade
+contra o mock (`--roteiro resistencia`: decisões de heartbeat válidas,
+sub-agentes e relatórios), com heartbeat de 2 s, num projeto temporário, e
+grava RSS, threads, descritores e tamanho do banco num CSV:
+
+```bash
+cargo build --release
+tools/resistencia.sh --duracao 600          # 10 min
+```
+
+Resultados, como ler o CSV e como rodar 24–48 h na VM:
+[`docs/RESISTENCIA.md`](docs/RESISTENCIA.md).
 
 ---
 

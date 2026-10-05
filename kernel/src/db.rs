@@ -258,6 +258,10 @@ const MIGRACOES: &[&str] = &[
     "#,
 ];
 
+/// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é
+/// ~2 MB, implícito). O daemon usa `[banco] cache_kib` do abiyss.toml.
+pub const CACHE_PADRAO_KIB: u32 = 2048;
+
 /// Teto do arquivo WAL depois de cada checkpoint (o SQLite trunca o que
 /// passar disto). Sem teto, o WAL fica do tamanho do maior pico.
 const LIMITE_WAL_BYTES: i64 = 64 * 1024 * 1024;
@@ -298,6 +302,7 @@ impl Banco {
         // Se outro processo estiver escrevendo, espera até 5 s em vez de falhar.
         conexao.busy_timeout(Duration::from_secs(5))?;
         conexao.pragma_update(None, "foreign_keys", "ON")?;
+        conexao.pragma_update(None, "cache_size", -(CACHE_PADRAO_KIB as i64))?;
         let banco = Banco {
             conexao: Arc::new(Mutex::new(conexao)),
         };
@@ -330,6 +335,29 @@ impl Banco {
         Ok(())
     }
 
+    /// Muda o teto do cache de páginas desta conexão (KiB). Valor negativo
+    /// no pragma = tamanho em KiB (positivo seria em páginas).
+    pub fn limitar_cache(&self, kib: u32) -> anyhow::Result<()> {
+        self.conexao()
+            .pragma_update(None, "cache_size", -(kib as i64))?;
+        Ok(())
+    }
+
+    /// Teto atual do cache de páginas, em KiB.
+    pub fn cache_kib(&self) -> anyhow::Result<u32> {
+        let valor: i64 = self
+            .conexao()
+            .query_row("PRAGMA cache_size", [], |l| l.get(0))?;
+        // Negativo = KiB; positivo = páginas (convertidas com o tamanho da página).
+        if valor < 0 {
+            return Ok((-valor) as u32);
+        }
+        let pagina: i64 = self
+            .conexao()
+            .query_row("PRAGMA page_size", [], |l| l.get(0))?;
+        Ok((valor * pagina / 1024) as u32)
+    }
+
     /// Versão atual do esquema (número de migrações aplicadas).
     pub fn versao(&self) -> anyhow::Result<usize> {
         let versao: i64 = self
@@ -359,6 +387,14 @@ pub fn total_migracoes() -> usize {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn cache_de_paginas_tem_teto_explicito() {
+        let banco = Banco::em_memoria().unwrap();
+        assert_eq!(banco.cache_kib().unwrap(), CACHE_PADRAO_KIB);
+        banco.limitar_cache(512).unwrap();
+        assert_eq!(banco.cache_kib().unwrap(), 512);
+    }
 
     #[test]
     fn migracoes_aplicam_e_sao_idempotentes() {

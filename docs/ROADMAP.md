@@ -25,6 +25,7 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
 | A2 | Memória num cofre do Obsidian: `01_internal/` (com procedência) e `02_external/` (mapa de fontes); `memoria_buscar`/`ler`/`propor`; fila + `abiyss sleep` mínimo; **regra dura no kernel** (conteúdo externo nunca entra direto em `01_internal`); `abiyss memoria esquecer` |
 | A3 | Memória central com orçamento em caracteres, injetada em todo turno (conversa e heartbeat); acima do limite, recusa e relata |
 | A4 | Ponte MCP também por HTTP ("streamable"); qmd como motor de `memoria_buscar`, com busca por texto quando falta |
+| Infra | Latência por chamada (1º token e total; p50/p95 no `status`); tabela de esforço por modelo (`minimal`…`ultra`, modos raso/profundo — só config/cliente); retenção com agregados diários, checkpoint do WAL e vacuum incremental; limites explícitos em filas/buffers e supervisão dos processos MCP ([`LIMITES.md`](LIMITES.md)); unit do systemd com `Type=notify` + watchdog; teste de resistência ([`RESISTENCIA.md`](RESISTENCIA.md)) |
 | A5 | `abiyss importar-hermes`: simulação por padrão, idempotente, sem abrir segredos; goals, journal, diário pessoal, identidade (+ rascunho de núcleo) e memórias |
 
 ## Antes das próximas fases: validar na VM
@@ -168,8 +169,11 @@ chat). Hoje tudo é CLI (e, depois de B, os canais).
 - A prioridade da fila é por processo; entre processos, só o token bucket é
   compartilhado.
 - O diário registra apenas ações do heartbeat (não as ferramentas do chat).
-- Não há rotação/limpeza das tabelas do SQLite (`chamadas_modelo`, `ciclos`,
-  `propostas_memoria`, `registro_memoria`).
+- A retenção cobre `chamadas_modelo`, `ciclos` e os eventos consumidos de
+  `fila_eventos` (viram agregados diários). `propostas_memoria`,
+  `registro_memoria`, `mensagens` e `diario` continuam crescendo sem limpeza.
+- A tabela de esforço (`abiyss esforco`) ainda não é usada pelo chat, pelo
+  heartbeat nem pelos sub-agentes.
 - Interocepção usa carga média do sistema (não o uso de CPU do processo).
 - Regra dura da memória: a marca de origem externa vale para resultados de
   ferramentas e para a resposta escrita logo depois deles no mesmo turno, e

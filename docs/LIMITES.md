@@ -19,6 +19,7 @@ cresce sem um teto explícito, e todo teto que depende do uso fica no
 | `heartbeat.rs` | eventos da fila colocados no contexto | `max_eventos_por_ciclo` | `[daemon] max_eventos_por_ciclo` |
 | `ferramentas/workspace.rs` | leitura, escrita e listagem | bytes e itens | `[ferramentas]` |
 | `nim/mock.rs` (`recebidas`) | requisições recebidas (para os testes conferirem) | as últimas 1000 (`MAX_RECEBIDAS_GUARDADAS`); o total é só um contador | constante: o mock é ferramenta de teste, mas o teste de resistência o deixa horas no ar |
+| SQLite: cache de páginas | páginas lidas do banco, por conexão | `cache_kib` (antes: o padrão implícito de ~2 MB do SQLite) | `[banco] cache_kib` (2048) no daemon; constante `CACHE_PADRAO_KIB` nos outros comandos |
 | SQLite: arquivo WAL | páginas ainda não copiadas para o banco | checkpoint `TRUNCATE` periódico + `journal_size_limit` de 64 MiB | `[retencao] checkpoint_minutos` |
 | SQLite: tabelas de registro | `chamadas_modelo`, `fila_eventos` (consumidos), `ciclos` | N dias de detalhe; o resto vira agregado diário | `[retencao]` |
 

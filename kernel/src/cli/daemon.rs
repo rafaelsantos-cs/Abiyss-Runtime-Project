@@ -16,6 +16,7 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
     // Primeiro a trava: se já houver um daemon, nem abrimos nada.
     let _trava = TravaDaemon::adquirir(&config)?;
     let banco = Banco::abrir(&config.caminho_banco())?;
+    banco.limitar_cache(config.banco.cache_kib)?;
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
     // Ferramentas dos sub-agentes: nativas + memória + MCP (cada nível recebe
     // um recorte). Para sub-agentes, tudo conta como conteúdo externo.
