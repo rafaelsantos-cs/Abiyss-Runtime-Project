@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="MovementTuning" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Player/MovementTuning.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+WalkSpeed = 2.2
+RunSpeed = 5.2
+SprintSpeed = 7.6
+CrouchSpeed = 1.9
+WalkInputThreshold = 0.55
+GroundAcceleration = 60.0
+GroundDeceleration = 70.0
+TurnSpeed = 900.0
+JumpHeight = 1.35
+Gravity = 26.0
+FallGravityMultiplier = 1.6
+JumpCutMultiplier = 0.45
+MaxFallSpeed = 40.0
+AirAcceleration = 18.0
+CoyoteTime = 0.1
+InputBufferTime = 0.15
+StandingHeight = 1.8
+CrouchingHeight = 1.05
+CapsuleRadius = 0.35

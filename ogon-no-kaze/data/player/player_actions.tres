@@ -1,0 +1,12 @@
+[gd_resource type="Resource" script_class="PlayerActionSet" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/Player/PlayerActionSet.cs" id="1"]
+[ext_resource type="Resource" path="res://data/player/actions/attack_light.tres" id="2"]
+[ext_resource type="Resource" path="res://data/player/actions/deflect.tres" id="3"]
+[ext_resource type="Resource" path="res://data/player/actions/stagger.tres" id="4"]
+
+[resource]
+script = ExtResource("1")
+Attack = ExtResource("2")
+Deflect = ExtResource("3")
+Stagger = ExtResource("4")
