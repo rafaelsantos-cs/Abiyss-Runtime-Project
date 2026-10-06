@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://dm0wddntykll8"
-path="res://.godot/imported/CormorantGaramond-SemiBold.ttf-0309b7ca298b532383c6510b99bac157.fontdata"
+uid="uid://dtq85ia3f6iit"
+path="res://.godot/imported/EBGaramond-SemiBold.ttf-2fe5889fcfc0cb9c02a1d99fda1baee0.fontdata"
 
 [deps]
 
-source_file="res://assets/fonts/CormorantGaramond-SemiBold.ttf"
-dest_files=["res://.godot/imported/CormorantGaramond-SemiBold.ttf-0309b7ca298b532383c6510b99bac157.fontdata"]
+source_file="res://assets/fonts/EBGaramond-SemiBold.ttf"
+dest_files=["res://.godot/imported/EBGaramond-SemiBold.ttf-2fe5889fcfc0cb9c02a1d99fda1baee0.fontdata"]
 
 [params]
 
