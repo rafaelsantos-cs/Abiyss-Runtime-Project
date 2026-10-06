@@ -106,6 +106,9 @@ public partial class SettingsManager : Node
         Save();
     }
 
+    /// <summary>Aplica só os volumes (barato; usado enquanto o jogador arrasta o slider).</summary>
+    public void ApplyAudioSettings() => ApplyAudio();
+
     // ---------------------------------------------------------------- aplicação
 
     private void ApplyDisplay()
