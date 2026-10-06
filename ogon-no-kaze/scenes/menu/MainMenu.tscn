@@ -1,0 +1,239 @@
+[gd_scene load_steps=20 format=3]
+
+[ext_resource type="Script" path="res://scripts/UI/MainMenu.cs" id="1_menu"]
+[ext_resource type="PackedScene" path="res://scenes/world/Landscape.tscn" id="2_landscape"]
+[ext_resource type="Script" path="res://scripts/World/CinematicCamera.cs" id="3_camera"]
+[ext_resource type="Shader" path="res://shaders/ui/ink_stroke_progress.gdshader" id="4_stroke"]
+[ext_resource type="FontFile" path="res://assets/fonts/YujiBoku-Title.ttf" id="5_brush"]
+[ext_resource type="FontFile" path="res://assets/fonts/EBGaramond-SemiBold.ttf" id="6_serif_strong"]
+[ext_resource type="PackedScene" path="res://scenes/ui/SettingsMenu.tscn" id="7_settings"]
+
+[sub_resource type="Curve3D" id="camera_curve"]
+_data = {
+"points": PackedVector3Array(0, 0, 0, 0, 0, 0, -12, 1.8, 36, -5, 0, 2, 5, 0, -2, 0, 2.2, 30, 0, 0, 0, 0, 0, 0, 12, 2.8, 22),
+"tilts": PackedFloat32Array(0, 0, 0)
+}
+point_count = 3
+
+[sub_resource type="Gradient" id="shade_gradient"]
+offsets = PackedFloat32Array(0, 0.55, 1)
+colors = PackedColorArray(0.03, 0.025, 0.02, 0.62, 0.03, 0.025, 0.02, 0.3, 0.03, 0.025, 0.02, 0)
+
+[sub_resource type="GradientTexture2D" id="shade_texture"]
+gradient = SubResource("shade_gradient")
+width = 256
+height = 4
+
+[sub_resource type="FastNoiseLite" id="brush_noise"]
+noise_type = 1
+seed = 3
+frequency = 0.006
+fractal_octaves = 5
+
+[sub_resource type="NoiseTexture2D" id="brush_noise_tex"]
+width = 512
+height = 512
+seamless = true
+noise = SubResource("brush_noise")
+
+[sub_resource type="ShaderMaterial" id="title_stroke_mat"]
+shader = ExtResource("4_stroke")
+shader_parameter/progress = 1.0
+shader_parameter/stroke_color = Color(0.035, 0.03, 0.027, 0.88)
+shader_parameter/track_color = Color(0, 0, 0, 0)
+shader_parameter/noise_tex = SubResource("brush_noise_tex")
+shader_parameter/thickness = 0.92
+shader_parameter/tip_length = 0.14
+shader_parameter/dry_brush = 0.75
+
+[sub_resource type="LabelSettings" id="kanji_settings"]
+font = ExtResource("5_brush")
+font_size = 112
+font_color = Color(0.94, 0.9, 0.82, 1)
+line_spacing = -18.0
+shadow_size = 10
+shadow_color = Color(0, 0, 0, 0.35)
+
+[sub_resource type="LabelSettings" id="seal_settings"]
+font = ExtResource("5_brush")
+font_size = 44
+font_color = Color(0.96, 0.92, 0.85, 1)
+
+[sub_resource type="StyleBoxFlat" id="seal_style"]
+bg_color = Color(0.73, 0.2, 0.13, 1)
+corner_radius_top_left = 5
+corner_radius_top_right = 3
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 2
+
+[sub_resource type="FontVariation" id="latin_title_font"]
+base_font = ExtResource("6_serif_strong")
+spacing_glyph = 7
+
+[sub_resource type="LabelSettings" id="latin_title_settings"]
+font = SubResource("latin_title_font")
+font_size = 46
+font_color = Color(0.94, 0.9, 0.82, 1)
+shadow_size = 8
+shadow_color = Color(0, 0, 0, 0.45)
+
+[node name="MainMenu" type="Node3D" node_paths=PackedStringArray("MenuRoot", "TitleStroke", "TitleKanji", "TitleLatin", "Seal", "Buttons", "PlayButton", "SettingsButton", "QuitButton", "Settings")]
+script = ExtResource("1_menu")
+MenuRoot = NodePath("UI/MenuRoot")
+TitleStroke = NodePath("UI/MenuRoot/TitleStroke")
+TitleKanji = NodePath("UI/MenuRoot/TitleKanji")
+TitleLatin = NodePath("UI/MenuRoot/TitleLatin")
+Seal = NodePath("UI/MenuRoot/Seal")
+Buttons = NodePath("UI/MenuRoot/Buttons")
+PlayButton = NodePath("UI/MenuRoot/Buttons/Play")
+SettingsButton = NodePath("UI/MenuRoot/Buttons/Settings")
+QuitButton = NodePath("UI/MenuRoot/Buttons/Quit")
+Settings = NodePath("UI/SettingsMenu")
+
+[node name="Landscape" parent="." instance=ExtResource("2_landscape")]
+
+[node name="CameraPath" type="Path3D" parent="."]
+curve = SubResource("camera_curve")
+
+[node name="LookTarget" type="Marker3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 7, -120)
+
+[node name="CinematicCamera" type="Camera3D" parent="." node_paths=PackedStringArray("Path", "LookTarget")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 1.8, 36)
+current = true
+fov = 55.0
+far = 3000.0
+script = ExtResource("3_camera")
+Path = NodePath("../CameraPath")
+LookTarget = NodePath("../LookTarget")
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="MenuRoot" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="LeftShade" type="TextureRect" parent="UI/MenuRoot"]
+layout_mode = 1
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_right = 1100.0
+grow_vertical = 2
+mouse_filter = 2
+texture = SubResource("shade_texture")
+expand_mode = 1
+
+[node name="TitleStroke" type="ColorRect" parent="UI/MenuRoot"]
+material = SubResource("title_stroke_mat")
+layout_mode = 0
+offset_left = 420.0
+offset_top = 60.0
+offset_right = 1060.0
+offset_bottom = 330.0
+rotation = 1.5708
+mouse_filter = 2
+
+[node name="TitleKanji" type="Label" parent="UI/MenuRoot"]
+layout_mode = 0
+offset_left = 160.0
+offset_top = 90.0
+offset_right = 410.0
+offset_bottom = 680.0
+text = "黄
+金
+の
+風"
+label_settings = SubResource("kanji_settings")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Seal" type="Panel" parent="UI/MenuRoot"]
+layout_mode = 0
+offset_left = 368.0
+offset_top = 622.0
+offset_right = 432.0
+offset_bottom = 686.0
+pivot_offset = Vector2(32, 32)
+mouse_filter = 2
+theme_override_styles/panel = SubResource("seal_style")
+
+[node name="Kanji" type="Label" parent="UI/MenuRoot/Seal"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "風"
+label_settings = SubResource("seal_settings")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TitleLatin" type="VBoxContainer" parent="UI/MenuRoot"]
+layout_mode = 0
+offset_left = 150.0
+offset_top = 712.0
+offset_right = 900.0
+offset_bottom = 800.0
+theme_override_constants/separation = -4
+
+[node name="Name" type="Label" parent="UI/MenuRoot/TitleLatin"]
+layout_mode = 2
+text = "ŌGON NO KAZE"
+label_settings = SubResource("latin_title_settings")
+
+[node name="Subtitle" type="Label" parent="UI/MenuRoot/TitleLatin"]
+layout_mode = 2
+theme_type_variation = &"HintLabel"
+text = "o vento dourado"
+
+[node name="Buttons" type="VBoxContainer" parent="UI/MenuRoot"]
+layout_mode = 0
+offset_left = 132.0
+offset_top = 826.0
+offset_right = 560.0
+offset_bottom = 1040.0
+theme_override_constants/separation = 2
+
+[node name="Play" type="Button" parent="UI/MenuRoot/Buttons"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Jogar"
+alignment = 0
+
+[node name="Settings" type="Button" parent="UI/MenuRoot/Buttons"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Configurações"
+alignment = 0
+
+[node name="Quit" type="Button" parent="UI/MenuRoot/Buttons"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Sair"
+alignment = 0
+
+[node name="Version" type="Label" parent="UI/MenuRoot"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -520.0
+offset_top = -70.0
+offset_right = -48.0
+offset_bottom = -30.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_type_variation = &"HintLabel"
+text = "v0.1 · fase 1 · protótipo"
+horizontal_alignment = 2
+
+[node name="SettingsMenu" parent="UI" instance=ExtResource("7_settings")]
