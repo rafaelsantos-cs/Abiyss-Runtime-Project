@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="RenderTuning" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Settings/RenderTuning.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+ShadowDirectionalAtlasSize = PackedInt32Array(1024, 2048, 4096, 4096)
+ShadowPositionalAtlasSize = PackedInt32Array(1024, 2048, 4096, 4096)
+ShadowFilterQuality = PackedInt32Array(1, 2, 3, 4)
+ShadowSplitMode = PackedInt32Array(1, 1, 2, 2)
+ShadowMaxDistance = PackedFloat32Array(60, 100, 160, 250)
+GrassCastsShadowsFrom = 2
+FogVolumeSize = PackedInt32Array(0, 48, 64, 96)
+FogVolumeDepth = PackedInt32Array(0, 48, 64, 96)
+FogFilterFrom = 2
+SsaoServerQuality = PackedInt32Array(0, 0, 2, 3)
+SsaoFullResolutionFrom = 3
+FsrSharpness = 0.2

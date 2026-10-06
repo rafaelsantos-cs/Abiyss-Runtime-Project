@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="QualitySettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Settings/QualitySettings.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+RenderScale = 1.0
+Upscaler = 0
+AntiAliasing = 3
+Shadows = 2
+VolumetricFog = 2
+GlobalIllumination = 1
+Ssao = 2
+GrassDensity = 0.85
+GrassDistance = 130.0
