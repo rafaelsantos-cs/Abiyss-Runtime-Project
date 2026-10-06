@@ -26,6 +26,7 @@ buses/default_bus_layout="res://default_bus_layout.tres"
 [autoload]
 
 SettingsManager="*res://scripts/Settings/SettingsManager.cs"
+SceneLoader="*res://scenes/ui/SceneLoader.tscn"
 
 [display]
 

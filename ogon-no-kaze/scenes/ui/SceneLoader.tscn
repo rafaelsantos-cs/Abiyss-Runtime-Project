@@ -1,0 +1,152 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/Core/SceneLoader.cs" id="1_loader"]
+[ext_resource type="Script" path="res://scripts/UI/LoadingScreen.cs" id="2_loading"]
+[ext_resource type="Script" path="res://scripts/UI/InkTransition.cs" id="3_transition"]
+[ext_resource type="Shader" path="res://shaders/ui/ink_transition.gdshader" id="4_ink_shader"]
+[ext_resource type="Shader" path="res://shaders/ui/ink_stroke_progress.gdshader" id="5_stroke_shader"]
+[ext_resource type="FontFile" path="res://assets/fonts/YujiBoku-Title.ttf" id="6_brush_font"]
+
+[sub_resource type="FastNoiseLite" id="noise_ink"]
+noise_type = 1
+frequency = 0.006
+fractal_octaves = 5
+fractal_gain = 0.55
+
+[sub_resource type="NoiseTexture2D" id="noise_ink_tex"]
+width = 512
+height = 512
+seamless = true
+noise = SubResource("noise_ink")
+
+[sub_resource type="ShaderMaterial" id="mat_transition"]
+shader = ExtResource("4_ink_shader")
+shader_parameter/progress = 1.0
+shader_parameter/ink_color = Color(0.055, 0.047, 0.043, 1)
+shader_parameter/wash_color = Color(0.16, 0.13, 0.11, 1)
+shader_parameter/noise_tex = SubResource("noise_ink_tex")
+shader_parameter/edge_width = 0.12
+shader_parameter/sweep_amount = 0.45
+shader_parameter/noise_scale = 1.4
+
+[sub_resource type="ShaderMaterial" id="mat_stroke"]
+shader = ExtResource("5_stroke_shader")
+shader_parameter/progress = 0.0
+shader_parameter/stroke_color = Color(0.89, 0.69, 0.33, 1)
+shader_parameter/track_color = Color(0.925, 0.894, 0.831, 0.08)
+shader_parameter/noise_tex = SubResource("noise_ink_tex")
+shader_parameter/thickness = 0.7
+shader_parameter/tip_length = 0.04
+shader_parameter/dry_brush = 0.6
+
+[sub_resource type="LabelSettings" id="kanji_settings"]
+font = ExtResource("6_brush_font")
+font_size = 520
+font_color = Color(0.925, 0.894, 0.831, 0.07)
+
+[node name="SceneLoader" type="Node" node_paths=PackedStringArray("Transition", "Loading")]
+process_mode = 3
+script = ExtResource("1_loader")
+Transition = NodePath("TransitionLayer/InkTransition")
+Loading = NodePath("LoadingScreen")
+
+[node name="LoadingScreen" type="CanvasLayer" parent="." node_paths=PackedStringArray("Stroke", "PercentLabel", "HintLabel")]
+process_mode = 3
+layer = 90
+visible = false
+script = ExtResource("2_loading")
+Stroke = NodePath("Root/Bottom/VBox/StrokeRow/Stroke")
+PercentLabel = NodePath("Root/Bottom/VBox/StrokeRow/Percent")
+HintLabel = NodePath("Root/Bottom/VBox/Hint")
+
+[node name="Root" type="Control" parent="LoadingScreen"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Background" type="ColorRect" parent="LoadingScreen/Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.055, 0.047, 0.043, 1)
+
+[node name="Kanji" type="Label" parent="LoadingScreen/Root"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -620.0
+offset_top = -760.0
+offset_right = -60.0
+offset_bottom = -40.0
+grow_horizontal = 0
+grow_vertical = 0
+text = "風"
+label_settings = SubResource("kanji_settings")
+horizontal_alignment = 2
+vertical_alignment = 2
+
+[node name="Bottom" type="MarginContainer" parent="LoadingScreen/Root"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -260.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/margin_left = 140
+theme_override_constants/margin_right = 140
+theme_override_constants/margin_bottom = 110
+
+[node name="VBox" type="VBoxContainer" parent="LoadingScreen/Root/Bottom"]
+layout_mode = 2
+alignment = 2
+theme_override_constants/separation = 18
+
+[node name="Hint" type="Label" parent="LoadingScreen/Root/Bottom/VBox"]
+layout_mode = 2
+theme_type_variation = &"HintLabel"
+text = "Dica"
+autowrap_mode = 3
+
+[node name="StrokeRow" type="HBoxContainer" parent="LoadingScreen/Root/Bottom/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="Stroke" type="ColorRect" parent="LoadingScreen/Root/Bottom/VBox/StrokeRow"]
+material = SubResource("mat_stroke")
+custom_minimum_size = Vector2(0, 46)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+mouse_filter = 2
+
+[node name="Percent" type="Label" parent="LoadingScreen/Root/Bottom/VBox/StrokeRow"]
+custom_minimum_size = Vector2(90, 0)
+layout_mode = 2
+text = "0%"
+horizontal_alignment = 2
+
+[node name="TransitionLayer" type="CanvasLayer" parent="."]
+process_mode = 3
+layer = 100
+
+[node name="InkTransition" type="ColorRect" parent="TransitionLayer"]
+material = SubResource("mat_transition")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3_transition")
