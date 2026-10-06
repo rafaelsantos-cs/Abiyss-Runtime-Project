@@ -1,0 +1,19 @@
+# Godot
+.godot/
+/android/
+export/
+*.translation
+
+# .NET
+bin/
+obj/
+.mono/
+*.user
+.vs/
+
+# Blender
+*.blend1
+*.blend2
+
+# Saídas locais de ferramentas
+docs/captures/_tmp/
