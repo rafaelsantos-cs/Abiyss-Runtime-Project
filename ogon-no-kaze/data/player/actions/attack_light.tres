@@ -1,0 +1,27 @@
+[gd_resource type="Resource" script_class="ActionData" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/Combat/ActionData.cs" id="1"]
+[ext_resource type="Script" path="res://scripts/Combat/CancelWindow.cs" id="2"]
+
+[sub_resource type="Resource" id="feint"]
+script = ExtResource("2")
+FromFrame = 0
+ToFrame = 4
+Into = 8
+
+[sub_resource type="Resource" id="late"]
+script = ExtResource("2")
+FromFrame = 21
+ToFrame = 27
+Into = 127
+
+[resource]
+script = ExtResource("1")
+Id = &"attack_light"
+AnimationName = &"attack_light"
+StartupFrames = 7
+ActiveFrames = 4
+RecoveryFrames = 16
+UseRootMotion = true
+MoveSpeedFactor = 0.0
+CancelWindows = Array[ExtResource("2")]([SubResource("feint"), SubResource("late")])

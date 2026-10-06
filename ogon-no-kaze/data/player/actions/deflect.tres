@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="ActionData" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/Combat/ActionData.cs" id="1"]
+[ext_resource type="Script" path="res://scripts/Combat/CancelWindow.cs" id="2"]
+
+[sub_resource type="Resource" id="counter"]
+script = ExtResource("2")
+FromFrame = 11
+ToFrame = 22
+Into = 4
+
+[resource]
+script = ExtResource("1")
+Id = &"deflect"
+AnimationName = &"deflect"
+StartupFrames = 1
+ActiveFrames = 10
+RecoveryFrames = 12
+UseRootMotion = true
+MoveSpeedFactor = 0.0
+CancelWindows = Array[ExtResource("2")]([SubResource("counter")])

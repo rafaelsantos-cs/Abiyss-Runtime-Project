@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="ActionData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/Combat/ActionData.cs" id="1"]
+[ext_resource type="Script" path="res://scripts/Combat/CancelWindow.cs" id="2"]
+
+[resource]
+script = ExtResource("1")
+Id = &"stagger"
+AnimationName = &"stagger"
+StartupFrames = 0
+ActiveFrames = 0
+RecoveryFrames = 24
+UseRootMotion = true
+MoveSpeedFactor = 0.0
