@@ -94,9 +94,11 @@ public static class InputBindings
             case null:
                 return "—";
             case InputEventKey k:
-                var key = k.PhysicalKeycode != Key.None
-                    ? DisplayServer.KeyboardGetKeycodeFromPhysical(k.PhysicalKeycode)
-                    : k.Keycode;
+                // Tecla física → rótulo no layout do teclado do jogador (ABNT2, AZERTY...).
+                // Sem janela (headless) não há layout: usa o código físico.
+                var key = k.PhysicalKeycode == Key.None ? k.Keycode
+                    : DisplayServer.GetName() == "headless" ? k.PhysicalKeycode
+                    : DisplayServer.KeyboardGetKeycodeFromPhysical(k.PhysicalKeycode);
                 return KeyNames.TryGetValue(key, out var kn) ? kn : OS.GetKeycodeString(key);
             case InputEventMouseButton m:
                 return MouseNames.TryGetValue(m.ButtonIndex, out var mn) ? mn : $"Mouse {(int)m.ButtonIndex}";
