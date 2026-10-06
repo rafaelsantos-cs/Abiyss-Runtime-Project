@@ -137,7 +137,7 @@ public static class InputBindings
     // Nomes neutros com as duas convenções mais comuns (Xbox / PlayStation).
     private static readonly Dictionary<JoyButton, string> JoyButtonNames = new()
     {
-        { JoyButton.A, "A / ✕" }, { JoyButton.B, "B / ○" }, { JoyButton.X, "X / □" }, { JoyButton.Y, "Y / △" },
+        { JoyButton.A, "A / ×" }, { JoyButton.B, "B / ○" }, { JoyButton.X, "X / □" }, { JoyButton.Y, "Y / △" },
         { JoyButton.LeftShoulder, "LB / L1" }, { JoyButton.RightShoulder, "RB / R1" },
         { JoyButton.LeftStick, "L3" }, { JoyButton.RightStick, "R3" },
         { JoyButton.Back, "Select" }, { JoyButton.Start, "Start" }, { JoyButton.Guide, "Guia" },
