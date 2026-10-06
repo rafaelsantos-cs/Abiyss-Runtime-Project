@@ -1,0 +1,54 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/world/Landscape.tscn" id="1_landscape"]
+[ext_resource type="PackedScene" path="res://scenes/player/Player.tscn" id="2_player"]
+[ext_resource type="Script" path="res://scripts/Player/CameraRig.cs" id="3_rig"]
+[ext_resource type="PackedScene" path="res://scenes/ui/PauseMenu.tscn" id="4_pause"]
+[ext_resource type="Script" path="res://scripts/UI/DebugHud.cs" id="5_hud"]
+
+[sub_resource type="SphereShape3D" id="arm_shape"]
+radius = 0.2
+
+[sub_resource type="LabelSettings" id="hud_settings"]
+font_size = 22
+font_color = Color(0.925, 0.894, 0.831, 0.9)
+outline_size = 6
+outline_color = Color(0, 0, 0, 0.6)
+
+[node name="World" type="Node3D"]
+
+[node name="Landscape" parent="." instance=ExtResource("1_landscape")]
+
+[node name="Player" parent="." instance=ExtResource("2_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.05, 24)
+
+[node name="CameraRig" type="Node3D" parent="." node_paths=PackedStringArray("FollowTarget", "Arm", "Camera")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 24)
+script = ExtResource("3_rig")
+FollowTarget = NodePath("../Player")
+Arm = NodePath("SpringArm")
+Camera = NodePath("SpringArm/Camera")
+
+[node name="SpringArm" type="SpringArm3D" parent="CameraRig"]
+shape = SubResource("arm_shape")
+spring_length = 3.6
+margin = 0.1
+
+[node name="Camera" type="Camera3D" parent="CameraRig/SpringArm"]
+current = true
+fov = 70.0
+far = 3000.0
+
+[node name="PauseMenu" parent="." instance=ExtResource("4_pause")]
+
+[node name="HudLayer" type="CanvasLayer" parent="."]
+layer = 5
+
+[node name="DebugHud" type="Label" parent="HudLayer" node_paths=PackedStringArray("Player")]
+offset_left = 24.0
+offset_top = 20.0
+offset_right = 900.0
+offset_bottom = 160.0
+label_settings = SubResource("hud_settings")
+script = ExtResource("5_hud")
+Player = NodePath("../../Player")

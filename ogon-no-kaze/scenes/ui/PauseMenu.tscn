@@ -1,0 +1,84 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/UI/PauseMenu.cs" id="1_pause"]
+[ext_resource type="PackedScene" path="res://scenes/ui/SettingsMenu.tscn" id="2_settings"]
+
+[node name="PauseMenu" type="CanvasLayer" node_paths=PackedStringArray("Root", "MenuPanel", "ResumeButton", "SettingsButton", "MainMenuButton", "QuitButton", "Settings")]
+process_mode = 3
+layer = 20
+script = ExtResource("1_pause")
+Root = NodePath("Root")
+MenuPanel = NodePath("Root/Center")
+ResumeButton = NodePath("Root/Center/Panel/VBox/Resume")
+SettingsButton = NodePath("Root/Center/Panel/VBox/Settings")
+MainMenuButton = NodePath("Root/Center/Panel/VBox/MainMenu")
+QuitButton = NodePath("Root/Center/Panel/VBox/Quit")
+Settings = NodePath("Root/SettingsMenu")
+
+[node name="Root" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Dim" type="ColorRect" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.03, 0.025, 0.02, 0.55)
+
+[node name="Center" type="CenterContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Root/Center"]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="Root/Center/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="Root/Center/Panel/VBox"]
+layout_mode = 2
+theme_type_variation = &"HeaderLabel"
+theme_override_font_sizes/font_size = 40
+text = "Pausa"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="Root/Center/Panel/VBox"]
+custom_minimum_size = Vector2(0, 12)
+layout_mode = 2
+
+[node name="Resume" type="Button" parent="Root/Center/Panel/VBox"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Continuar"
+
+[node name="Settings" type="Button" parent="Root/Center/Panel/VBox"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Configurações"
+
+[node name="MainMenu" type="Button" parent="Root/Center/Panel/VBox"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Menu principal"
+
+[node name="Quit" type="Button" parent="Root/Center/Panel/VBox"]
+layout_mode = 2
+theme_type_variation = &"MainMenuButton"
+text = "Sair do jogo"
+
+[node name="SettingsMenu" parent="Root" instance=ExtResource("2_settings")]
+layout_mode = 1
