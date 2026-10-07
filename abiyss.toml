@@ -412,6 +412,9 @@ max_notas_relacionadas = 8
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
+# As mãos (servidores MCP terminal, web_rapido e ambiente) entram por aqui:
+# é pela delegação que o heartbeat as usa. O low continua só de leitura:
+# sem escrever_arquivo e sem o terminal (que escreve no workspace).
 # ---------------------------------------------------------------------------
 
 [subagentes]
@@ -424,19 +427,25 @@ max_simultaneos = 4
 max_tokens = 200000
 max_segundos = 1800
 max_rodadas = 20
-ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+ferramentas = [
+  "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
+  "terminal__*", "web_rapido__*", "ambiente__*",
+]
 
 [subagentes.medium]
 max_tokens = 100000
 max_segundos = 900
 max_rodadas = 12
-ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+ferramentas = [
+  "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
+  "terminal__*", "web_rapido__*", "ambiente__*",
+]
 
 [subagentes.low]
 max_tokens = 50000
 max_segundos = 600
 max_rodadas = 8
-ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
+ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*", "web_rapido__*", "ambiente__*"]
 
 # ---------------------------------------------------------------------------
 # Servidores MCP. Dois tipos:
@@ -480,6 +489,78 @@ timeout_segundos = 30
 # Só o kernel usa (por trás de memoria_buscar, que respeita os escopos).
 expor = false
 ativo = true
+
+[[mcp.servidores]]
+# terminal: comandos de shell numa caixa de areia (bubblewrap). Só o
+# workspace é gravável (em /workspace); sistema só leitura; sem rede por
+# padrão. Precisa do bwrap e de namespaces de usuário: sem isso o servidor
+# NÃO sobe (o motivo vai para o journal). Instalação e limites em
+# recursos/mcp/terminal/README.md.
+nome = "terminal"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/terminal"
+# Tempo do KERNEL para uma chamada. O servidor recusa subir se
+# TERMINAL_TIMEOUT_MAXIMO + 5 s não couber aqui.
+timeout_segundos = 120
+ativo = true
+
+[mcp.servidores.env]
+# Limites de cada comando (valores SEMPRE entre aspas). O servidor confere
+# que cabem nos do kernel: concorrentes × memória + 128 MiB do próprio
+# servidor ≤ [mcp] max_memoria_mb, e 2 × saída ≤ [mcp] max_bytes_resultado.
+TERMINAL_TIMEOUT_PADRAO = "30"
+TERMINAL_TIMEOUT_MAXIMO = "110"
+TERMINAL_MAX_SAIDA_BYTES = "32000"   # por fluxo (stdout e stderr): começo e fim
+TERMINAL_MAX_CONCORRENTES = "2"
+TERMINAL_MEMORIA_MB = "160"          # por comando (cada processo e a árvore toda)
+TERMINAL_MAX_PROCESSOS = "64"        # processos + threads por comando
+TERMINAL_REDE = "nao"                # "sim" também abre os serviços locais (qmd, SearXNG)
+
+[[mcp.servidores]]
+# web_rapido: a camada rápida de pesquisa, sem modelo. Busca num SearXNG
+# local e lê páginas (texto principal, pelo trafilatura). Respeita o
+# robots.txt, espera entre pedidos ao mesmo site e recusa endereços da rede
+# interna (inclusive o metadata da nuvem). Cache em data/web_rapido/. A
+# busca precisa do SearXNG rodando (recursos/mcp/web_rapido/README.md);
+# ler_pagina funciona sem ele.
+nome = "web_rapido"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/web_rapido"
+timeout_segundos = 60
+ativo = true
+
+[mcp.servidores.env]
+WEB_SEARXNG_URL = "http://127.0.0.1:8888"
+WEB_PRAZO_SEGUNDOS = "50"              # por chamada; + 8 s de folga ≤ timeout_segundos
+WEB_TIMEOUT_REQUISICAO = "15"          # cada pedido HTTP
+WEB_CACHE_TTL_PAGINAS_HORAS = "24"
+WEB_CACHE_TTL_BUSCAS_HORAS = "6"
+WEB_CACHE_MAX_MB = "200"
+WEB_MAX_PAGINA_MB = "2"                # lido da página (acima disso, só o começo)
+WEB_MAX_TEXTO_BYTES = "40000"          # texto por resposta; o resto vem em partes
+WEB_INTERVALO_DOMINIO_SEGUNDOS = "2"   # ou o Crawl-delay do site, se maior
+
+[[mcp.servidores]]
+# ambiente: como está a máquina, só leitura. Serviços do systemd da lista
+# abaixo e o diário deles, disco, memória, processos que mais usam memória e
+# portas abertas. Nada muda o sistema, nada usa sudo e o servidor não roda
+# como root. Para ler o diário, o usuário do daemon precisa do grupo adm ou
+# systemd-journal (o ubuntu do cloud-init costuma já vir no adm).
+nome = "ambiente"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/ambiente"
+timeout_segundos = 30
+ativo = true
+
+[mcp.servidores.env]
+# Só estas unidades podem ser vistas (sem sufixo = .service).
+AMBIENTE_SERVICOS = "abiyss.service, docker.service"
+AMBIENTE_MAX_LINHAS_DIARIO = "100"
+AMBIENTE_TIMEOUT_COMANDO = "10"        # systemctl/journalctl; + 5 s ≤ timeout_segundos
+AMBIENTE_MAX_BYTES = "30000"           # por resposta (o diário guarda as linhas mais novas)
 
 # ---------------------------------------------------------------------------
 # Banco (SQLite).

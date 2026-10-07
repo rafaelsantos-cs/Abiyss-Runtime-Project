@@ -1,0 +1,24 @@
+[project]
+name = "abiyss-mcp-web-rapido"
+version = "0.1.0"
+description = "Servidor MCP web_rapido do Abiyss: busca (SearXNG) e leitura de páginas (trafilatura), sem modelo"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx>=0.28,<1",
+    "trafilatura>=2.0,<3",
+]
+
+[dependency-groups]
+# Só para os testes (`uv run pytest`). O kernel sobe com `--no-dev`.
+dev = [
+    "pytest>=8",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só um script com dependências.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
