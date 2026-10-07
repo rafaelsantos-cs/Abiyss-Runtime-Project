@@ -412,6 +412,9 @@ max_notas_relacionadas = 8
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
+# As mãos (servidores MCP terminal, web_rapido e ambiente) entram por aqui:
+# é pela delegação que o heartbeat as usa. O low continua só de leitura:
+# sem escrever_arquivo e sem o terminal (que escreve no workspace).
 # ---------------------------------------------------------------------------
 
 [subagentes]
@@ -424,19 +427,25 @@ max_simultaneos = 4
 max_tokens = 200000
 max_segundos = 1800
 max_rodadas = 20
-ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+ferramentas = [
+  "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
+  "terminal__*", "web_rapido__*", "ambiente__*",
+]
 
 [subagentes.medium]
 max_tokens = 100000
 max_segundos = 900
 max_rodadas = 12
-ferramentas = ["ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*"]
+ferramentas = [
+  "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
+  "terminal__*", "web_rapido__*", "ambiente__*",
+]
 
 [subagentes.low]
 max_tokens = 50000
 max_segundos = 600
 max_rodadas = 8
-ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*"]
+ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*", "web_rapido__*", "ambiente__*"]
 
 # ---------------------------------------------------------------------------
 # Servidores MCP. Dois tipos:

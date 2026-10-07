@@ -1,12 +1,16 @@
 """Configuração: limites do kernel lidos do abiyss.toml e as recusas."""
 
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
+from mcp import Client
 
 import config
+import servidor
 from conftest import PASTA_SERVIDOR, escrever_projeto
+from test_argumentos import ambiente_falso
 
 RAIZ_DO_REPOSITORIO = PASTA_SERVIDOR.parent.parent.parent
 
@@ -154,3 +158,26 @@ def test_tabela_env_do_item_e_o_ambiente_tem_precedencia(tmp_path, env_base):
     cfg = config.carregar(env)
     assert (cfg.memoria_mb, cfg.rede) == (100, True)
     assert config.carregar({**env, "TERMINAL_REDE": "nao"}).rede is False
+
+
+def permitida(lista: list[str], nome: str) -> bool:
+    """A regra do kernel (CaixaDeFerramentas::permitida): nome exato, ou
+    prefixo quando o item termina em *."""
+    return any(nome.startswith(p[:-1]) if p.endswith("*") else nome == p for p in lista)
+
+
+@pytest.mark.anyio
+async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
+    """O abiyss.toml versionado dá as ferramentas deste servidor aos níveis
+    de sub-agente certos (é por eles que o heartbeat usa as mãos)."""
+    dados = tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())
+    pasta = "recursos/mcp/" + PASTA_SERVIDOR.name
+    meu = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == pasta)
+    async with Client(servidor.criar_servidor(fazer_config(), ambiente_falso())) as cliente:
+        nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
+    assert nomes
+    # o low é só leitura: sem o terminal
+    for nivel in ("ultra", "medium", "low"):
+        lista = dados["subagentes"][nivel]["ferramentas"]
+        for nome in nomes:
+            assert permitida(lista, nome) is (nivel in ("ultra", "medium")), (nivel, nome)

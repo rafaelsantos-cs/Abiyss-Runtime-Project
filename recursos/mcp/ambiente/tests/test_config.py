@@ -4,8 +4,10 @@ import shutil
 import tomllib
 
 import pytest
+from mcp import Client
 
 import config
+import servidor
 from conftest import PASTA_SERVIDOR, escrever_projeto
 
 RAIZ_DO_REPOSITORIO = PASTA_SERVIDOR.parent.parent.parent
@@ -47,3 +49,25 @@ def test_abiyss_toml_do_repositorio_tem_o_ambiente(tmp_path):
     cfg = config.carregar({"ABIYSS_CONFIG": str(copia), "ABIYSS_MCP_NOME": "ambiente"})
     assert "abiyss.service" in cfg.servicos
     assert cfg.timeout_comando + config.FOLGA_TIMEOUT_SEGUNDOS <= cfg.timeout_kernel
+
+
+def permitida(lista: list[str], nome: str) -> bool:
+    """A regra do kernel (CaixaDeFerramentas::permitida): nome exato, ou
+    prefixo quando o item termina em *."""
+    return any(nome.startswith(p[:-1]) if p.endswith("*") else nome == p for p in lista)
+
+
+@pytest.mark.anyio
+async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
+    """O abiyss.toml versionado dá as ferramentas deste servidor aos níveis
+    de sub-agente certos (é por eles que o heartbeat usa as mãos)."""
+    dados = tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())
+    pasta = "recursos/mcp/" + PASTA_SERVIDOR.name
+    meu = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == pasta)
+    async with Client(servidor.criar_servidor(fazer_config())) as cliente:
+        nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
+    assert nomes
+    for nivel in ("ultra", "medium", "low"):
+        lista = dados["subagentes"][nivel]["ferramentas"]
+        for nome in nomes:
+            assert permitida(lista, nome), (nivel, nome)  # todos os níveis: só leitura
