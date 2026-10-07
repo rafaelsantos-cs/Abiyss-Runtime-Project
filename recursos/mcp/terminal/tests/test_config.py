@@ -166,6 +166,23 @@ def permitida(lista: list[str], nome: str) -> bool:
     return any(nome.startswith(p[:-1]) if p.endswith("*") else nome == p for p in lista)
 
 
+def alcanca(lista: list[str], servidor: str) -> bool:
+    """Algum item da lista deixa passar ALGUMA ferramenta do servidor? Um
+    nome com o prefixo dele, ou um curinga que cobre o prefixo ("*", "web*")."""
+    prefixo = servidor + "__"
+    return any(
+        (p[:-1].startswith(prefixo) or prefixo.startswith(p[:-1])) if p.endswith("*") else p.startswith(prefixo)
+        for p in lista
+    )
+
+
+def test_alcanca_ve_nome_exato_e_curinga_largo():
+    assert alcanca(["web_rapido__*"], "web_rapido")
+    assert alcanca(["web_rapido__ler_pagina"], "web_rapido")
+    assert alcanca(["*"], "web_rapido") and alcanca(["web*"], "web_rapido")
+    assert not alcanca(["terminal__*", "ler_arquivo"], "web_rapido")
+
+
 @pytest.mark.anyio
 async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
     """O abiyss.toml versionado dá as ferramentas deste servidor aos níveis
@@ -173,11 +190,17 @@ async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
     dados = tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())
     pasta = "recursos/mcp/" + PASTA_SERVIDOR.name
     meu = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == pasta)
+    web = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == "recursos/mcp/web_rapido")
     async with Client(servidor.criar_servidor(fazer_config(), ambiente_falso())) as cliente:
         nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
     assert nomes
-    # o low é só leitura: sem o terminal
+    # Só o medium roda comandos: o low é só leitura e o ultra lê a web.
     for nivel in ("ultra", "medium", "low"):
         lista = dados["subagentes"][nivel]["ferramentas"]
         for nome in nomes:
-            assert permitida(lista, nome) is (nivel in ("ultra", "medium")), (nivel, nome)
+            assert permitida(lista, nome) is (nivel == "medium"), (nivel, nome)
+        # Comandos e leitura da web nunca no mesmo nível: uma página poderia
+        # mandar ler um arquivo (ou rodar um programa) e buscar uma URL do
+        # atacante com o conteúdo (docs/LIMITES.md).
+        if any(permitida(lista, nome) for nome in nomes):
+            assert not alcanca(lista, web), f"{nivel}: terminal e {web} no mesmo nível"

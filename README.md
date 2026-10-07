@@ -542,6 +542,11 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
   neutralizadas.
 - **Sub-agente não cria sub-agente**: `delegar`/`status`/`cancelar` nunca entram
   na caixa de ferramentas deles, independentemente da config.
+- **Web e comandos em sub-agentes diferentes**: `ultra` e `low` leem a web
+  (`web_rapido`), só o `medium` roda comandos (`terminal`); uma página não
+  consegue mandar o mesmo sub-agente rodar um programa e enviar o resultado
+  para uma URL. O raciocínio e o que continua possível estão em
+  [`docs/LIMITES.md`](docs/LIMITES.md).
 - **Identidade**: as regras do kernel (nome Abiyss, nunca Hermes nem humano)
   ficam no código e vêm antes do núcleo editável.
 

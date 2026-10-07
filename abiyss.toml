@@ -441,8 +441,11 @@ max_notas_relacionadas = 8
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
 # As mãos (servidores MCP terminal, web_rapido e ambiente) entram por aqui:
-# é pela delegação que o heartbeat as usa. O low continua só de leitura:
-# sem escrever_arquivo e sem o terminal (que escreve no workspace).
+# é pela delegação que o heartbeat as usa. Ler a web e rodar comandos NUNCA
+# ficam no mesmo nível: uma página poderia mandar o sub-agente ler um arquivo
+# (ou rodar um programa) e buscar uma URL do atacante com o conteúdo
+# (docs/LIMITES.md). Pesquisa na web: ultra ou low. Comandos: medium. O low
+# continua só de leitura (sem escrever_arquivo e sem o terminal).
 # ---------------------------------------------------------------------------
 
 [subagentes]
@@ -463,7 +466,7 @@ esforco_padrao = "high"
 esforco_maximo = "ultra"
 ferramentas = [
   "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
-  "terminal__*", "web_rapido__*", "ambiente__*",
+  "web_rapido__*", "ambiente__*",
 ]
 
 [subagentes.medium]
@@ -474,7 +477,7 @@ esforco_padrao = "medium"
 esforco_maximo = "high"
 ferramentas = [
   "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
-  "terminal__*", "web_rapido__*", "ambiente__*",
+  "terminal__*", "ambiente__*",
 ]
 
 [subagentes.low]

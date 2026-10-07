@@ -935,6 +935,46 @@ mod testes {
         assert!(Config::de_texto(&texto).is_err());
     }
 
+    /// O abiyss.toml versionado nunca dá a web e os comandos ao mesmo nível
+    /// de sub-agente (docs/LIMITES.md: uma página mandaria ler um arquivo e
+    /// buscar uma URL com ele). Os testes dos servidores MCP conferem o mesmo;
+    /// este roda no `cargo test` do CI.
+    #[test]
+    fn abiyss_toml_separa_web_e_comandos_nos_subagentes() {
+        let config = Config::de_texto(include_str!("../../abiyss.toml")).unwrap();
+        let servidor = |pasta: &str| {
+            let item = config
+                .mcp
+                .servidores
+                .iter()
+                .find(|s| s.diretorio.as_deref() == Some(pasta))
+                .unwrap_or_else(|| panic!("{pasta} não está em [[mcp.servidores]]"));
+            format!("{}__", item.nome)
+        };
+        let (web, terminal) = (
+            servidor("recursos/mcp/web_rapido"),
+            servidor("recursos/mcp/terminal"),
+        );
+        // Algum item da lista deixa passar uma ferramenta com este prefixo?
+        // (nome com o prefixo, ou curinga que cobre o prefixo, como "*").
+        let alcanca = |lista: &[String], prefixo: &str| {
+            lista.iter().any(|p| match p.strip_suffix('*') {
+                Some(inicio) => inicio.starts_with(prefixo) || prefixo.starts_with(inicio),
+                None => p.starts_with(prefixo),
+            })
+        };
+        let s = &config.subagentes;
+        for (nivel, lista, com_web, com_terminal) in [
+            ("ultra", &s.ultra.ferramentas, true, false),
+            ("medium", &s.medium.ferramentas, false, true),
+            ("low", &s.low.ferramentas, true, false),
+        ] {
+            assert_eq!(alcanca(lista, &web), com_web, "{nivel}: web");
+            assert_eq!(alcanca(lista, &terminal), com_terminal, "{nivel}: terminal");
+        }
+        assert!(alcanca(&["*".to_string()], &web));
+    }
+
     #[test]
     fn chave_ausente_vazia_ou_de_exemplo_e_recusada() {
         assert!(validar_chave("X", None).is_err());
