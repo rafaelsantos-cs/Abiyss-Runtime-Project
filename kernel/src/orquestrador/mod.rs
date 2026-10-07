@@ -211,7 +211,7 @@ impl NucleoPool {
                 },
                 total: duracao,
             };
-            self.registrar(origem, &pedido.model, tentativa, &resultado, &latencia);
+            self.registrar(origem, pedido, tentativa, &resultado, &latencia);
 
             let erro = match resultado {
                 Ok(resposta) => return Ok(resposta),
@@ -242,11 +242,12 @@ impl NucleoPool {
         }
     }
 
-    /// Guarda a tentativa em `chamadas_modelo`. Falha aqui não derruba a chamada.
+    /// Guarda a tentativa em `chamadas_modelo` (com o nível de esforço do
+    /// pedido, se houver). Falha aqui não derruba a chamada.
     fn registrar(
         &self,
         origem: &str,
-        modelo: &str,
+        pedido: &PedidoChat,
         tentativa: u32,
         resultado: &Result<RespostaModelo, ErroNim>,
         latencia: &Latencia,
@@ -260,13 +261,14 @@ impl NucleoPool {
         let gravou = self.banco.conexao().execute(
             "INSERT INTO chamadas_modelo
                (momento_ms, pool, origem, modelo, tentativa, status, http_status,
-                tokens_entrada, tokens_saida, duracao_ms, primeiro_token_ms, stream)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                tokens_entrada, tokens_saida, duracao_ms, primeiro_token_ms, stream,
+                nivel_esforco, esforco_confirmado)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 agora_ms(),
                 self.nome,
                 origem,
-                modelo,
+                pedido.model,
                 tentativa,
                 status,
                 http,
@@ -274,7 +276,9 @@ impl NucleoPool {
                 saida as i64,
                 latencia.total.as_millis() as i64,
                 latencia.primeiro_token.map(|d| d.as_millis() as i64),
-                latencia.stream
+                latencia.stream,
+                pedido.esforco.map(|e| e.nivel.como_texto()),
+                pedido.esforco.map(|e| e.confirmado)
             ],
         );
         if let Err(e) = gravou {

@@ -15,6 +15,8 @@ use abiyss::{manutencao, tempo};
 pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()> {
     // Primeiro a trava: se já houver um daemon, nem abrimos nada.
     let _trava = TravaDaemon::adquirir(&config)?;
+    // Níveis da tabela de esforço ainda a confirmar no NIM: um aviso por modelo.
+    abiyss::esforco::avisar_a_confirmar(&config.modelos);
     let banco = Banco::abrir(&config.caminho_banco())?;
     banco.limitar_cache(config.banco.cache_kib)?;
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;

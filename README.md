@@ -72,7 +72,24 @@ data/abiyss.db               ← SQLite (criado sozinho)
 - **429**: o `Retry-After` bloqueia o pool inteiro até o horário pedido.
 - **Erros temporários** (5xx, rede): backoff exponencial com sorteio.
 - **Um pool nunca usa a capacidade do outro** (baldes, filas e clientes separados).
-- Cada tentativa fica registrada (`chamadas_modelo`) e alimenta a interocepção.
+- Cada tentativa fica registrada (`chamadas_modelo`, com o nível de esforço)
+  e alimenta a interocepção.
+
+### Esforço por situação
+
+A tabela de esforço (`[modelos.<papel>.esforco]`, `abiyss esforco`) traduz
+os níveis `minimal`…`ultra` para os campos de cada modelo. Quem escolhe o nível:
+
+| Onde | Padrão | Mais fundo |
+|---|---|---|
+| chat | `[chat] esforco_padrao = "medium"` | o modelo chama `aprofundar` e o resto daquela resposta sobe até `esforco_maximo` (`high`) |
+| heartbeat | `[daemon.esforco] rotina = "raso"` (medium) | `revisao_goal`, `estagnacao` e `despertar` = `"profundo"` (high) |
+| sub-agentes | `[subagentes.<nível>] esforco_padrao` (ultra: high; medium: medium; low: low) | o `esforco` da delegação, limitado a `esforco_maximo` (ultra; high; medium) |
+| sono | `[sono] modo_esforco = "profundo"` | — |
+
+Nível marcado `a_confirmar` não envia os campos dele (só o modelo, com os
+parâmetros padrão) e o daemon avisa no log, uma vez por modelo. O `abiyss
+status` mostra a latência de cada modelo por nível de esforço.
 
 ### Regra de orçamento
 
@@ -229,9 +246,9 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss chat --mostrar-raciocinio` | Mostra o raciocínio do modelo em cinza |
 | `abiyss daemon` | Roda o Abiyss 24/7 (heartbeat, crons, sub-agentes) |
 | `abiyss daemon --uma-vez` | Um ciclo de heartbeat (+ sub-agentes pendentes) e sai |
-| `abiyss status` | Estado geral: daemon, identidade, último sono, disjuntor, pedidos, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss status` | Estado geral: daemon, identidade, último sono, disjuntor, pedidos, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo e, dentro dele, por nível de esforço, 24 h), interocepção |
 | `abiyss status --verificar` | Uma linha e código de saída para monitor externo: 0 = ok, 1 = degradado (sinal de vida atrasado, disjuntor aberto, sono falho ou atrasado), 2 = daemon parado |
-| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` |
+| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` (e os campos que eles deixam de enviar) |
 | `abiyss manutencao` | Roda agora a retenção (detalhe antigo → agregado diário), o vacuum incremental e o checkpoint do WAL |
 | `abiyss goal add "Título" --nucleo "essência + critério de pronto" [--descricao ..] [--prioridade N]` | Cria um goal (estado `proposto`) |
 | `abiyss goal list [--todos]` | Lista goals (`*` = em foco) |

@@ -19,6 +19,7 @@ use crate::config::{Config, ConfigSkillsAutomaticas};
 use crate::dados;
 use crate::db::Banco;
 use crate::diario;
+use crate::esforco::{self, EscolhaEsforco, ModoEsforco, NivelEsforco};
 use crate::eventos::{self, Evento};
 use crate::goals::{self, EstadoGoal, Goal};
 use crate::identidade::{BlocosPrompt, Identidade};
@@ -72,6 +73,10 @@ pub enum Acao {
         prazo_segundos: u64,
         #[serde(default)]
         goal_id: Option<i64>,
+        /// Nível da tabela de esforço (opcional), limitado ao teto do nível
+        /// do sub-agente (`[subagentes.<nível>] esforco_maximo`).
+        #[serde(default)]
+        esforco: Option<String>,
     },
     /// Cancela um sub-agente em andamento.
     CancelarSubagente { id: i64 },
@@ -116,6 +121,127 @@ fn prazo_padrao() -> u64 {
     600
 }
 
+/// `[daemon.esforco]`: nível do cérebro em cada situação do heartbeat. Cada
+/// valor é um modo (`raso` = medium, `profundo` = high) ou um nível exato.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigEsforcoHeartbeat {
+    /// Ciclos comuns: eventos (cron, relatório de sub-agente, resposta do
+    /// dono, skill consultada...) ou um goal que mudou.
+    pub rotina: EscolhaEsforco,
+    /// Revisão periódica do goal em foco (e o primeiro ciclo com um goal).
+    pub revisao_goal: EscolhaEsforco,
+    /// O ciclo traz um aviso `kernel/estagnacao`.
+    pub estagnacao: EscolhaEsforco,
+    /// Planejar o dia ao acordar: o ciclo traz o resumo do sono ou um
+    /// `kernel/reinicio`.
+    pub despertar: EscolhaEsforco,
+}
+
+impl Default for ConfigEsforcoHeartbeat {
+    fn default() -> Self {
+        ConfigEsforcoHeartbeat {
+            rotina: EscolhaEsforco::Modo(ModoEsforco::Raso),
+            revisao_goal: EscolhaEsforco::Modo(ModoEsforco::Profundo),
+            estagnacao: EscolhaEsforco::Modo(ModoEsforco::Profundo),
+            despertar: EscolhaEsforco::Modo(ModoEsforco::Profundo),
+        }
+    }
+}
+
+impl ConfigEsforcoHeartbeat {
+    pub fn escolha(&self, situacao: SituacaoCiclo) -> EscolhaEsforco {
+        match situacao {
+            SituacaoCiclo::Rotina => self.rotina,
+            SituacaoCiclo::RevisaoGoal => self.revisao_goal,
+            SituacaoCiclo::Estagnacao => self.estagnacao,
+            SituacaoCiclo::Despertar => self.despertar,
+        }
+    }
+
+    /// O nível do ciclo e a situação que o decidiu: a mais profunda entre as
+    /// situações especiais presentes; sem nenhuma, a rotina. No empate vale
+    /// a primeira da lista.
+    pub fn nivel_para(&self, situacoes: &[SituacaoCiclo]) -> (NivelEsforco, SituacaoCiclo) {
+        let mut escolhida = (self.rotina.nivel(), SituacaoCiclo::Rotina);
+        for (i, situacao) in situacoes.iter().enumerate() {
+            let nivel = self.escolha(*situacao).nivel();
+            if i == 0 || nivel > escolhida.0 {
+                escolhida = (nivel, *situacao);
+            }
+        }
+        escolhida
+    }
+}
+
+/// Por que o ciclo chama o modelo (decidido por código).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotivoChamada {
+    /// N eventos novos na fila.
+    Eventos(usize),
+    /// Primeiro ciclo (nenhum anterior com modelo) com o goal em foco.
+    PrimeiroCiclo(i64),
+    /// O goal em foco mudou desde o último ciclo.
+    GoalMudou(i64),
+    /// Revisão periódica do goal em foco.
+    Revisao(i64),
+}
+
+impl MotivoChamada {
+    pub fn como_texto(&self) -> String {
+        match self {
+            MotivoChamada::Eventos(n) => format!("{n} evento(s) novo(s) na fila"),
+            MotivoChamada::PrimeiroCiclo(id) => format!("primeiro ciclo com o goal #{id}"),
+            MotivoChamada::GoalMudou(id) => format!("o goal #{id} mudou desde o último ciclo"),
+            MotivoChamada::Revisao(id) => format!("revisão periódica do goal #{id}"),
+        }
+    }
+}
+
+/// Situações que escolhem o esforço do ciclo (`[daemon.esforco]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SituacaoCiclo {
+    Rotina,
+    RevisaoGoal,
+    Estagnacao,
+    Despertar,
+}
+
+impl SituacaoCiclo {
+    pub fn como_texto(&self) -> &'static str {
+        match self {
+            SituacaoCiclo::Rotina => "rotina",
+            SituacaoCiclo::RevisaoGoal => "revisão de goal",
+            SituacaoCiclo::Estagnacao => "estagnação",
+            SituacaoCiclo::Despertar => "despertar",
+        }
+    }
+}
+
+/// As situações especiais deste ciclo, nesta ordem: despertar, estagnação,
+/// revisão de goal. Vazio = rotina.
+pub fn situacoes_do_ciclo(motivo: MotivoChamada, novos: &[Evento]) -> Vec<SituacaoCiclo> {
+    let tem = |tipo: &str, origem: Option<&str>| {
+        novos
+            .iter()
+            .any(|e| e.tipo == tipo && origem.is_none_or(|o| e.origem == o))
+    };
+    let mut situacoes = Vec::new();
+    if tem(eventos::TIPO_SONO, None) || tem(eventos::TIPO_KERNEL, Some(eventos::ORIGEM_REINICIO)) {
+        situacoes.push(SituacaoCiclo::Despertar);
+    }
+    if tem(eventos::TIPO_KERNEL, Some(vigilancia::ORIGEM_ESTAGNACAO)) {
+        situacoes.push(SituacaoCiclo::Estagnacao);
+    }
+    if matches!(
+        motivo,
+        MotivoChamada::Revisao(_) | MotivoChamada::PrimeiroCiclo(_)
+    ) {
+        situacoes.push(SituacaoCiclo::RevisaoGoal);
+    }
+    situacoes
+}
+
 /// O que uma ação executada produziu.
 struct AcaoFeita {
     texto: String,
@@ -156,6 +282,8 @@ pub struct ResultadoCiclo {
     /// Alguma ação deixou algo para o próximo ciclo ler: o daemon antecipa
     /// esse ciclo (ciclo de continuação, com limite).
     pub pedir_continuacao: bool,
+    /// Nível de esforço da chamada ao modelo e a situação que o decidiu.
+    pub esforco: Option<(NivelEsforco, SituacaoCiclo)>,
 }
 
 /// Um ciclo como guardado no banco.
@@ -234,7 +362,7 @@ impl Heartbeat {
             .unwrap_or(1);
 
         // 3. Precisa mesmo chamar o modelo?
-        let motivo = motivo_para_chamar(
+        let motivo = motivo_da_chamada(
             &novos,
             foco.as_ref(),
             ultimo.as_ref(),
@@ -254,14 +382,23 @@ impl Heartbeat {
             vigilancia::situacao(&vigilancia::ler_disjuntor(&self.banco)?, inicio)
         {
             resultado.motivo = format!(
-                "disjuntor aberto até {} (o modelo vinha falhando); adiado: {motivo}",
-                formatar_ms(ate_ms)
+                "disjuntor aberto até {} (o modelo vinha falhando); adiado: {}",
+                formatar_ms(ate_ms),
+                motivo.como_texto()
             );
             registrar_ciclo(&self.banco, inicio, &resultado, None, None, 0)?;
             return Ok(resultado);
         }
-        resultado.motivo = motivo;
+        resultado.motivo = motivo.como_texto();
         resultado.chamou_modelo = true;
+        // Esforço: raso na rotina; profundo (por padrão) na revisão do goal,
+        // na estagnação e ao acordar. Ver `[daemon.esforco]`.
+        let (nivel_esforco, situacao) = self
+            .config
+            .daemon
+            .esforco
+            .nivel_para(&situacoes_do_ciclo(motivo, &novos));
+        resultado.esforco = Some((nivel_esforco, situacao));
 
         // 4. UMA chamada ao modelo. O "corpo" (interocepção) é medido por código.
         let corpo = match Interocepcao::medir(&self.config, &self.banco) {
@@ -284,7 +421,8 @@ impl Heartbeat {
                 &procedimentos,
             )),
         ];
-        let pedido = nim::montar_pedido(&self.config.modelos.cerebro, mensagens, vec![]);
+        let modelo = esforco::modelo_no_nivel(&self.config.modelos, "cerebro", nivel_esforco);
+        let pedido = nim::montar_pedido(&modelo, mensagens, vec![]);
         let resposta = match self
             .orquestrador
             .cerebro
@@ -558,6 +696,7 @@ impl Heartbeat {
                 contexto,
                 prazo_segundos,
                 goal_id,
+                esforco,
             } => {
                 if self.nivel_orcamento()? == NivelOrcamento::Esgotado {
                     anyhow::bail!(
@@ -566,16 +705,29 @@ impl Heartbeat {
                 }
                 let nivel = Nivel::de_texto(&nivel)
                     .with_context(|| format!("nível inválido '{nivel}' (ultra, medium ou low)"))?;
+                let esforco = subagentes::esforco_de_texto(esforco.as_deref())?;
                 let pedido = PedidoDelegacao {
                     nivel,
                     tarefa,
                     contexto,
                     prazo_segundos,
                     goal_id,
+                    esforco,
                 };
                 let id = self.subagentes.delegar(&pedido, "heartbeat")?;
+                let (efetivo, limitado) = self.config.subagentes.esforco(nivel).limitar(esforco);
+                let corte = match esforco {
+                    Some(pedido) if limitado => {
+                        format!("; pedido {} limitado ao teto do nível", pedido.como_texto())
+                    }
+                    _ => String::new(),
+                };
                 Ok(AcaoFeita {
-                    texto: format!("sub-agente {id} ({}) delegado", nivel.como_texto()),
+                    texto: format!(
+                        "sub-agente {id} ({}, esforço {}{corte}) delegado",
+                        nivel.como_texto(),
+                        efetivo.como_texto()
+                    ),
                     subagente_id: Some(id),
                     continuar: false,
                 })
@@ -646,8 +798,9 @@ Responda SOMENTE com um objeto JSON, sem texto antes ou depois:\n\
 \"decisao\": \"o que você decidiu e por quê\",\n  \"acoes\": []\n}}\n\n\
 Ações possíveis em \"acoes\":\n\
 - {{\"tipo\": \"transicionar_goal\", \"goal_id\": N, \"para\": \"<estado>\", \"motivo\": \"...\"}}\n\
-- {{\"tipo\": \"delegar\", \"nivel\": \"ultra|medium|low\", \"tarefa\": \"...\", \"contexto\": \"...\", \"prazo_segundos\": 600, \"goal_id\": N}}\n\
-  (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento)\n\
+- {{\"tipo\": \"delegar\", \"nivel\": \"ultra|medium|low\", \"tarefa\": \"...\", \"contexto\": \"...\", \"prazo_segundos\": 600, \"goal_id\": N, \"esforco\": \"(opcional) minimal|low|medium|high|xhigh|ultra\"}}\n\
+  (sub-agente em segundo plano, com contexto limpo; o relatório chega depois como evento. \
+`esforco` pede mais ou menos raciocínio ao sub-agente; o kernel limita ao teto do nível)\n\
 - {{\"tipo\": \"cancelar_subagente\", \"id\": N}}\n\
 - {{\"tipo\": \"consultar_skill\", \"nome\": \"...\", \"referencia\": \"(opcional)\", \"motivo\": \"...\"}}\n\
   (o texto completo da skill chega como evento no ciclo seguinte, logo depois deste)\n\
@@ -664,7 +817,7 @@ Toda transição precisa de motivo. Se nada precisa ser feito, use \"acoes\": []
 /// Decide, por código, se o ciclo precisa do modelo. `None` = não precisa.
 /// `permitir_revisao = false` (fora das horas ativas ou orçamento em
 /// alerta): só eventos e mudanças de goal acordam o modelo.
-pub fn motivo_para_chamar(
+pub fn motivo_da_chamada(
     novos: &[Evento],
     foco: Option<&Goal>,
     ultimo: Option<&Ciclo>,
@@ -672,24 +825,22 @@ pub fn motivo_para_chamar(
     agora: i64,
     revisao_minima_segundos: u64,
     permitir_revisao: bool,
-) -> Option<String> {
+) -> Option<MotivoChamada> {
     if !novos.is_empty() {
-        return Some(format!("{} evento(s) novo(s) na fila", novos.len()));
+        return Some(MotivoChamada::Eventos(novos.len()));
     }
     let goal = foco?;
     // Com sub-agente trabalhando, o resultado chegará como evento:
     // não vale gastar uma chamada só para "ver como está".
     let revisao_permitida = permitir_revisao && subagentes_ativos == 0;
     match ultimo {
-        None => Some(format!("primeiro ciclo com o goal #{}", goal.id)),
-        Some(c) if goal.atualizado_ms > c.inicio_ms => {
-            Some(format!("o goal #{} mudou desde o último ciclo", goal.id))
-        }
+        None => Some(MotivoChamada::PrimeiroCiclo(goal.id)),
+        Some(c) if goal.atualizado_ms > c.inicio_ms => Some(MotivoChamada::GoalMudou(goal.id)),
         Some(c)
             if revisao_permitida
                 && agora - c.inicio_ms >= (revisao_minima_segundos as i64) * 1000 =>
         {
-            Some(format!("revisão periódica do goal #{}", goal.id))
+            Some(MotivoChamada::Revisao(goal.id))
         }
         Some(_) => None,
     }
@@ -1009,31 +1160,123 @@ mod testes {
         let anterior = ciclo(500);
         let chama =
             |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>, ativos, agora| {
-                motivo_para_chamar(novos, foco, ultimo, ativos, agora, 60, true)
+                motivo_da_chamada(novos, foco, ultimo, ativos, agora, 60, true)
             };
         // Sem goal e sem evento: não chama.
         assert_eq!(chama(&[], None, None, 0, 1000), None);
         // Evento novo: chama.
-        assert!(chama(std::slice::from_ref(&evento), None, None, 0, 1000).is_some());
+        assert_eq!(
+            chama(std::slice::from_ref(&evento), None, None, 0, 1000),
+            Some(MotivoChamada::Eventos(1))
+        );
         // Goal sem ciclo anterior: chama.
-        assert!(chama(&[], Some(&g), None, 0, 1000).is_some());
+        assert_eq!(
+            chama(&[], Some(&g), None, 0, 1000),
+            Some(MotivoChamada::PrimeiroCiclo(1))
+        );
         // Goal parado e ciclo recente: não chama.
         assert_eq!(chama(&[], Some(&g), Some(&anterior), 0, 1000), None);
         // Goal mudou depois do último ciclo: chama.
-        assert!(chama(&[], Some(&mudou), Some(&anterior), 0, 1000).is_some());
+        assert_eq!(
+            chama(&[], Some(&mudou), Some(&anterior), 0, 1000),
+            Some(MotivoChamada::GoalMudou(1))
+        );
         // Passou a revisão mínima: chama...
-        assert!(chama(&[], Some(&g), Some(&anterior), 0, 60_500).is_some());
+        assert_eq!(
+            chama(&[], Some(&g), Some(&anterior), 0, 60_500),
+            Some(MotivoChamada::Revisao(1))
+        );
+        assert_eq!(
+            MotivoChamada::Revisao(1).como_texto(),
+            "revisão periódica do goal #1"
+        );
         // ...a não ser que haja sub-agente trabalhando (o resultado virá como evento).
         assert_eq!(chama(&[], Some(&g), Some(&anterior), 1, 60_500), None);
 
         // Descanso ou orçamento em alerta: sem revisão periódica...
         let sem_revisao = |novos: &[Evento], foco: Option<&Goal>, ultimo: Option<&Ciclo>| {
-            motivo_para_chamar(novos, foco, ultimo, 0, 60_500, 60, false)
+            motivo_da_chamada(novos, foco, ultimo, 0, 60_500, 60, false)
         };
         assert_eq!(sem_revisao(&[], Some(&g), Some(&anterior)), None);
         // ...mas evento novo e goal que mudou ainda acordam o modelo.
         assert!(sem_revisao(std::slice::from_ref(&evento), Some(&g), Some(&anterior)).is_some());
         assert!(sem_revisao(&[], Some(&mudou), Some(&anterior)).is_some());
+    }
+
+    fn evento(tipo: &str, origem: &str) -> Evento {
+        Evento {
+            id: 1,
+            momento_ms: 0,
+            tipo: tipo.into(),
+            origem: origem.into(),
+            conteudo: "x".into(),
+            origem_externa: None,
+        }
+    }
+
+    #[test]
+    fn situacoes_e_nivel_de_esforco_do_ciclo() {
+        let cron = evento("cron", "lembrete");
+        let estagnacao = evento(eventos::TIPO_KERNEL, vigilancia::ORIGEM_ESTAGNACAO);
+        let reinicio = evento(eventos::TIPO_KERNEL, eventos::ORIGEM_REINICIO);
+        let sono = evento(eventos::TIPO_SONO, "2026-10-06");
+
+        let situacoes = |motivo, novos: &[Evento]| situacoes_do_ciclo(motivo, novos);
+        assert!(situacoes(MotivoChamada::Eventos(1), std::slice::from_ref(&cron)).is_empty());
+        assert!(situacoes(MotivoChamada::GoalMudou(1), &[]).is_empty());
+        assert_eq!(
+            situacoes(MotivoChamada::Revisao(1), &[]),
+            vec![SituacaoCiclo::RevisaoGoal]
+        );
+        assert_eq!(
+            situacoes(MotivoChamada::PrimeiroCiclo(1), &[]),
+            vec![SituacaoCiclo::RevisaoGoal]
+        );
+        assert_eq!(
+            situacoes(
+                MotivoChamada::Eventos(3),
+                &[cron.clone(), estagnacao.clone(), sono.clone()]
+            ),
+            vec![SituacaoCiclo::Despertar, SituacaoCiclo::Estagnacao]
+        );
+        assert_eq!(
+            situacoes(MotivoChamada::Eventos(1), std::slice::from_ref(&reinicio)),
+            vec![SituacaoCiclo::Despertar]
+        );
+
+        // Padrão: rotina rasa (medium), o resto profundo (high).
+        let padrao = ConfigEsforcoHeartbeat::default();
+        assert_eq!(
+            padrao.nivel_para(&[]),
+            (NivelEsforco::Medium, SituacaoCiclo::Rotina)
+        );
+        assert_eq!(
+            padrao.nivel_para(&[SituacaoCiclo::Estagnacao]),
+            (NivelEsforco::High, SituacaoCiclo::Estagnacao)
+        );
+        // Várias situações: vale a mais profunda (no empate, a primeira).
+        let config: ConfigEsforcoHeartbeat = toml::from_str(
+            "rotina = \"low\"\nrevisao_goal = \"profundo\"\nestagnacao = \"ultra\"\ndespertar = \"xhigh\"",
+        )
+        .unwrap();
+        assert_eq!(
+            config.nivel_para(&[SituacaoCiclo::Despertar, SituacaoCiclo::Estagnacao]),
+            (NivelEsforco::Ultra, SituacaoCiclo::Estagnacao)
+        );
+        assert_eq!(
+            config.nivel_para(&[SituacaoCiclo::RevisaoGoal]),
+            (NivelEsforco::High, SituacaoCiclo::RevisaoGoal)
+        );
+        assert_eq!(config.nivel_para(&[]).0, NivelEsforco::Low);
+        // Uma situação configurada mais rasa que a rotina vale assim mesmo.
+        let raso: ConfigEsforcoHeartbeat = toml::from_str("revisao_goal = \"minimal\"").unwrap();
+        assert_eq!(
+            raso.nivel_para(&[SituacaoCiclo::RevisaoGoal]),
+            (NivelEsforco::Minimal, SituacaoCiclo::RevisaoGoal)
+        );
+        // Valor inválido não carrega.
+        assert!(toml::from_str::<ConfigEsforcoHeartbeat>("rotina = \"max\"").is_err());
+        assert!(toml::from_str::<ConfigEsforcoHeartbeat>("rotinas = \"raso\"").is_err());
     }
 
     #[test]

@@ -53,7 +53,8 @@ async fn escreve_e_le_arquivo_no_workspace() {
 
     let requisicoes = amb.mock.requisicoes();
     assert_eq!(requisicoes.len(), 3);
-    // As três ferramentas nativas foram oferecidas.
+    // As três ferramentas nativas foram oferecidas (+ `aprofundar`, do
+    // próprio chat: mais esforço numa resposta).
     let nomes: Vec<&str> = requisicoes[0].corpo["tools"]
         .as_array()
         .unwrap()
@@ -62,7 +63,12 @@ async fn escreve_e_le_arquivo_no_workspace() {
         .collect();
     assert_eq!(
         nomes,
-        vec!["ler_arquivo", "listar_arquivos", "escrever_arquivo"]
+        vec![
+            "ler_arquivo",
+            "listar_arquivos",
+            "escrever_arquivo",
+            "aprofundar"
+        ]
     );
     // O resultado da leitura voltou ao modelo rotulado como dado,
     // respondendo à chamada certa.

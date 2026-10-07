@@ -202,6 +202,10 @@ pub struct PedidoChat {
     /// `flatten` coloca cada chave direto na raiz do JSON.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+    /// Não vai para o NIM: o nível da tabela de esforço com que o pedido foi
+    /// montado (o orquestrador grava em `chamadas_modelo`).
+    #[serde(skip)]
+    pub esforco: Option<crate::esforco::EsforcoAplicado>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -349,8 +353,13 @@ mod testes {
             temperature: None,
             top_p: None,
             extra,
+            esforco: Some(crate::esforco::EsforcoAplicado {
+                nivel: crate::esforco::NivelEsforco::High,
+                confirmado: true,
+            }),
         };
         let v = serde_json::to_value(&pedido).unwrap();
+        assert!(v.get("esforco").is_none(), "o nível não vai para o NIM");
         assert_eq!(v["chat_template_kwargs"]["enable_thinking"], json!(true));
         assert_eq!(v["max_tokens"], json!(10));
         assert!(v.get("tools").is_none(), "lista vazia não deve ser enviada");

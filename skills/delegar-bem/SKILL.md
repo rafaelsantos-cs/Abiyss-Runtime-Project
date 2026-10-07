@@ -23,6 +23,9 @@ nem os goals. Tudo de que ele precisa tem de estar na delegação.
   `ultra` só para raciocínio difícil.
 - prazo em segundos: `prazo` no chat, `prazo_segundos` no heartbeat.
 - no heartbeat, inclua o `goal_id` do goal que a delegação avança.
+- `esforco` (opcional, `minimal`…`ultra`): só quando a tarefa pede mais (ou
+  menos) raciocínio que o normal do nível. O kernel limita ao teto do nível
+  (`low` até `medium`, `medium` até `high`); precisa de mais? Suba o `nivel`.
 
 ## Depois
 

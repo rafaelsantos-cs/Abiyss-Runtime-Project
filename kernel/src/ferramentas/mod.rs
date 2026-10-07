@@ -483,9 +483,12 @@ impl CaixaDeFerramentas {
             DELEGAR => {
                 let pedido = ControleSubagentes::pedido_de_argumentos(args)?;
                 let id = controle.delegar(&pedido, "chat")?;
+                // O esforço que vai rodar (o pedido pode ter sido limitado ao teto).
+                let esforco = controle.status(id)?.esforco.map(|e| e.como_texto());
                 Ok(json!({
                     "id": id,
                     "estado": "pendente",
+                    "esforco": esforco,
                     "observacao": "o sub-agente roda em segundo plano (no daemon); o resultado chega como evento na fila e pode ser consultado com status(id)"
                 })
                 .to_string())
@@ -658,14 +661,16 @@ fn definicoes_orquestracao() -> Vec<Ferramenta> {
         Ferramenta::nova(
             DELEGAR,
             "Delega uma tarefa a um sub-agente que roda em segundo plano. Devolve um ID na hora; \
-             o relatório chega depois como evento. Níveis: ultra (mais capaz e caro), medium, low (mais barato).",
+             o relatório chega depois como evento. Níveis: ultra (mais capaz e caro), medium, low (mais barato). \
+             'esforco' (opcional) pede mais ou menos raciocínio ao sub-agente; o kernel limita ao teto do nível.",
             json!({
                 "type": "object",
                 "properties": {
                     "nivel": {"type": "string", "enum": ["ultra", "medium", "low"]},
                     "tarefa": {"type": "string", "description": "O que fazer, de forma autocontida"},
                     "contexto": {"type": "string", "description": "Informações que o sub-agente precisa (ele não vê esta conversa)"},
-                    "prazo": {"type": "integer", "description": "Prazo em segundos"}
+                    "prazo": {"type": "integer", "description": "Prazo em segundos"},
+                    "esforco": {"type": "string", "enum": ["minimal", "low", "medium", "high", "xhigh", "ultra"]}
                 },
                 "required": ["nivel", "tarefa"]
             }),

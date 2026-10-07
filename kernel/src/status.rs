@@ -334,8 +334,11 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         }
     }
 
-    // Latência das chamadas ao modelo (últimas 24 h, só tentativas com sucesso).
-    let latencias = latencia::resumo_desde(banco, agora - latencia::JANELA_24H_MS)?;
+    // Latência das chamadas ao modelo (últimas 24 h, só tentativas com
+    // sucesso), por modelo e, dentro dele, por nível de esforço.
+    let desde = agora - latencia::JANELA_24H_MS;
+    let latencias = latencia::resumo_desde(banco, desde)?;
+    let por_esforco = latencia::resumo_por_esforco_desde(banco, desde)?;
     if latencias.is_empty() {
         writeln!(t, "Latência (24 h): nenhuma chamada ao modelo")?;
     } else {
@@ -353,6 +356,29 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
                 l.sucessos,
                 l.falhas
             )?;
+            for e in por_esforco
+                .iter()
+                .filter(|e| e.modelo == l.modelo && e.pool == l.pool)
+            {
+                let nivel = match (e.nivel, e.a_confirmar) {
+                    (Some(n), false) => format!("esforço {}", n.como_texto()),
+                    (Some(n), true) => format!(
+                        "esforço {} [a confirmar: parâmetros padrão]",
+                        n.como_texto()
+                    ),
+                    (None, _) => "sem nível de esforço".to_string(),
+                };
+                writeln!(
+                    t,
+                    "    {nivel}: 1º token {} / {}; total {} / {} ({} ok, {} falha(s))",
+                    latencia::formatar(e.primeiro_token.p50),
+                    latencia::formatar(e.primeiro_token.p95),
+                    latencia::formatar(e.total.p50),
+                    latencia::formatar(e.total.p95),
+                    e.sucessos,
+                    e.falhas
+                )?;
+            }
         }
     }
 

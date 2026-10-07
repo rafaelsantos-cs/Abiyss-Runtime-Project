@@ -312,6 +312,17 @@ const MIGRACOES: &[&str] = &[
     CREATE UNIQUE INDEX idx_pedidos_chave_pendente
         ON pedidos_usuario(chave) WHERE estado = 'pendente';
     "#,
+    // 14 (v0.2, ajustes) — tabela de esforço ligada ao runtime. Em cada
+    // chamada: o nível resolvido (NULL = sem tabela, ex.: `testar-nim`, ou
+    // chamada anterior a esta migração) e se os campos dele foram enviados
+    // (0 = nível a confirmar ou fora da tabela: foram os parâmetros padrão
+    // do modelo). Em cada sub-agente: o nível que ele roda (já limitado ao
+    // teto do nível do sub-agente; NULL = anterior a esta migração).
+    r#"
+    ALTER TABLE chamadas_modelo ADD COLUMN nivel_esforco TEXT;
+    ALTER TABLE chamadas_modelo ADD COLUMN esforco_confirmado INTEGER;
+    ALTER TABLE subagentes ADD COLUMN esforco TEXT;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

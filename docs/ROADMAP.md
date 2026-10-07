@@ -36,6 +36,7 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
 | E7 | Estagnação (impressão digital das decisões; aviso + `sair-de-loops` + revisão espaçada) e disjuntor do heartbeat (abre após falhas seguidas, espera exponencial com sorteio, meio-aberto) |
 | E8 | Despertar: aviso `kernel/reinicio` depois de ausência longa (queda × parada limpa), `planejar-o-dia` no primeiro ciclo, interocepção com tempo no ar, último sono e pedidos |
 | E9 | Pedidos ao usuário: ação `pedir_ao_usuario`, `abiyss pedidos`, `responder_pedido` no chat, deduplicação, teto, expiração com aviso; perguntas do sono viram pedidos; skill `pedir-ao-usuario` |
+| v0.2 ajustes | Tabela de esforço ligada ao runtime: chat (`[chat] esforco_padrao` + ferramenta `aprofundar` até `esforco_maximo` numa resposta), heartbeat (`[daemon.esforco]`: raso na rotina, profundo na revisão do goal, na estagnação e no despertar), delegação (`esforco` opcional limitado ao teto do nível); níveis `a_confirmar` vão sem os campos e geram um aviso por modelo ao subir; nível gravado em cada chamada (migração 14) e latência por nível no `status` |
 
 ## Antes das próximas fases: validar na VM
 
@@ -194,9 +195,9 @@ chat). Hoje tudo é CLI (e, depois de B, os canais).
 - A retenção cobre `chamadas_modelo`, `ciclos` e os eventos consumidos de
   `fila_eventos` (viram agregados diários). `propostas_memoria`,
   `registro_memoria`, `mensagens` e `diario` continuam crescendo sem limpeza.
-- A tabela de esforço (`abiyss esforco`) só é usada pelo sono (modo
-  `profundo` na passada interna, `raso` na externa); o chat, o heartbeat e
-  os sub-agentes ainda não a usam.
+- Os agregados diários de `chamadas_modelo` (retenção) não separam por nível
+  de esforço: a latência por nível só existe nos últimos
+  `chamadas_modelo_dias` de detalhe (o `status` usa as últimas 24 h).
 - Interocepção usa carga média do sistema (não o uso de CPU do processo).
 - Regra dura da memória: a marca de origem externa vale para resultados de
   ferramentas e para a resposta escrita logo depois deles no mesmo turno, e

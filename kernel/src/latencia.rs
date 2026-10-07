@@ -1,14 +1,19 @@
 //! Latência das chamadas ao modelo, lida do registro `chamadas_modelo`.
 //!
 //! O orquestrador grava, em toda tentativa, o tempo até o primeiro token
-//! (`primeiro_token_ms`) e a duração total (`duracao_ms`). Aqui só lemos e
-//! resumimos em percentis (p50 e p95) por modelo e por pool — para o
-//! `abiyss status`. Só tentativas com sucesso entram nos percentis; as
+//! (`primeiro_token_ms`), a duração total (`duracao_ms`) e o nível da
+//! tabela de esforço (`nivel_esforco`). Aqui só lemos e resumimos em
+//! percentis (p50 e p95) por modelo e por pool, e por nível de esforço
+//! dentro de cada um — para o `abiyss status` (calibrar o esforço contra a
+//! latência na VM). Só tentativas com sucesso entram nos percentis; as
 //! falhas são contadas à parte (a duração de um erro não é latência do modelo).
+
+use std::collections::BTreeMap;
 
 use rusqlite::params;
 
 use crate::db::Banco;
+use crate::esforco::NivelEsforco;
 
 /// Janela padrão do `abiyss status`.
 pub const JANELA_24H_MS: i64 = 24 * 60 * 60 * 1000;
@@ -54,6 +59,93 @@ pub fn percentil(ordenados: &[i64], p: f64) -> Option<i64> {
     let posto = ((p / 100.0) * ordenados.len() as f64).ceil() as usize;
     let indice = posto.clamp(1, ordenados.len()) - 1;
     Some(ordenados[indice])
+}
+
+/// Resumo de um nível de esforço dentro de um par (modelo, pool).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LatenciaEsforco {
+    pub modelo: String,
+    pub pool: String,
+    /// `None` = chamada sem nível (ex.: `testar-nim`, ou anterior à migração 14).
+    pub nivel: Option<NivelEsforco>,
+    /// O nível era a confirmar: os campos dele não foram enviados (o pedido
+    /// usou os parâmetros padrão do modelo). Fica num grupo separado.
+    pub a_confirmar: bool,
+    pub sucessos: usize,
+    pub falhas: usize,
+    pub primeiro_token: Percentis,
+    pub total: Percentis,
+}
+
+/// Resume as chamadas feitas a partir de `desde_ms` por (modelo, pool,
+/// nível de esforço), em ordem de modelo, pool e nível (do mais leve ao
+/// mais pesado; sem nível por último).
+pub fn resumo_por_esforco_desde(
+    banco: &Banco,
+    desde_ms: i64,
+) -> anyhow::Result<Vec<LatenciaEsforco>> {
+    // Chave de ordenação: o nível pela ordem da tabela, "sem nível" no fim.
+    type Chave = (String, String, usize, bool);
+    #[derive(Default)]
+    struct Grupo {
+        falhas: usize,
+        primeiro_token: Vec<i64>,
+        total: Vec<i64>,
+    }
+    let mut grupos: BTreeMap<Chave, Grupo> = BTreeMap::new();
+    {
+        let conexao = banco.conexao();
+        let mut consulta = conexao.prepare(
+            "SELECT modelo, pool, nivel_esforco, esforco_confirmado, status,
+                    primeiro_token_ms, duracao_ms
+               FROM chamadas_modelo
+              WHERE momento_ms >= ?1",
+        )?;
+        let linhas = consulta.query_map(params![desde_ms], |l| {
+            Ok((
+                l.get::<_, String>(0)?,
+                l.get::<_, String>(1)?,
+                l.get::<_, Option<String>>(2)?,
+                l.get::<_, Option<bool>>(3)?,
+                l.get::<_, String>(4)?,
+                l.get::<_, Option<i64>>(5)?,
+                l.get::<_, i64>(6)?,
+            ))
+        })?;
+        for linha in linhas {
+            let (modelo, pool, nivel, confirmado, status, primeiro_token, duracao) = linha?;
+            let ordem = nivel
+                .as_deref()
+                .and_then(NivelEsforco::de_texto)
+                .map(|n| n as usize)
+                .unwrap_or(NivelEsforco::TODOS.len());
+            let a_confirmar = ordem < NivelEsforco::TODOS.len() && confirmado == Some(false);
+            let grupo = grupos
+                .entry((modelo, pool, ordem, a_confirmar))
+                .or_default();
+            if status == "ok" {
+                grupo.total.push(duracao);
+                if let Some(ms) = primeiro_token {
+                    grupo.primeiro_token.push(ms);
+                }
+            } else {
+                grupo.falhas += 1;
+            }
+        }
+    }
+    Ok(grupos
+        .into_iter()
+        .map(|((modelo, pool, ordem, a_confirmar), g)| LatenciaEsforco {
+            modelo,
+            pool,
+            nivel: NivelEsforco::TODOS.get(ordem).copied(),
+            a_confirmar,
+            sucessos: g.total.len(),
+            falhas: g.falhas,
+            primeiro_token: Percentis::de_amostras(g.primeiro_token),
+            total: Percentis::de_amostras(g.total),
+        })
+        .collect())
 }
 
 /// Resume as chamadas feitas a partir de `desde_ms`, por (modelo, pool),
@@ -188,5 +280,46 @@ mod testes {
         assert_eq!(cerebro.total.p95, Some(1_900));
         assert_eq!(resumo[1].pool, "subagentes");
         assert_eq!(resumo[1].total.p95, Some(50));
+    }
+
+    #[test]
+    fn resumo_por_esforco_separa_niveis_e_placeholders() {
+        let banco = Banco::em_memoria().unwrap();
+        let inserir = |nivel: Option<&str>, confirmado: Option<bool>, status: &str, total: i64| {
+            banco
+                .conexao()
+                .execute(
+                    "INSERT INTO chamadas_modelo (momento_ms, pool, origem, modelo, tentativa,
+                        status, duracao_ms, primeiro_token_ms, stream, nivel_esforco,
+                        esforco_confirmado)
+                     VALUES (1000, 'cerebro', 'teste', 'glm', 1, ?1, ?2, ?3, 0, ?4, ?5)",
+                    params![status, total, total / 2, nivel, confirmado],
+                )
+                .unwrap();
+        };
+        inserir(Some("high"), Some(true), "ok", 900);
+        inserir(Some("medium"), Some(true), "ok", 100);
+        inserir(Some("medium"), Some(true), "ok", 300);
+        inserir(Some("medium"), Some(true), "erro", 5);
+        inserir(Some("xhigh"), Some(false), "ok", 950);
+        inserir(None, None, "ok", 50);
+
+        let resumo = resumo_por_esforco_desde(&banco, 500).unwrap();
+        // (nível, a confirmar, sucessos, falhas, p95 do total) de cada grupo.
+        type Linha = (Option<NivelEsforco>, bool, usize, usize, Option<i64>);
+        let linhas: Vec<Linha> = resumo
+            .iter()
+            .map(|l| (l.nivel, l.a_confirmar, l.sucessos, l.falhas, l.total.p95))
+            .collect();
+        assert_eq!(
+            linhas,
+            vec![
+                (Some(NivelEsforco::Medium), false, 2, 1, Some(300)),
+                (Some(NivelEsforco::High), false, 1, 0, Some(900)),
+                (Some(NivelEsforco::Xhigh), true, 1, 0, Some(950)),
+                (None, false, 1, 0, Some(50)),
+            ]
+        );
+        assert_eq!(resumo[0].primeiro_token.p50, Some(50));
     }
 }

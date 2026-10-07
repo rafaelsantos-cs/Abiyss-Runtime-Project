@@ -406,8 +406,18 @@ impl Daemon {
                 if r.pedir_continuacao {
                     self.continuacao_pedida.store(true, Ordering::Relaxed);
                 }
+                let esforco = r
+                    .esforco
+                    .map(|(nivel, situacao)| {
+                        format!(
+                            "; esforço {} ({})",
+                            nivel.como_texto(),
+                            situacao.como_texto()
+                        )
+                    })
+                    .unwrap_or_default();
                 tracing::info!(
-                    "heartbeat: chamou o modelo ({}); ações: {}",
+                    "heartbeat: chamou o modelo ({}{esforco}); ações: {}",
                     r.motivo,
                     if r.resultados.is_empty() {
                         "nenhuma".to_string()

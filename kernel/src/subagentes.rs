@@ -29,6 +29,7 @@ use tokio::task::JoinSet;
 use crate::config::{Config, ConfigNivelSubagente};
 use crate::dados;
 use crate::db::Banco;
+use crate::esforco::{self, NivelEsforco};
 use crate::eventos;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::extrair_json;
@@ -147,6 +148,9 @@ pub struct InfoSubagente {
     pub relatorio: Option<Relatorio>,
     pub tokens: i64,
     pub rodadas: i64,
+    /// Nível da tabela de esforço com que roda (já limitado ao teto do
+    /// nível). `None` = delegado antes da migração 14: usa o padrão.
+    pub esforco: Option<NivelEsforco>,
 }
 
 impl InfoSubagente {
@@ -155,6 +159,7 @@ impl InfoSubagente {
         json!({
             "id": self.id,
             "nivel": self.nivel.como_texto(),
+            "esforco": self.esforco.map(|e| e.como_texto()),
             "estado": self.estado.como_texto(),
             "tarefa": self.tarefa,
             "goal_id": self.goal_id,
@@ -169,7 +174,7 @@ impl InfoSubagente {
 }
 
 const COLUNAS: &str = "id, nivel, tarefa, contexto, prazo_segundos, goal_id, origem, estado, \
-     criado_ms, iniciado_ms, terminado_ms, relatorio, tokens, rodadas";
+     criado_ms, iniciado_ms, terminado_ms, relatorio, tokens, rodadas, esforco";
 
 fn linha_para_info(l: &rusqlite::Row<'_>) -> rusqlite::Result<InfoSubagente> {
     let erro = |msg: String| {
@@ -178,6 +183,7 @@ fn linha_para_info(l: &rusqlite::Row<'_>) -> rusqlite::Result<InfoSubagente> {
     let nivel: String = l.get(1)?;
     let estado: String = l.get(7)?;
     let relatorio: Option<String> = l.get(11)?;
+    let esforco: Option<String> = l.get(14)?;
     Ok(InfoSubagente {
         id: l.get(0)?,
         nivel: Nivel::de_texto(&nivel).ok_or_else(|| erro(format!("nível inválido: {nivel}")))?,
@@ -194,6 +200,8 @@ fn linha_para_info(l: &rusqlite::Row<'_>) -> rusqlite::Result<InfoSubagente> {
         relatorio: relatorio.and_then(|t| serde_json::from_str(&t).ok()),
         tokens: l.get(12)?,
         rodadas: l.get(13)?,
+        // Texto desconhecido (editado à mão) = o padrão do nível.
+        esforco: esforco.as_deref().and_then(NivelEsforco::de_texto),
     })
 }
 
@@ -229,11 +237,26 @@ fn config_do_nivel(config: &Config, nivel: Nivel) -> &ConfigNivelSubagente {
     }
 }
 
-fn modelo_do_nivel(config: &Config, nivel: Nivel) -> &crate::config::ConfigModelo {
+/// Papel de `[modelos]` de cada nível de sub-agente.
+fn papel_do_nivel(nivel: Nivel) -> &'static str {
     match nivel {
-        Nivel::Ultra => &config.modelos.sub_ultra,
-        Nivel::Medium => &config.modelos.sub_medium,
-        Nivel::Low => &config.modelos.sub_low,
+        Nivel::Ultra => "sub_ultra",
+        Nivel::Medium => "sub_medium",
+        Nivel::Low => "sub_low",
+    }
+}
+
+/// Interpreta o `esforco` opcional de uma delegação. Ausente ou vazio =
+/// o padrão do nível; nome desconhecido = erro (o modelo se corrige).
+pub fn esforco_de_texto(texto: Option<&str>) -> anyhow::Result<Option<NivelEsforco>> {
+    match texto.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(t) => NivelEsforco::de_texto(t).map(Some).with_context(|| {
+            format!(
+                "esforço inválido '{t}' (use {})",
+                esforco::nomes_dos_niveis()
+            )
+        }),
     }
 }
 
@@ -245,6 +268,9 @@ pub struct PedidoDelegacao {
     pub contexto: String,
     pub prazo_segundos: u64,
     pub goal_id: Option<i64>,
+    /// Nível da tabela de esforço pedido (`None` = o padrão do nível do
+    /// sub-agente). Limitado ao teto do nível ao delegar.
+    pub esforco: Option<NivelEsforco>,
 }
 
 /// Interface usada pelas ferramentas `delegar`/`status`/`cancelar` e pelo
@@ -279,12 +305,18 @@ impl ControleSubagentes {
         let prazo = pedido
             .prazo_segundos
             .clamp(PRAZO_MINIMO_SEGUNDOS, maximo.max(PRAZO_MINIMO_SEGUNDOS));
+        // O esforço que vai rodar: o pedido (ou o padrão), até o teto do nível.
+        let (esforco, _) = self
+            .config
+            .subagentes
+            .esforco(pedido.nivel)
+            .limitar(pedido.esforco);
         let id = {
             let conexao = self.banco.conexao();
             conexao.execute(
                 "INSERT INTO subagentes (nivel, tarefa, contexto, prazo_segundos, goal_id, origem,
-                                         estado, criado_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pendente', ?7)",
+                                         estado, criado_ms, esforco)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pendente', ?7, ?8)",
                 params![
                     pedido.nivel.como_texto(),
                     tarefa,
@@ -292,7 +324,8 @@ impl ControleSubagentes {
                     prazo as i64,
                     pedido.goal_id,
                     origem,
-                    agora_ms()
+                    agora_ms(),
+                    esforco.como_texto()
                 ],
             )?;
             conexao.last_insert_rowid()
@@ -363,6 +396,7 @@ impl ControleSubagentes {
                 .or_else(|| args["prazo_segundos"].as_u64())
                 .unwrap_or(600),
             goal_id: args["goal_id"].as_i64(),
+            esforco: esforco_de_texto(args["esforco"].as_str())?,
         })
     }
 }
@@ -642,7 +676,18 @@ impl ExecutorSubagentes {
         rodadas: &AtomicUsize,
     ) -> anyhow::Result<Relatorio> {
         let limite = config_do_nivel(&self.config, info.nivel);
-        let modelo = modelo_do_nivel(&self.config, info.nivel);
+        // O esforço gravado na delegação, de novo limitado ao teto (a config
+        // pode ter mudado entre a delegação e a execução).
+        let (nivel_esforco, _) = self
+            .config
+            .subagentes
+            .esforco(info.nivel)
+            .limitar(info.esforco);
+        let modelo = esforco::modelo_no_nivel(
+            &self.config.modelos,
+            papel_do_nivel(info.nivel),
+            nivel_esforco,
+        );
         // Ferramentas do nível. `restrita` NUNCA inclui delegar/status/cancelar.
         let caixa = self.ferramentas.restrita(&limite.ferramentas);
         let definicoes = caixa.definicoes();
@@ -668,7 +713,7 @@ impl ExecutorSubagentes {
                 });
             }
             rodadas.store(rodada, Ordering::Relaxed);
-            let mut pedido = nim::montar_pedido(modelo, mensagens.clone(), definicoes.clone());
+            let mut pedido = nim::montar_pedido(&modelo, mensagens.clone(), definicoes.clone());
             // A resposta não pode passar do que sobra do orçamento.
             let restante = (limite.max_tokens - gastos).min(u32::MAX as u64) as u32;
             pedido.max_tokens = Some(pedido.max_tokens.map_or(restante, |m| m.min(restante)));
@@ -777,6 +822,7 @@ mod testes {
             contexto: String::new(),
             prazo_segundos: prazo,
             goal_id: None,
+            esforco: None,
         }
     }
 
@@ -807,6 +853,41 @@ mod testes {
     }
 
     #[test]
+    fn esforco_da_delegacao_e_limitado_ao_teto_do_nivel() {
+        let (_p, c, _b) = controle();
+        // Sem pedido: o padrão do nível (low → low, ultra → high).
+        let id = c.delegar(&pedido(Nivel::Low, 60), "teste").unwrap();
+        assert_eq!(c.status(id).unwrap().esforco, Some(NivelEsforco::Low));
+        let id = c.delegar(&pedido(Nivel::Ultra, 60), "teste").unwrap();
+        assert_eq!(c.status(id).unwrap().esforco, Some(NivelEsforco::High));
+        // Acima do teto: o low nunca passa de medium (não chega ao modelo
+        // dos níveis de cima).
+        let mut alto = pedido(Nivel::Low, 60);
+        alto.esforco = Some(NivelEsforco::Ultra);
+        let id = c.delegar(&alto, "teste").unwrap();
+        let info = c.status(id).unwrap();
+        assert_eq!(info.esforco, Some(NivelEsforco::Medium));
+        assert_eq!(info.como_json()["esforco"], json!("medium"));
+        // Abaixo do teto: vale o pedido (inclusive mais raso que o padrão).
+        let mut raso = pedido(Nivel::Ultra, 60);
+        raso.esforco = Some(NivelEsforco::Minimal);
+        let id = c.delegar(&raso, "teste").unwrap();
+        assert_eq!(c.status(id).unwrap().esforco, Some(NivelEsforco::Minimal));
+
+        assert_eq!(esforco_de_texto(None).unwrap(), None);
+        assert_eq!(esforco_de_texto(Some(" ")).unwrap(), None);
+        assert_eq!(
+            esforco_de_texto(Some("XHigh")).unwrap(),
+            Some(NivelEsforco::Xhigh)
+        );
+        let erro = format!("{:#}", esforco_de_texto(Some("max")).unwrap_err());
+        assert!(
+            erro.contains("minimal, low, medium, high, xhigh, ultra"),
+            "{erro}"
+        );
+    }
+
+    #[test]
     fn argumentos_da_ferramenta_delegar() {
         let p = ControleSubagentes::pedido_de_argumentos(
             &json!({"nivel": "Medium", "tarefa": "t", "contexto": "c", "prazo": 120}),
@@ -814,6 +895,18 @@ mod testes {
         .unwrap();
         assert_eq!(p.nivel, Nivel::Medium);
         assert_eq!(p.prazo_segundos, 120);
+        assert_eq!(p.esforco, None);
+        let p = ControleSubagentes::pedido_de_argumentos(
+            &json!({"nivel": "low", "tarefa": "t", "esforco": "high"}),
+        )
+        .unwrap();
+        assert_eq!(p.esforco, Some(NivelEsforco::High));
+        assert!(
+            ControleSubagentes::pedido_de_argumentos(
+                &json!({"nivel": "low", "tarefa": "t", "esforco": "max"})
+            )
+            .is_err()
+        );
         assert!(
             ControleSubagentes::pedido_de_argumentos(&json!({"nivel": "max", "tarefa": "t"}))
                 .is_err()

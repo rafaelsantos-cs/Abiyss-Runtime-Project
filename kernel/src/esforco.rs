@@ -13,17 +13,27 @@
 //!   o nível pedido.
 //!
 //! Capacidades que ainda não foram confirmadas no NIM ficam marcadas com
-//! `a_confirmar = "..."`: o nível funciona (com o melhor palpite), mas a
-//! resolução avisa que é um placeholder. Nível ausente da tabela também é
-//! placeholder: usa os parâmetros padrão do modelo.
+//! `a_confirmar = "..."`. Um nível assim NÃO derruba chamadas: nenhum campo
+//! dele vai para o pedido (`pensar`, `orcamento`, `max_tokens`, `extra`), só
+//! o modelo (ou o substituto de `usar_modelo`) com os parâmetros padrão. Ao
+//! subir, o daemon avisa no log, uma linha por modelo, quais níveis estão
+//! assim (`avisar_a_confirmar`); o chat, só os do cérebro entre o padrão e o
+//! máximo dele. Nível ausente da tabela também usa os parâmetros padrão do
+//! modelo.
 //!
 //! Por cima dos níveis há dois MODOS:
 //! - `raso` (shallow): `medium` para baixo;
 //! - `profundo` (depth): `high` para cima.
 //!
-//! Este módulo só RESOLVE (config → `ConfigModelo` pronto para
-//! `nim::montar_pedido`). Quem decide qual nível usar em cada situação
-//! (chat, heartbeat, sub-agentes) ainda não usa esta tabela.
+//! Este módulo RESOLVE (config → `ConfigModelo` pronto para
+//! `nim::montar_pedido`, marcado com o nível aplicado, que o orquestrador
+//! grava em `chamadas_modelo`). Quem decide o nível de cada situação:
+//! - chat: `[chat] esforco_padrao`, e a ferramenta `aprofundar` sobe até
+//!   `esforco_maximo` numa resposta;
+//! - heartbeat: `[daemon.esforco]`, por situação do ciclo;
+//! - sub-agentes: `[subagentes.<nível>] esforco_padrao`/`esforco_maximo`, e
+//!   o `esforco` opcional da delegação;
+//! - sono: `[sono] modo_esforco`/`modo_esforco_externo`.
 
 use std::collections::BTreeMap;
 
@@ -134,6 +144,62 @@ impl ModoEsforco {
     }
 }
 
+/// Como a config escolhe o esforço de uma situação: um MODO (vira o nível
+/// padrão dele: `raso` = medium, `profundo` = high) ou um nível exato.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum EscolhaEsforco {
+    Modo(ModoEsforco),
+    Nivel(NivelEsforco),
+}
+
+impl EscolhaEsforco {
+    /// O nível que esta escolha usa.
+    pub fn nivel(&self) -> NivelEsforco {
+        match self {
+            EscolhaEsforco::Modo(modo) => modo.nivel_padrao(),
+            EscolhaEsforco::Nivel(nivel) => *nivel,
+        }
+    }
+}
+
+impl TryFrom<String> for EscolhaEsforco {
+    type Error = String;
+
+    fn try_from(texto: String) -> Result<Self, Self::Error> {
+        if let Some(modo) = ModoEsforco::de_texto(&texto) {
+            return Ok(EscolhaEsforco::Modo(modo));
+        }
+        NivelEsforco::de_texto(&texto)
+            .map(EscolhaEsforco::Nivel)
+            .ok_or_else(|| {
+                format!(
+                    "esforço inválido \"{texto}\" (use raso, profundo ou um nível: {})",
+                    nomes_dos_niveis()
+                )
+            })
+    }
+}
+
+/// "minimal, low, medium, high, xhigh, ultra" (para mensagens de erro).
+pub fn nomes_dos_niveis() -> String {
+    NivelEsforco::TODOS
+        .iter()
+        .map(|n| n.como_texto())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// O nível com que um pedido foi montado. Vai junto do `ConfigModelo`
+/// resolvido até o pedido, e o orquestrador grava em `chamadas_modelo`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EsforcoAplicado {
+    pub nivel: NivelEsforco,
+    /// `false` = nível a confirmar (ou ausente da tabela): os campos dele
+    /// não foram enviados; o pedido usou os parâmetros padrão do modelo.
+    pub confirmado: bool,
+}
+
 /// `[modelos.<papel>.esforco]` no `abiyss.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -176,12 +242,15 @@ pub struct ModeloComEsforco {
     pub papel_pedido: String,
     /// Papel cujo modelo será usado (difere do pedido quando há substituto).
     pub papel_usado: String,
-    /// Pronto para `nim::montar_pedido`.
+    /// Pronto para `nim::montar_pedido` (com `esforco_aplicado` preenchido).
     pub modelo: ConfigModelo,
     /// `false` quando o nível é placeholder (`a_confirmar` ou ausente).
     pub confirmado: bool,
     /// Explicação do placeholder, se houver.
     pub nota: Option<String>,
+    /// Campos do nível que NÃO foram para o pedido por ele estar a
+    /// confirmar (ex.: "pensar", "extra.reasoning_effort").
+    pub ignorados: Vec<String>,
 }
 
 /// Resolve um nível para um papel de `[modelos]`.
@@ -195,16 +264,22 @@ pub fn resolver(
         .with_context(|| format!("modelo desconhecido: {papel}"))?;
 
     let Some(item) = base.esforco.niveis.get(&nivel) else {
+        let mut modelo = base.clone();
+        modelo.esforco_aplicado = Some(EsforcoAplicado {
+            nivel,
+            confirmado: false,
+        });
         return Ok(ModeloComEsforco {
             nivel,
             papel_pedido: papel.to_string(),
             papel_usado: papel.to_string(),
-            modelo: base.clone(),
+            modelo,
             confirmado: false,
             nota: Some(format!(
                 "nível {} não configurado para modelos.{papel}: usa os parâmetros padrão do modelo",
                 nivel.como_texto()
             )),
+            ignorados: Vec::new(),
         });
     };
 
@@ -214,35 +289,121 @@ pub fn resolver(
         .with_context(|| format!("modelos.{papel}: usar_modelo desconhecido: {papel_usado}"))?;
 
     let mut modelo = alvo.clone();
-    if let Some(max_tokens) = item.max_tokens {
-        modelo.max_tokens = Some(max_tokens);
+    let confirmado = item.a_confirmar.is_none();
+    let mut ignorados = Vec::new();
+    if confirmado {
+        if let Some(max_tokens) = item.max_tokens {
+            modelo.max_tokens = Some(max_tokens);
+        }
+        mesclar(&mut modelo.extra, &item.extra);
+        if let Some(pensar) = item.pensar {
+            definir_campo(
+                &mut modelo.extra,
+                &alvo.esforco.campo_pensar,
+                Value::Bool(pensar),
+            )
+            .with_context(|| format!("modelos.{papel_usado}.esforco.campo_pensar"))?;
+        }
+        if let Some(orcamento) = item.orcamento {
+            definir_campo(
+                &mut modelo.extra,
+                &alvo.esforco.campo_orcamento,
+                Value::from(orcamento),
+            )
+            .with_context(|| format!("modelos.{papel_usado}.esforco.campo_orcamento"))?;
+        }
+    } else {
+        // A confirmar: um campo que o NIM não aceita derrubaria a chamada.
+        // Vai só o modelo (o substituto, se houver) com os parâmetros padrão.
+        if item.pensar.is_some() {
+            ignorados.push("pensar".to_string());
+        }
+        if item.orcamento.is_some() {
+            ignorados.push("orcamento".to_string());
+        }
+        if item.max_tokens.is_some() {
+            ignorados.push("max_tokens".to_string());
+        }
+        ignorados.extend(item.extra.keys().map(|chave| format!("extra.{chave}")));
     }
-    mesclar(&mut modelo.extra, &item.extra);
-    if let Some(pensar) = item.pensar {
-        definir_campo(
-            &mut modelo.extra,
-            &alvo.esforco.campo_pensar,
-            Value::Bool(pensar),
-        )
-        .with_context(|| format!("modelos.{papel_usado}.esforco.campo_pensar"))?;
-    }
-    if let Some(orcamento) = item.orcamento {
-        definir_campo(
-            &mut modelo.extra,
-            &alvo.esforco.campo_orcamento,
-            Value::from(orcamento),
-        )
-        .with_context(|| format!("modelos.{papel_usado}.esforco.campo_orcamento"))?;
-    }
+    modelo.esforco_aplicado = Some(EsforcoAplicado { nivel, confirmado });
 
     Ok(ModeloComEsforco {
         nivel,
         papel_pedido: papel.to_string(),
         papel_usado: papel_usado.to_string(),
         modelo,
-        confirmado: item.a_confirmar.is_none(),
+        confirmado,
         nota: item.a_confirmar.clone(),
+        ignorados,
     })
+}
+
+/// O modelo de um papel no nível pedido, pronto para `nim::montar_pedido`.
+/// Com a config validada (`validar` resolve todos os níveis ao carregar),
+/// isto não falha; se falhar, fica o modelo com os parâmetros fixos (e um
+/// aviso no log) em vez de perder a chamada.
+pub fn modelo_no_nivel(modelos: &ConfigModelos, papel: &str, nivel: NivelEsforco) -> ConfigModelo {
+    match resolver(modelos, papel, nivel) {
+        Ok(r) => r.modelo,
+        Err(e) => {
+            tracing::warn!(
+                "tabela de esforço (modelos.{papel}, {}): {e:#}; usando os parâmetros fixos",
+                nivel.como_texto()
+            );
+            modelos.por_papel(papel).unwrap_or(&modelos.cerebro).clone()
+        }
+    }
+}
+
+/// Aviso (uma linha) dos níveis a confirmar de UM modelo, só entre os
+/// níveis aceitos por `usado`. `None` = nenhum desses níveis é placeholder.
+pub fn aviso_a_confirmar(
+    modelos: &ConfigModelos,
+    papel: &str,
+    usado: impl Fn(NivelEsforco) -> bool,
+) -> Option<String> {
+    let base = modelos.por_papel(papel)?;
+    let niveis: Vec<String> = base
+        .esforco
+        .niveis
+        .iter()
+        .filter(|(nivel, _)| usado(**nivel))
+        .filter_map(|(nivel, item)| {
+            let nota = item.a_confirmar.as_deref()?;
+            let ignorados = match resolver(modelos, papel, *nivel) {
+                Ok(r) if !r.ignorados.is_empty() => {
+                    format!("; não envia {}", r.ignorados.join(", "))
+                }
+                _ => String::new(),
+            };
+            Some(format!("{} ({nota}{ignorados})", nivel.como_texto()))
+        })
+        .collect();
+    (!niveis.is_empty()).then(|| {
+        format!(
+            "modelos.{papel} ({}): nível(is) a confirmar no NIM, usados com os parâmetros \
+             padrão do modelo até confirmar: {}",
+            base.id,
+            niveis.join("; ")
+        )
+    })
+}
+
+/// Avisos dos níveis a confirmar: UMA linha por modelo que tem algum (os
+/// modelos sem placeholder não aparecem).
+pub fn avisos_a_confirmar(modelos: &ConfigModelos) -> Vec<String> {
+    ConfigModelos::PAPEIS
+        .iter()
+        .filter_map(|papel| aviso_a_confirmar(modelos, papel, |_| true))
+        .collect()
+}
+
+/// Loga os avisos de `avisos_a_confirmar` (o daemon chama uma vez ao subir).
+pub fn avisar_a_confirmar(modelos: &ConfigModelos) {
+    for aviso in avisos_a_confirmar(modelos) {
+        tracing::warn!("{aviso}");
+    }
 }
 
 /// Resolve dentro de um modo: o nível pedido é trazido para dentro do
@@ -291,6 +452,15 @@ pub fn validar(modelos: &ConfigModelos) -> anyhow::Result<()> {
             if item.orcamento.is_some() && alvo.esforco.campo_orcamento.is_empty() {
                 bail!("{onde}: `orcamento` definido, mas o modelo não tem campo_orcamento");
             }
+        }
+    }
+    // Resolver cada nível já aqui: um `extra` que colide com o caminho de
+    // `campo_pensar` (ex.: não é objeto) falha ao carregar, não no meio de
+    // uma conversa ou de um ciclo.
+    for papel in ConfigModelos::PAPEIS {
+        for nivel in NivelEsforco::TODOS {
+            resolver(modelos, papel, nivel)
+                .with_context(|| format!("modelos.{papel}: nível {}", nivel.como_texto()))?;
         }
     }
     Ok(())
@@ -355,9 +525,13 @@ pub fn descrever(modelos: &ConfigModelos, papel: &str) -> anyhow::Result<Vec<Str
             .max_tokens
             .map(|n| n.to_string())
             .unwrap_or_else(|| "padrão".to_string());
-        let marca = match &r.nota {
-            Some(nota) => format!("  [A CONFIRMAR: {nota}]"),
-            None => String::new(),
+        let marca = match (&r.nota, r.ignorados.is_empty()) {
+            (Some(nota), true) => format!("  [A CONFIRMAR: {nota}]"),
+            (Some(nota), false) => format!(
+                "  [A CONFIRMAR: {nota}; não envia {}]",
+                r.ignorados.join(", ")
+            ),
+            (None, _) => String::new(),
         };
         linhas.push(format!(
             "{:<8} {:<9} {}{substituto}  max_tokens={max_tokens}  extra={extra}{marca}",
@@ -465,18 +639,98 @@ mod testes {
     }
 
     #[test]
-    fn placeholders_ficam_marcados() {
+    fn placeholders_ficam_marcados_e_nao_enviam_os_campos() {
         let m = modelos();
         let ultra = resolver(&m, "cerebro", NivelEsforco::Ultra).unwrap();
         assert!(!ultra.confirmado);
         assert_eq!(ultra.nota.as_deref(), Some("formato do esforço máximo"));
-        assert_eq!(ultra.modelo.extra["reasoning_effort"], json!("max"));
+        // Nada do nível vai para o pedido: só os parâmetros padrão do modelo.
+        assert!(ultra.modelo.extra.get("reasoning_effort").is_none());
+        assert_eq!(ultra.modelo.extra, m.cerebro.extra);
+        assert_eq!(ultra.modelo.max_tokens, m.cerebro.max_tokens);
+        assert_eq!(ultra.ignorados, vec!["pensar", "extra.reasoning_effort"]);
+        assert_eq!(
+            ultra.modelo.esforco_aplicado,
+            Some(EsforcoAplicado {
+                nivel: NivelEsforco::Ultra,
+                confirmado: false
+            })
+        );
 
         // Nível ausente da tabela: parâmetros padrão + aviso.
         let alto = resolver(&m, "cerebro", NivelEsforco::High).unwrap();
         assert!(!alto.confirmado);
         assert!(alto.nota.unwrap().contains("não configurado"));
         assert_eq!(alto.modelo.extra, m.cerebro.extra);
+        assert!(alto.ignorados.is_empty());
+
+        // Nível confirmado: marcado como tal.
+        let minimo = resolver(&m, "cerebro", NivelEsforco::Minimal).unwrap();
+        assert_eq!(
+            minimo.modelo.esforco_aplicado,
+            Some(EsforcoAplicado {
+                nivel: NivelEsforco::Minimal,
+                confirmado: true
+            })
+        );
+    }
+
+    #[test]
+    fn placeholder_com_substituto_troca_o_modelo_sem_os_campos() {
+        let texto = CONFIG.replace(
+            "xhigh = { usar_modelo = \"cerebro\", pensar = true }",
+            "xhigh = { usar_modelo = \"cerebro\", pensar = false, max_tokens = 5, a_confirmar = \"x\" }",
+        );
+        let m = Config::de_texto(&texto).unwrap().modelos;
+        let r = resolver(&m, "sub_low", NivelEsforco::Xhigh).unwrap();
+        assert_eq!(r.modelo.id, "teste/cerebro");
+        // O padrão do cérebro (enable_thinking = true), não o `pensar = false` do nível.
+        assert_eq!(r.modelo.extra, m.cerebro.extra);
+        assert_eq!(r.modelo.max_tokens, Some(1000));
+        assert_eq!(r.ignorados, vec!["pensar", "max_tokens"]);
+    }
+
+    #[test]
+    fn um_aviso_por_modelo_com_placeholder() {
+        let avisos = avisos_a_confirmar(&modelos());
+        // Só o cérebro tem `a_confirmar` (o nível ausente não conta).
+        assert_eq!(avisos.len(), 1, "{avisos:?}");
+        assert!(avisos[0].starts_with("modelos.cerebro (teste/cerebro)"));
+        assert!(avisos[0].contains(
+            "ultra (formato do esforço máximo; não envia pensar, extra.reasoning_effort)"
+        ));
+
+        // O abiyss.toml do repositório: os quatro modelos têm placeholders,
+        // e cada um aparece numa linha só.
+        let config = Config::de_texto(include_str!("../../abiyss.toml")).unwrap();
+        let avisos = avisos_a_confirmar(&config.modelos);
+        assert_eq!(avisos.len(), 4, "{avisos:#?}");
+        for (aviso, papel) in avisos.iter().zip(ConfigModelos::PAPEIS) {
+            assert!(aviso.starts_with(&format!("modelos.{papel} (")), "{aviso}");
+        }
+        // Só os níveis que a conversa alcança (medium..high): nenhum aviso
+        // com o abiyss.toml do repositório; até ultra, o aviso cita xhigh e ultra.
+        let chat = |maximo| {
+            aviso_a_confirmar(&config.modelos, "cerebro", |n| {
+                (NivelEsforco::Medium..=maximo).contains(&n)
+            })
+        };
+        assert_eq!(chat(NivelEsforco::High), None);
+        let aviso = chat(NivelEsforco::Ultra).unwrap();
+        assert!(
+            aviso.contains("xhigh (") && aviso.contains("ultra ("),
+            "{aviso}"
+        );
+    }
+
+    #[test]
+    fn escolha_aceita_modo_ou_nivel() {
+        let escolha = |t: &str| EscolhaEsforco::try_from(t.to_string());
+        assert_eq!(escolha("raso").unwrap().nivel(), NivelEsforco::Medium);
+        assert_eq!(escolha("depth").unwrap().nivel(), NivelEsforco::High);
+        assert_eq!(escolha("xhigh").unwrap().nivel(), NivelEsforco::Xhigh);
+        let erro = escolha("max").unwrap_err();
+        assert!(erro.contains("raso, profundo"), "{erro}");
     }
 
     #[test]
@@ -516,6 +770,14 @@ mod testes {
         // Campo desconhecido num nível (erro de digitação não passa calado).
         let texto = CONFIG.replace("pensar = false, max_tokens", "pensa = false, max_tokens");
         assert!(Config::de_texto(&texto).is_err());
+        // `extra` que colide com o caminho do campo_pensar: falha ao carregar,
+        // não no meio de uma conversa.
+        let texto = CONFIG.replace(
+            "extra = { chat_template_kwargs = { enable_thinking = true, clear_thinking = false } }",
+            "extra = { chat_template_kwargs = \"texto\" }",
+        );
+        let erro = format!("{:#}", Config::de_texto(&texto).unwrap_err());
+        assert!(erro.contains("não é um objeto"), "{erro}");
     }
 
     #[test]
@@ -536,6 +798,8 @@ mod testes {
         let linhas = descrever(&modelos(), "cerebro").unwrap();
         assert_eq!(linhas.len(), 6);
         assert!(linhas[5].contains("A CONFIRMAR"));
+        assert!(linhas[5].contains("não envia pensar, extra.reasoning_effort"));
+        assert!(!linhas[5].contains("\"reasoning_effort\""));
         assert!(linhas[0].starts_with("minimal"));
     }
 }

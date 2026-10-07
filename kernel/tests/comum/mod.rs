@@ -64,3 +64,13 @@ impl Ambiente {
         self.pasta.path().join(relativo)
     }
 }
+
+/// Espera o relógio de parede passar do milissegundo `ms`. O kernel compara
+/// instantes em milissegundos (`agora_ms`): o que o teste fizer depois desta
+/// espera fica com um instante maior que `ms`, nunca igual, seja qual for a
+/// velocidade da máquina.
+pub async fn esperar_o_relogio_passar(ms: i64) {
+    while abiyss::tempo::agora_ms() <= ms {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+}
