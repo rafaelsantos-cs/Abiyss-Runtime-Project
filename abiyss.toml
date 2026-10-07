@@ -508,6 +508,31 @@ TERMINAL_MEMORIA_MB = "160"          # por comando (cada processo e a árvore to
 TERMINAL_MAX_PROCESSOS = "64"        # processos + threads por comando
 TERMINAL_REDE = "nao"                # "sim" também abre os serviços locais (qmd, SearXNG)
 
+[[mcp.servidores]]
+# web_rapido: a camada rápida de pesquisa, sem modelo. Busca num SearXNG
+# local e lê páginas (texto principal, pelo trafilatura). Respeita o
+# robots.txt, espera entre pedidos ao mesmo site e recusa endereços da rede
+# interna (inclusive o metadata da nuvem). Cache em data/web_rapido/. A
+# busca precisa do SearXNG rodando (recursos/mcp/web_rapido/README.md);
+# ler_pagina funciona sem ele.
+nome = "web_rapido"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/web_rapido"
+timeout_segundos = 60
+ativo = true
+
+[mcp.servidores.env]
+WEB_SEARXNG_URL = "http://127.0.0.1:8888"
+WEB_PRAZO_SEGUNDOS = "50"              # por chamada; + 8 s de folga ≤ timeout_segundos
+WEB_TIMEOUT_REQUISICAO = "15"          # cada pedido HTTP
+WEB_CACHE_TTL_PAGINAS_HORAS = "24"
+WEB_CACHE_TTL_BUSCAS_HORAS = "6"
+WEB_CACHE_MAX_MB = "200"
+WEB_MAX_PAGINA_MB = "2"                # lido da página (acima disso, só o começo)
+WEB_MAX_TEXTO_BYTES = "40000"          # texto por resposta; o resto vem em partes
+WEB_INTERVALO_DOMINIO_SEGUNDOS = "2"   # ou o Crawl-delay do site, se maior
+
 # ---------------------------------------------------------------------------
 # Banco (SQLite).
 # ---------------------------------------------------------------------------

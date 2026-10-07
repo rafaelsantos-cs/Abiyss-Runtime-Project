@@ -1,0 +1,9 @@
+# Robôs em geral: nada.
+User-agent: *
+Disallow: /
+
+# O AbiyssBot pode ler quase tudo.
+User-agent: AbiyssBot
+Disallow: /privado/
+Disallow: /*?sessao=
+Allow: /privado/publico.html

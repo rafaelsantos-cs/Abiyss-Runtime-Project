@@ -1,0 +1,16 @@
+{
+  "query": "sono e memória",
+  "number_of_results": 3,
+  "results": [
+    {"url": "{BASE}/artigo.html", "title": "Como o sono consolida a memória",
+     "content": "Durante o sono profundo, o hipocampo reativa as experiências do dia...",
+     "engine": "duckduckgo", "engines": ["duckduckgo", "brave"], "publishedDate": "2026-09-30T08:00:00"},
+    {"url": "{BASE}/longo.html", "title": "Tudo sobre o sono", "content": "Um texto bem longo.",
+     "engine": "brave", "engines": ["brave"], "publishedDate": null},
+    {"url": "{BASE}/texto.txt", "title": "Notas em texto puro", "content": "  várias   linhas\n  de texto  ",
+     "engine": "wikipedia"}
+  ],
+  "answers": [],
+  "suggestions": ["sono REM"],
+  "unresponsive_engines": [["google", "timeout"]]
+}
