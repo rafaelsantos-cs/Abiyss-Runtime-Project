@@ -385,7 +385,7 @@ linha a linha). O essencial:
 | Diretiva | Valor | Por quê |
 |---|---|---|
 | `Type=notify` | — | o daemon avisa `READY=1` depois de subir os servidores MCP (`TimeoutStartSec=300`) |
-| `WatchdogSec` | `120` | o daemon manda `WATCHDOG=1` a cada 60 s **enquanto o loop principal anda**; tokio travado ou loop parado há mais de `[daemon] max_travado_segundos` (3600) → o systemd mata e reinicia |
+| `WatchdogSec` | `120` | o daemon manda `WATCHDOG=1` a cada 60 s **enquanto o loop principal anda**; tokio travado ou loop parado há mais de `[daemon] max_travado_segundos` (300) → o systemd mata e reinicia. O loop não espera o modelo, o sono, a manutenção nem o VACUUM (conexão própria ao banco) |
 | `Restart=on-failure` | `RestartSec=10` | reinicia em erro, sinal fatal e estouro do watchdog; no máximo 5 vezes em 10 min (`StartLimit*`) |
 | `MemoryHigh` / `MemoryMax` | `3G` / `4G` | valem para o cgroup inteiro (daemon + uv + Python dos servidores MCP) |
 | `MemorySwapMax` | `0` | vazamento vira OOM visível em vez de VM trocando páginas |

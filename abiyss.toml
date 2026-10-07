@@ -292,9 +292,12 @@ revisao_minima_segundos = 1800
 # Máximo de eventos da fila colocados no contexto de um ciclo.
 max_eventos_por_ciclo = 20
 # Watchdog do systemd (WatchdogSec= na unit): se o loop principal ficar
-# este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
-# o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
-max_travado_segundos = 3600
+# este tempo sem dar uma volta, o daemon para de avisar o systemd, que o
+# reinicia. O loop não espera trabalho longo (ciclo, sono, manutenção e o
+# VACUUM completo da 1ª manutenção rodam fora dele; o ciclo tem o seu
+# próprio limite logo abaixo): uma volta normal leva milissegundos, e o pior
+# caso auditado são alguns comandos no banco esperando o busy_timeout de 5 s.
+max_travado_segundos = 300
 # Tempo máximo de UM ciclo de heartbeat. Passou disto, o kernel interrompe o
 # ciclo, registra o erro e os eventos continuam pendentes. O loop principal
 # (crons, sinal de vida, watchdog) nunca espera o ciclo: ele anda em paralelo.

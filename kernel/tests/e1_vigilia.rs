@@ -1,12 +1,14 @@
 //! E1: o loop do daemon nunca trava — crons e sinal de vida continuam
-//! andando durante um ciclo longo; ciclo que passa do tempo máximo é
-//! interrompido, registrado, e os eventos continuam pendentes.
+//! andando durante um ciclo longo e durante um checkpoint do WAL que espera
+//! outro leitor; ciclo que passa do tempo máximo é interrompido, registrado,
+//! e os eventos continuam pendentes.
 
 mod comum;
 
 use std::time::Duration;
 
 use abiyss::daemon::{self, Daemon, OpcoesDaemon};
+use abiyss::db::Banco;
 use abiyss::eventos;
 use abiyss::heartbeat;
 use abiyss::nim::mock::RespostaMock;
@@ -81,6 +83,55 @@ async fn sinal_de_vida_anda_durante_um_ciclo_longo() {
             .unwrap()
             .is_some()
     );
+}
+
+/// O checkpoint `TRUNCATE` espera (até o busy_timeout de 5 s) quem ainda lê
+/// o WAL, como um `abiyss chat` aberto. Ele roda logo ao subir; antes, rodava
+/// no próprio loop e na conexão dele: o loop (e o sinal de vida) parava.
+#[tokio::test(flavor = "multi_thread")]
+async fn checkpoint_esperando_um_leitor_nao_segura_o_loop() {
+    let mut amb = Ambiente::novo().await;
+    amb.config.daemon.cron_verificacao_segundos = 1;
+    amb.config.daemon.heartbeat_segundos = 3600;
+    // Outro processo com uma leitura aberta no WAL...
+    let leitor = rusqlite::Connection::open(amb.config.caminho_banco()).unwrap();
+    leitor.execute_batch("BEGIN").unwrap();
+    let _: i64 = leitor
+        .query_row("SELECT count(*) FROM fila_eventos", [], |l| l.get(0))
+        .unwrap();
+    // ...e escrita depois dela: o checkpoint não pode reiniciar o WAL.
+    eventos::publicar(&amb.banco, "teste", "t", "depois do leitor").unwrap();
+
+    // Quem observa fica noutra thread e lê pela sua própria conexão: se o
+    // loop parar a thread dele (ou a trava da conexão dele), não para junto.
+    let caminho = amb.config.caminho_banco();
+    let (parar, parada) = tokio::sync::oneshot::channel::<()>();
+    let observador = std::thread::spawn(move || {
+        let banco = Banco::abrir(&caminho).unwrap();
+        let ler = || {
+            daemon::ler_estado(&banco, daemon::CHAVE_SINAL_DE_VIDA)
+                .unwrap()
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap_or(0)
+        };
+        // O checkpoint começa logo ao subir; antes, parava o loop por 5 s.
+        std::thread::sleep(Duration::from_millis(2000));
+        let antes = ler();
+        std::thread::sleep(Duration::from_millis(2000));
+        let depois = ler();
+        let _ = parar.send(());
+        (antes, depois)
+    });
+    daemon_de(&amb)
+        .rodar_ate(&OpcoesDaemon::default(), async {
+            let _ = parada.await;
+        })
+        .await
+        .unwrap();
+    let (antes, depois) = observador.join().unwrap();
+    leitor.execute_batch("COMMIT").unwrap();
+    assert!(antes > 0, "nenhum sinal de vida nos primeiros 2 s");
+    assert!(depois > antes, "sinal de vida parado: {antes} → {depois}");
 }
 
 #[tokio::test]
