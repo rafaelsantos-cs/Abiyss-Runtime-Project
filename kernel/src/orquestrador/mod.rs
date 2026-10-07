@@ -325,6 +325,11 @@ impl PoolCerebro {
     pub fn baldes(&self) -> Vec<ConfigBalde> {
         vec![self.balde_total.clone(), self.balde_autonomo.clone()]
     }
+
+    /// Chamadas esperando a vez na fila deste pool (para status e testes).
+    pub fn na_fila(&self) -> usize {
+        self.nucleo.fila.tamanho()
+    }
 }
 
 /// Pool compartilhado pelos sub-agentes.
@@ -364,6 +369,11 @@ impl PoolSubagentes {
 
     pub fn baldes(&self) -> Vec<ConfigBalde> {
         vec![self.balde.clone()]
+    }
+
+    /// Chamadas esperando a vez na fila deste pool (para status e testes).
+    pub fn na_fila(&self) -> usize {
+        self.nucleo.fila.tamanho()
     }
 }
 
