@@ -24,6 +24,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
+use tokio::sync::Semaphore;
+
+use crate::tempo::agora_ms;
 
 /// Uma chamada de ferramenta que o mock vai "pedir".
 #[derive(Debug, Clone)]
@@ -50,6 +53,12 @@ pub enum RespostaMock {
     /// Espera um pouco antes de responder (para testar concorrência e cancelamento).
     Atrasada {
         atraso: Duration,
+        resposta: Box<RespostaMock>,
+    },
+    /// Segura a resposta até o teste liberar uma vaga no `portao`
+    /// (`add_permits`): sincronização explícita, sem depender de relógio.
+    Segurada {
+        portao: Arc<Semaphore>,
         resposta: Box<RespostaMock>,
     },
 }
@@ -80,6 +89,14 @@ impl RespostaMock {
             resposta: Box::new(self),
         }
     }
+
+    /// Só responde depois de pegar (e gastar) uma vaga do `portao`.
+    pub fn segurada(self, portao: Arc<Semaphore>) -> RespostaMock {
+        RespostaMock::Segurada {
+            portao,
+            resposta: Box::new(self),
+        }
+    }
 }
 
 /// Uma requisição que o mock recebeu (para os testes conferirem).
@@ -88,6 +105,9 @@ pub struct RequisicaoRecebida {
     pub corpo: Value,
     pub autorizacao: Option<String>,
     pub momento: Instant,
+    /// O mesmo instante no relógio do banco (`tempo::agora_ms`), para
+    /// comparar com o que o kernel grava (fichas do token bucket, bloqueios).
+    pub momento_ms: i64,
 }
 
 /// Função que escolhe a resposta olhando o corpo do pedido.
@@ -188,6 +208,11 @@ impl MockNim {
     pub fn pico_concorrencia(&self) -> usize {
         self.estado.lock().unwrap().pico_em_andamento
     }
+
+    /// Requisições sendo atendidas agora (ex.: seguradas no portão).
+    pub fn em_andamento(&self) -> usize {
+        self.estado.lock().unwrap().em_andamento
+    }
 }
 
 /// Conta requisições em andamento; o `Drop` desconta mesmo se o
@@ -242,6 +267,7 @@ async fn tratar_chat(
             corpo: corpo.clone(),
             autorizacao: autorizacao.clone(),
             momento: Instant::now(),
+            momento_ms: agora_ms(),
         });
         e.total_recebidas += 1;
         match e.fila.pop_front() {
@@ -277,16 +303,29 @@ fn eco(corpo: &Value) -> RespostaMock {
 }
 
 async fn responder(resposta: RespostaMock, corpo: &Value, stream: bool) -> Response {
-    // Desembrulha atrasos (podem estar aninhados).
+    // Desembrulha atrasos e portões (podem estar aninhados).
     let mut resposta = resposta;
-    while let RespostaMock::Atrasada {
-        atraso,
-        resposta: r,
-    } = resposta
-    {
-        tokio::time::sleep(atraso).await;
-        resposta = *r;
-    }
+    let resposta = loop {
+        resposta = match resposta {
+            RespostaMock::Atrasada {
+                atraso,
+                resposta: r,
+            } => {
+                tokio::time::sleep(atraso).await;
+                *r
+            }
+            RespostaMock::Segurada {
+                portao,
+                resposta: r,
+            } => {
+                if let Ok(vaga) = portao.acquire().await {
+                    vaga.forget();
+                }
+                *r
+            }
+            outra => break outra,
+        };
+    };
 
     if let RespostaMock::Erro {
         status,
@@ -311,7 +350,9 @@ async fn responder(resposta: RespostaMock, corpo: &Value, stream: bool) -> Respo
         }
         RespostaMock::Ferramentas(c) => (None, None, c),
         // Já tratados acima.
-        RespostaMock::Erro { .. } | RespostaMock::Atrasada { .. } => unreachable!(),
+        RespostaMock::Erro { .. }
+        | RespostaMock::Atrasada { .. }
+        | RespostaMock::Segurada { .. } => unreachable!(),
     };
 
     let chamadas_json: Vec<Value> = chamadas

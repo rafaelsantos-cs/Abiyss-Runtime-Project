@@ -18,7 +18,9 @@ pub use tipos::{
 use crate::config::ConfigModelo;
 
 /// Monta o corpo da requisição a partir da config do modelo.
-/// Os parâmetros (`max_tokens`, `extra`...) vêm todos do `abiyss.toml`.
+/// Os parâmetros (`max_tokens`, `extra`...) vêm todos do `abiyss.toml`
+/// (já resolvidos pela tabela de esforço, quando `modelo` veio de
+/// `esforco::resolver`: o nível aplicado segue junto no pedido).
 pub fn montar_pedido(
     modelo: &ConfigModelo,
     mensagens: Vec<Mensagem>,
@@ -39,5 +41,6 @@ pub fn montar_pedido(
         temperature: modelo.temperatura,
         top_p: modelo.top_p,
         extra: modelo.extra.clone(),
+        esforco: modelo.esforco_aplicado,
     }
 }

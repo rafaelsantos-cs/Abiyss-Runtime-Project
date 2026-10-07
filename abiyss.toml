@@ -41,11 +41,19 @@ extra = { chat_template_kwargs = { enable_thinking = true, clear_thinking = fals
 #   max_tokens  = N           → substitui o max_tokens do modelo
 #   extra       = { ... }     → mesclado por cima do `extra` do modelo
 #   usar_modelo = "<papel>"   → usa OUTRO modelo de [modelos] neste nível
-#   a_confirmar = "..."       → PLACEHOLDER: capacidade não verificada no NIM
+#   a_confirmar = "..."       → PLACEHOLDER: capacidade não verificada no NIM.
+#                               Nenhum campo do nível é enviado (pensar,
+#                               orcamento, max_tokens, extra): vai só o modelo
+#                               (ou o substituto) com os parâmetros padrão. O
+#                               daemon avisa no log, uma vez por modelo, ao subir.
+#                               Confirmou no NIM? Apague o a_confirmar.
 # Campo vazio = o modelo não tem esse botão (usar `pensar`/`orcamento` nele
 # é recusado ao carregar). Confira o resultado com `abiyss esforco`.
-# Por enquanto só a camada de config/cliente usa esta tabela (o chat, o
-# heartbeat e os sub-agentes ainda usam os parâmetros fixos acima).
+# Quem escolhe o nível: [chat] esforco_padrao/esforco_maximo, [daemon.esforco]
+# (por situação do heartbeat), [subagentes.<nível>] esforco_padrao/
+# esforco_maximo (+ o `esforco` opcional da delegação) e [sono] modo_esforco.
+# Cada chamada grava o nível em chamadas_modelo; `abiyss status` mostra a
+# latência por nível (para calibrar esforço × latência na VM).
 # ---------------------------------------------------------------------------
 
 [modelos.cerebro.esforco]
@@ -212,6 +220,12 @@ despertar = "planejar-o-dia"   # primeiro ciclo depois do sono ou de um reiníci
 historico_max_mensagens = 40
 # Máximo de rodadas modelo → ferramenta → modelo por mensagem do usuário.
 max_rodadas_ferramentas = 8
+# Nível da tabela de esforço do cérebro em cada resposta.
+esforco_padrao = "medium"
+# Com a ferramenta `aprofundar`, o modelo pede um nível mais profundo para o
+# resto de UMA resposta, até este teto (igual ao padrão = sem a ferramenta).
+# high é o nível mais alto CONFIRMADO do cérebro; xhigh/ultra estão a confirmar.
+esforco_maximo = "high"
 
 # ---------------------------------------------------------------------------
 # Ferramentas nativas de arquivo (ler/listar/escrever dentro do workspace).
@@ -278,9 +292,12 @@ revisao_minima_segundos = 1800
 # Máximo de eventos da fila colocados no contexto de um ciclo.
 max_eventos_por_ciclo = 20
 # Watchdog do systemd (WatchdogSec= na unit): se o loop principal ficar
-# este tempo sem dar uma volta (ex.: ciclo travado), o daemon para de avisar
-# o systemd, que o reinicia. Precisa cobrir o ciclo mais longo legítimo.
-max_travado_segundos = 3600
+# este tempo sem dar uma volta, o daemon para de avisar o systemd, que o
+# reinicia. O loop não espera trabalho longo (ciclo, sono, manutenção e o
+# VACUUM completo da 1ª manutenção rodam fora dele; o ciclo tem o seu
+# próprio limite logo abaixo): uma volta normal leva milissegundos, e o pior
+# caso auditado são alguns comandos no banco esperando o busy_timeout de 5 s.
+max_travado_segundos = 300
 # Tempo máximo de UM ciclo de heartbeat. Passou disto, o kernel interrompe o
 # ciclo, registra o erro e os eventos continuam pendentes. O loop principal
 # (crons, sinal de vida, watchdog) nunca espera o ciclo: ele anda em paralelo.
@@ -294,6 +311,20 @@ max_continuacoes_seguidas = 2
 # daemon publica um evento kernel/reinicio com o tempo de ausência; o primeiro
 # ciclo recebe a skill planejar-o-dia.
 aviso_ausencia_minutos = 10
+
+# Esforço do cérebro em cada situação do heartbeat: um modo ("raso" = medium,
+# "profundo" = high) ou um nível exato (minimal..ultra). Num ciclo com mais
+# de uma situação, vale a mais profunda.
+[daemon.esforco]
+# Ciclos comuns: eventos (cron, relatório de sub-agente, resposta do dono,
+# skill consultada) ou um goal que mudou.
+rotina = "raso"
+# Revisão periódica do goal em foco (e o primeiro ciclo com um goal).
+revisao_goal = "profundo"
+# O ciclo traz um aviso kernel/estagnacao (com a skill sair-de-loops).
+estagnacao = "profundo"
+# Planejar o dia ao acordar: o resumo do sono ou um kernel/reinicio.
+despertar = "profundo"
 
 # ---------------------------------------------------------------------------
 # Ritmo do dia (fuso local da máquina; o systemd define TZ=America/Sao_Paulo).
@@ -413,8 +444,11 @@ max_notas_relacionadas = 8
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
 # As mãos (servidores MCP terminal, web_rapido e ambiente) entram por aqui:
-# é pela delegação que o heartbeat as usa. O low continua só de leitura:
-# sem escrever_arquivo e sem o terminal (que escreve no workspace).
+# é pela delegação que o heartbeat as usa. Ler a web e rodar comandos NUNCA
+# ficam no mesmo nível: uma página poderia mandar o sub-agente ler um arquivo
+# (ou rodar um programa) e buscar uma URL do atacante com o conteúdo
+# (docs/LIMITES.md). Pesquisa na web: ultra ou low. Comandos: medium. O low
+# continua só de leitura (sem escrever_arquivo e sem o terminal).
 # ---------------------------------------------------------------------------
 
 [subagentes]
@@ -423,28 +457,38 @@ verificacao_segundos = 5
 # Máximo de sub-agentes vivos ao mesmo tempo (todos os níveis).
 max_simultaneos = 4
 
+# esforco_padrao/esforco_maximo: nível da tabela de esforço do modelo do
+# sub-agente quando a delegação não pede um, e o teto do que ela pode pedir
+# (acima disso é limitado). O teto impede um nível barato de subir para o
+# modelo de um nível acima (ex.: sub_low.high usa o sub_medium).
 [subagentes.ultra]
 max_tokens = 200000
 max_segundos = 1800
 max_rodadas = 20
+esforco_padrao = "high"
+esforco_maximo = "ultra"
 ferramentas = [
   "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
-  "terminal__*", "web_rapido__*", "ambiente__*",
+  "web_rapido__*", "ambiente__*",
 ]
 
 [subagentes.medium]
 max_tokens = 100000
 max_segundos = 900
 max_rodadas = 12
+esforco_padrao = "medium"
+esforco_maximo = "high"
 ferramentas = [
   "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
-  "terminal__*", "web_rapido__*", "ambiente__*",
+  "terminal__*", "ambiente__*",
 ]
 
 [subagentes.low]
 max_tokens = 50000
 max_segundos = 600
 max_rodadas = 8
+esforco_padrao = "low"
+esforco_maximo = "medium"
 ferramentas = ["ler_arquivo", "listar_arquivos", "exemplo__*", "web_rapido__*", "ambiente__*"]
 
 # ---------------------------------------------------------------------------

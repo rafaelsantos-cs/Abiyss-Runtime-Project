@@ -14,6 +14,8 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::esforco::NivelEsforco;
+
 /// Configuração completa, já carregada e validada.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -131,6 +133,10 @@ pub struct ConfigModelo {
     /// parâmetros deste modelo. Ver `crate::esforco`.
     #[serde(default)]
     pub esforco: crate::esforco::ConfigEsforcoModelo,
+    /// Não vem do arquivo: o nível com que `esforco::resolver` montou esta
+    /// cópia do modelo. `None` = parâmetros fixos da config (sem tabela).
+    #[serde(skip)]
+    pub esforco_aplicado: Option<crate::esforco::EsforcoAplicado>,
 }
 
 impl ConfigModelos {
@@ -349,8 +355,9 @@ pub struct ConfigDaemon {
     /// Máximo de eventos da fila colocados no contexto de um ciclo.
     pub max_eventos_por_ciclo: usize,
     /// Com o watchdog do systemd ligado: se o loop principal ficar este
-    /// tempo sem completar nenhuma volta (ex.: um ciclo travado), o daemon
-    /// para de mandar WATCHDOG=1 e o systemd o reinicia.
+    /// tempo sem completar nenhuma volta (tokio ou loop realmente parados),
+    /// o daemon para de mandar WATCHDOG=1 e o systemd o reinicia. O loop não
+    /// espera trabalho longo (ver `crate::daemon`), então 300 s é folga.
     pub max_travado_segundos: u64,
     /// Tempo máximo de um ciclo de heartbeat. Passou disto, o kernel
     /// interrompe o ciclo, registra o erro e os eventos continuam pendentes.
@@ -363,6 +370,8 @@ pub struct ConfigDaemon {
     /// Ao subir depois de ficar fora do ar mais que isto, o daemon publica
     /// um evento `kernel/reinicio` (o primeiro ciclo replaneja o dia).
     pub aviso_ausencia_minutos: u64,
+    /// `[daemon.esforco]`: nível do cérebro em cada situação do heartbeat.
+    pub esforco: crate::heartbeat::ConfigEsforcoHeartbeat,
 }
 
 impl Default for ConfigDaemon {
@@ -372,11 +381,12 @@ impl Default for ConfigDaemon {
             cron_verificacao_segundos: 30,
             revisao_minima_segundos: 1800,
             max_eventos_por_ciclo: 20,
-            max_travado_segundos: 3_600,
+            max_travado_segundos: 300,
             max_duracao_ciclo_segundos: 900,
             continuacao_segundos: 20,
             max_continuacoes_seguidas: 2,
             aviso_ausencia_minutos: 10,
+            esforco: Default::default(),
         }
     }
 }
@@ -394,6 +404,12 @@ pub struct ConfigNivelSubagente {
     /// Ferramentas permitidas (aceita curinga no fim: "exemplo__*").
     /// `delegar`, `status` e `cancelar` NUNCA são dadas a sub-agentes.
     pub ferramentas: Vec<String>,
+    /// Nível da tabela de esforço quando a delegação não pede um. Ausente =
+    /// o padrão do nível (ver `ConfigSubagentes::esforco`).
+    pub esforco_padrao: Option<NivelEsforco>,
+    /// Teto do esforço que uma delegação pode pedir (o pedido acima disto é
+    /// limitado). Ausente = o padrão do nível.
+    pub esforco_maximo: Option<NivelEsforco>,
 }
 
 impl Default for ConfigNivelSubagente {
@@ -403,6 +419,8 @@ impl Default for ConfigNivelSubagente {
             max_segundos: 600,
             max_rodadas: 8,
             ferramentas: vec!["ler_arquivo".into(), "listar_arquivos".into()],
+            esforco_padrao: None,
+            esforco_maximo: None,
         }
     }
 }
@@ -437,12 +455,16 @@ impl Default for ConfigSubagentes {
                 max_segundos: 1_800,
                 max_rodadas: 20,
                 ferramentas: todas.clone(),
+                esforco_padrao: None,
+                esforco_maximo: None,
             },
             medium: ConfigNivelSubagente {
                 max_tokens: 100_000,
                 max_segundos: 900,
                 max_rodadas: 12,
                 ferramentas: todas,
+                esforco_padrao: None,
+                esforco_maximo: None,
             },
             low: ConfigNivelSubagente {
                 max_tokens: 50_000,
@@ -453,7 +475,50 @@ impl Default for ConfigSubagentes {
                     "listar_arquivos".to_string(),
                     "exemplo__*".to_string(),
                 ],
+                esforco_padrao: None,
+                esforco_maximo: None,
             },
+        }
+    }
+}
+
+/// Esforço permitido a um nível de sub-agente.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FaixaEsforco {
+    /// Usado quando a delegação não pede nível.
+    pub padrao: NivelEsforco,
+    /// Pedido acima disto é limitado.
+    pub maximo: NivelEsforco,
+}
+
+impl FaixaEsforco {
+    /// O nível que roda: o pedido (ou o padrão), limitado ao máximo.
+    /// Devolve também se o pedido foi cortado.
+    pub fn limitar(&self, pedido: Option<NivelEsforco>) -> (NivelEsforco, bool) {
+        let nivel = pedido.unwrap_or(self.padrao);
+        if nivel > self.maximo {
+            (self.maximo, true)
+        } else {
+            (nivel, false)
+        }
+    }
+}
+
+impl ConfigSubagentes {
+    /// Padrões por nível, quando o abiyss.toml não diz: `ultra` roda em
+    /// `high` (pode subir até `ultra`), `medium` em `medium` (até `high`) e
+    /// `low` em `low` (até `medium`). Assim um sub-agente barato nunca é
+    /// levado ao modelo de um nível acima (`usar_modelo` dos níveis altos).
+    pub fn esforco(&self, nivel: crate::orquestrador::Nivel) -> FaixaEsforco {
+        use crate::orquestrador::Nivel;
+        let (config, padrao, maximo) = match nivel {
+            Nivel::Ultra => (&self.ultra, NivelEsforco::High, NivelEsforco::Ultra),
+            Nivel::Medium => (&self.medium, NivelEsforco::Medium, NivelEsforco::High),
+            Nivel::Low => (&self.low, NivelEsforco::Low, NivelEsforco::Medium),
+        };
+        FaixaEsforco {
+            padrao: config.esforco_padrao.unwrap_or(padrao),
+            maximo: config.esforco_maximo.unwrap_or(maximo),
         }
     }
 }
@@ -485,6 +550,11 @@ pub struct ConfigChat {
     pub historico_max_mensagens: usize,
     /// Máximo de idas e voltas modelo → ferramenta → modelo por mensagem.
     pub max_rodadas_ferramentas: usize,
+    /// Nível da tabela de esforço do cérebro em cada resposta.
+    pub esforco_padrao: NivelEsforco,
+    /// Teto da ferramenta `aprofundar` (mais esforço numa resposta só).
+    /// Igual ao padrão = a ferramenta não é oferecida.
+    pub esforco_maximo: NivelEsforco,
 }
 
 impl Default for ConfigChat {
@@ -492,6 +562,8 @@ impl Default for ConfigChat {
         ConfigChat {
             historico_max_mensagens: 40,
             max_rodadas_ferramentas: 8,
+            esforco_padrao: NivelEsforco::Medium,
+            esforco_maximo: NivelEsforco::High,
         }
     }
 }
@@ -603,6 +675,28 @@ impl Config {
             }
         }
         crate::esforco::validar(&self.modelos)?;
+        if self.chat.esforco_maximo < self.chat.esforco_padrao {
+            bail!(
+                "chat.esforco_maximo ({}) precisa ser pelo menos chat.esforco_padrao ({})",
+                self.chat.esforco_maximo.como_texto(),
+                self.chat.esforco_padrao.como_texto()
+            );
+        }
+        for nivel in [
+            crate::orquestrador::Nivel::Ultra,
+            crate::orquestrador::Nivel::Medium,
+            crate::orquestrador::Nivel::Low,
+        ] {
+            let faixa = self.subagentes.esforco(nivel);
+            if faixa.maximo < faixa.padrao {
+                bail!(
+                    "subagentes.{}: esforco_maximo ({}) precisa ser pelo menos esforco_padrao ({})",
+                    nivel.como_texto(),
+                    faixa.maximo.como_texto(),
+                    faixa.padrao.como_texto()
+                );
+            }
+        }
         self.retencao.validar()?;
         Ok(())
     }
@@ -840,6 +934,46 @@ mod testes {
     fn rejeita_modelo_vazio() {
         let texto = MINIMA.replace("teste/low", " ");
         assert!(Config::de_texto(&texto).is_err());
+    }
+
+    /// O abiyss.toml versionado nunca dá a web e os comandos ao mesmo nível
+    /// de sub-agente (docs/LIMITES.md: uma página mandaria ler um arquivo e
+    /// buscar uma URL com ele). Os testes dos servidores MCP conferem o mesmo;
+    /// este roda no `cargo test` do CI.
+    #[test]
+    fn abiyss_toml_separa_web_e_comandos_nos_subagentes() {
+        let config = Config::de_texto(include_str!("../../abiyss.toml")).unwrap();
+        let servidor = |pasta: &str| {
+            let item = config
+                .mcp
+                .servidores
+                .iter()
+                .find(|s| s.diretorio.as_deref() == Some(pasta))
+                .unwrap_or_else(|| panic!("{pasta} não está em [[mcp.servidores]]"));
+            format!("{}__", item.nome)
+        };
+        let (web, terminal) = (
+            servidor("recursos/mcp/web_rapido"),
+            servidor("recursos/mcp/terminal"),
+        );
+        // Algum item da lista deixa passar uma ferramenta com este prefixo?
+        // (nome com o prefixo, ou curinga que cobre o prefixo, como "*").
+        let alcanca = |lista: &[String], prefixo: &str| {
+            lista.iter().any(|p| match p.strip_suffix('*') {
+                Some(inicio) => inicio.starts_with(prefixo) || prefixo.starts_with(inicio),
+                None => p.starts_with(prefixo),
+            })
+        };
+        let s = &config.subagentes;
+        for (nivel, lista, com_web, com_terminal) in [
+            ("ultra", &s.ultra.ferramentas, true, false),
+            ("medium", &s.medium.ferramentas, false, true),
+            ("low", &s.low.ferramentas, true, false),
+        ] {
+            assert_eq!(alcanca(lista, &web), com_web, "{nivel}: web");
+            assert_eq!(alcanca(lista, &terminal), com_terminal, "{nivel}: terminal");
+        }
+        assert!(alcanca(&["*".to_string()], &web));
     }
 
     #[test]

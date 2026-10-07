@@ -115,7 +115,7 @@ async fn diario_completa_a_delegacao_com_o_relatorio_do_subagente() {
     assert_eq!(entrada.expectativa, "uma lista de notas em até 1 minuto");
     assert_eq!(
         entrada.resultado.as_deref(),
-        Some("ok: sub-agente 1 (low) delegado")
+        Some("ok: sub-agente 1 (low, esforço low) delegado")
     );
 
     executor.executar_pendentes_e_esperar().await.unwrap();

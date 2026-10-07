@@ -8,7 +8,7 @@
     "esperado": "terminal__executar com um comando curto (ex.: wc -l dados/*.csv | sort -n) a partir de /workspace, sem rede e sem instalar nada; responde com o maior arquivo e o número de linhas. Se a saída vier cortada, filtra (tail, sort) em vez de repetir igual."
   },
   {
-    "situacao": "No heartbeat, o goal #4 precisa de um resumo do que fontes recentes dizem sobre um tema, com pelo menos cinco fontes.",
-    "esperado": "Ação delegar (nível medium) com tarefa autocontida: usar web_rapido__buscar e depois web_rapido__ler_pagina nas melhores fontes, respeitar robots.txt, devolver URL, título, data de publicação e data da busca de cada fonte; não tenta chamar as mãos direto no heartbeat."
+    "situacao": "No heartbeat, o goal #4 precisa de um resumo do que fontes recentes dizem sobre um tema, com pelo menos cinco fontes, e depois de uma tabela feita por um script no workspace a partir desses dados.",
+    "esperado": "Primeiro, ação delegar (nível low, ou ultra se a síntese for difícil) com tarefa autocontida: usar web_rapido__buscar e depois web_rapido__ler_pagina nas melhores fontes, respeitar robots.txt, devolver URL, título, data de publicação e data da busca de cada fonte. Só quando o relatório chegar, outra delegação em medium para o script, com os dados necessários no contexto. Nunca uma delegação só pedindo web e terminal juntos; não delega a pesquisa em medium (sem web); não tenta chamar as mãos direto no heartbeat."
   }
 ]

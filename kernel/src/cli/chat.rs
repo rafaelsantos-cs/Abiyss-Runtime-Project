@@ -26,6 +26,14 @@ pub struct OpcoesChat {
 const AJUDA: &str = "Comandos: /nova (nova conversa), /sair (encerra), /ajuda";
 
 pub async fn executar(config: Config, opcoes: OpcoesChat) -> anyhow::Result<()> {
+    // A conversa só alcança o cérebro entre o esforço padrão e o máximo:
+    // avisa (uma vez) se algum desses níveis ainda está a confirmar no NIM.
+    let (padrao, maximo) = (config.chat.esforco_padrao, config.chat.esforco_maximo);
+    if let Some(aviso) = abiyss::esforco::aviso_a_confirmar(&config.modelos, "cerebro", |n| {
+        (padrao..=maximo).contains(&n)
+    }) {
+        tracing::warn!("{aviso}");
+    }
     let banco = Banco::abrir(&config.caminho_banco())?;
     let orquestrador = Orquestrador::da_config(&config, banco.clone())?;
     // Sobe os servidores MCP (os que falharem são ignorados, com aviso no log).

@@ -4,10 +4,13 @@
 //! - A cada `cron_verificacao_segundos`: dispara crons vencidos e grava
 //!   um "sinal de vida" (código puro, sem modelo).
 //! - A cada `heartbeat_segundos`: um ciclo de heartbeat.
-//! - O loop principal NUNCA espera trabalho longo: o ciclo do heartbeat e
-//!   a manutenção ficam guardados como "trabalhos em andamento" e são
-//!   acompanhados pelo mesmo `select!` que dispara os crons. Um ciclo tem
-//!   tempo máximo e um pânico dentro dele não derruba o daemon.
+//! - O loop principal NUNCA espera trabalho longo: o ciclo do heartbeat, o
+//!   sono, a manutenção e o checkpoint ficam guardados como "trabalhos em
+//!   andamento" e são acompanhados pelo mesmo `select!` que dispara os
+//!   crons. Um ciclo tem tempo máximo e um pânico dentro dele não derruba o
+//!   daemon. A manutenção e o checkpoint rodam fora das threads do tokio e
+//!   numa conexão PRÓPRIA ao banco: nunca seguram a trava da conexão do loop
+//!   (ver "O que ainda pode segurar o loop", abaixo).
 //! - Uma vez por dia, na janela de `[sono]` (ou por `abiyss sleep
 //!   --completo`): o sono. Enquanto ele roda, o heartbeat fica pausado; o
 //!   primeiro ciclo depois dele vê o evento `sono` (ver `sono`).
@@ -19,6 +22,28 @@
 //! - Sob o systemd (`Type=notify`): avisa READY=1 ao subir, STOPPING=1 ao
 //!   parar e, com `WatchdogSec=`, manda WATCHDOG=1 enquanto o loop principal
 //!   estiver andando (ver `vigiar`).
+//!
+//! O que ainda pode segurar o loop (auditoria para `max_travado_segundos`):
+//! - o trabalho síncrono dos braços do `select!` (crons, sinal de vida,
+//!   pedidos vencidos, pedido de sono): comandos curtos no banco. Enquanto
+//!   outra conexão escreve (outro processo, a manutenção, o VACUUM completo
+//!   da conversão), cada um espera no máximo o `busy_timeout` (5 s) e falha
+//!   (fica no log); o checkpoint segura a escrita por até 1 s;
+//! - o pedaço síncrono do ciclo e do sono, que são aguardados pela mesma
+//!   tarefa do loop: entre um `.await` e outro há comandos no banco (até 5 s
+//!   cada, como acima), leitura de arquivos pequenos (núcleo, skills, memória
+//!   central), a medição do corpo (`/proc` e `statvfs` dos discos) e, no
+//!   sono com o qmd fora do ar, a busca por texto no cofre (cresce com o
+//!   cofre). A chamada ao modelo, o backup (`spawn_blocking`, conexão só de
+//!   leitura própria), a manutenção e o checkpoint não seguram o loop;
+//! - nada disso chega perto de minutos: `max_travado_segundos` (300) só
+//!   dispara com o tokio ou o loop realmente parados.
+//!
+//! Antes, a manutenção rodava em `spawn_blocking` mas na conexão
+//! compartilhada: o VACUUM completo da 1ª manutenção de um banco antigo
+//! segurava a trava dela do começo ao fim, e o loop parava na primeira
+//! gravação (sinal de vida). Com o watchdog em 300 s, um VACUUM longo
+//! viraria reinício em loop (a 1ª manutenção roda logo ao subir).
 
 use std::fs::{File, OpenOptions};
 use std::future::Future;
@@ -35,7 +60,7 @@ use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::config::Config;
 use crate::cron;
-use crate::db::Banco;
+use crate::db::{self, Banco};
 use crate::eventos;
 use crate::ferramentas::CaixaDeFerramentas;
 use crate::heartbeat::{self, Heartbeat};
@@ -53,6 +78,12 @@ pub const CHAVE_SINAL_DE_VIDA: &str = "sinal_de_vida_ms";
 pub const CHAVE_PARADO: &str = "parado_ms";
 pub const CHAVE_MANUTENCAO: &str = "manutencao_ms";
 pub const CHAVE_MANUTENCAO_RESUMO: &str = "manutencao_resumo";
+
+/// Espera do checkpoint por quem ainda lê o WAL. Enquanto espera, o
+/// checkpoint `TRUNCATE` segura a trava de escrita do banco (quem escreve,
+/// inclusive o loop, espera junto): curta, e o resto fica para o próximo
+/// intervalo (checkpoint parcial, como um `PASSIVE`).
+const ESPERA_CHECKPOINT: Duration = Duration::from_secs(1);
 
 /// Trava de instância única. Enquanto este valor existir, nenhum outro
 /// daemon consegue iniciar. O sistema operacional solta a trava sozinho
@@ -369,13 +400,18 @@ impl Daemon {
         }
     }
 
-    /// Retenção + vacuum, fora das threads do tokio (pode demorar no
-    /// primeiro dia de um banco grande).
+    /// Retenção + vacuum, fora das threads do tokio e numa conexão própria.
+    /// Na 1ª manutenção de um banco antigo vem um VACUUM completo, que pode
+    /// levar minutos: na conexão compartilhada ele seguraria a trava dela o
+    /// tempo todo, e o loop (crons, sinal de vida) e o ciclo ficariam
+    /// parados esperando. Na própria, quem precisar escrever espera no máximo
+    /// o `busy_timeout` do SQLite e segue.
     async fn manutencao(&self) {
         let banco = self.banco.clone();
         let config = self.config.retencao.clone();
         let rodada = tokio::task::spawn_blocking(move || {
-            manutencao::rodada_completa(&banco, &config, agora_ms())
+            let propria = banco.outra_conexao(db::ESPERA_PADRAO)?;
+            manutencao::rodada_completa(&propria, &config, agora_ms())
         })
         .await;
         match rodada {
@@ -389,14 +425,24 @@ impl Daemon {
         }
     }
 
-    /// Checkpoint do WAL (rápido; ocupado = tenta no próximo intervalo).
-    fn checkpoint(&self) {
-        match manutencao::checkpoint_wal(&self.banco) {
-            Ok(r) if r.ocupado => {
+    /// Checkpoint do WAL (ocupado = tenta no próximo intervalo). Fora das
+    /// threads do tokio e numa conexão própria, com espera curta: o
+    /// `TRUNCATE` espera quem ainda lê o WAL (um `abiyss chat` aberto, o
+    /// backup) segurando a trava de escrita, e copia o WAL para o banco.
+    async fn checkpoint(&self) {
+        let banco = self.banco.clone();
+        let feito = tokio::task::spawn_blocking(move || {
+            let propria = banco.outra_conexao(ESPERA_CHECKPOINT)?;
+            manutencao::checkpoint_wal(&propria)
+        })
+        .await;
+        match feito {
+            Ok(Ok(r)) if r.ocupado => {
                 tracing::debug!("checkpoint do WAL parcial (banco ocupado): {r:?}")
             }
-            Ok(r) => tracing::debug!("checkpoint do WAL: {r:?}"),
-            Err(e) => tracing::warn!("checkpoint do WAL falhou: {e:#}"),
+            Ok(Ok(r)) => tracing::debug!("checkpoint do WAL: {r:?}"),
+            Ok(Err(e)) => tracing::warn!("checkpoint do WAL falhou: {e:#}"),
+            Err(e) => tracing::error!("tarefa do checkpoint morreu: {e}"),
         }
     }
 
@@ -406,8 +452,18 @@ impl Daemon {
                 if r.pedir_continuacao {
                     self.continuacao_pedida.store(true, Ordering::Relaxed);
                 }
+                let esforco = r
+                    .esforco
+                    .map(|(nivel, situacao)| {
+                        format!(
+                            "; esforço {} ({})",
+                            nivel.como_texto(),
+                            situacao.como_texto()
+                        )
+                    })
+                    .unwrap_or_default();
                 tracing::info!(
-                    "heartbeat: chamou o modelo ({}); ações: {}",
+                    "heartbeat: chamou o modelo ({}{esforco}); ações: {}",
                     r.motivo,
                     if r.resultados.is_empty() {
                         "nenhuma".to_string()
@@ -601,6 +657,7 @@ impl Daemon {
         // de vida e watchdog continuam andando enquanto um ciclo pensa.
         let mut ciclo: Option<Trabalho<'_>> = None;
         let mut manutencao: Option<Trabalho<'_>> = None;
+        let mut checkpoint: Option<Trabalho<'_>> = None;
         // O sono é exclusivo com o heartbeat: espera o ciclo em andamento
         // terminar e, enquanto dorme, nenhum ciclo começa.
         let mut sono: Option<Trabalho<'_>> = None;
@@ -616,7 +673,10 @@ impl Daemon {
                         sono_pendente = self.decidir_sono();
                     }
                 }
-                _ = tique_checkpoint.tick() => self.checkpoint(),
+                _ = tique_checkpoint.tick(), if checkpoint.is_none() => {
+                    checkpoint = Some(Box::pin(self.checkpoint()));
+                }
+                _ = esperar_trabalho(&mut checkpoint) => checkpoint = None,
                 _ = tique_manutencao.tick(), if manutencao.is_none() => {
                     manutencao = Some(Box::pin(self.manutencao()));
                 }
@@ -676,6 +736,7 @@ impl Daemon {
         }
         drop(ciclo);
         drop(manutencao);
+        drop(checkpoint);
         drop(sono);
         avisar_systemd("STOPPING=1\nSTATUS=parando");
         if let Some(vigia) = vigia {

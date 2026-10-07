@@ -37,6 +37,7 @@ fn pedido(texto: &str) -> PedidoChat {
         temperature: None,
         top_p: None,
         extra,
+        esforco: None,
     }
 }
 

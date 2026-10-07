@@ -8,7 +8,7 @@
 //! O esquema evolui por MIGRAÇÕES numeradas: cada fase acrescenta um
 //! item no fim de `MIGRACOES`. A versão aplicada fica em `PRAGMA user_version`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -312,6 +312,17 @@ const MIGRACOES: &[&str] = &[
     CREATE UNIQUE INDEX idx_pedidos_chave_pendente
         ON pedidos_usuario(chave) WHERE estado = 'pendente';
     "#,
+    // 14 (v0.2, ajustes) — tabela de esforço ligada ao runtime. Em cada
+    // chamada: o nível resolvido (NULL = sem tabela, ex.: `testar-nim`, ou
+    // chamada anterior a esta migração) e se os campos dele foram enviados
+    // (0 = nível a confirmar ou fora da tabela: foram os parâmetros padrão
+    // do modelo). Em cada sub-agente: o nível que ele roda (já limitado ao
+    // teto do nível do sub-agente; NULL = anterior a esta migração).
+    r#"
+    ALTER TABLE chamadas_modelo ADD COLUMN nivel_esforco TEXT;
+    ALTER TABLE chamadas_modelo ADD COLUMN esforco_confirmado INTEGER;
+    ALTER TABLE subagentes ADD COLUMN esforco TEXT;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é
@@ -322,6 +333,10 @@ pub const CACHE_PADRAO_KIB: u32 = 2048;
 /// passar disto). Sem teto, o WAL fica do tamanho do maior pico.
 const LIMITE_WAL_BYTES: i64 = 64 * 1024 * 1024;
 
+/// Quanto um comando espera outro processo (ou conexão) soltar o banco
+/// antes de falhar (`busy_timeout`).
+pub const ESPERA_PADRAO: Duration = Duration::from_secs(5);
+
 /// Acesso ao banco. `Clone` é barato: todos os clones usam a mesma conexão.
 ///
 /// A conexão fica atrás de um `Mutex` comum (não o do tokio). Isso é de
@@ -331,6 +346,9 @@ const LIMITE_WAL_BYTES: i64 = 64 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Banco {
     conexao: Arc<Mutex<Connection>>,
+    /// Arquivo do banco (`None` em memória). Guardado ao abrir: pedir à
+    /// conexão exigiria a trava dela.
+    caminho: Option<PathBuf>,
 }
 
 impl Banco {
@@ -346,24 +364,43 @@ impl Banco {
         // WAL permite um processo escrever enquanto outro lê.
         conexao.pragma_update(None, "journal_mode", "WAL")?;
         conexao.pragma_update(None, "journal_size_limit", LIMITE_WAL_BYTES)?;
-        Banco::preparar(conexao)
+        Banco::preparar(conexao, Some(caminho.to_path_buf()))
     }
 
     /// Banco temporário em memória (para testes).
     pub fn em_memoria() -> anyhow::Result<Banco> {
-        Banco::preparar(Connection::open_in_memory()?)
+        Banco::preparar(Connection::open_in_memory()?, None)
     }
 
-    fn preparar(conexao: Connection) -> anyhow::Result<Banco> {
+    fn preparar(conexao: Connection, caminho: Option<PathBuf>) -> anyhow::Result<Banco> {
         // Se outro processo estiver escrevendo, espera até 5 s em vez de falhar.
-        conexao.busy_timeout(Duration::from_secs(5))?;
+        conexao.busy_timeout(ESPERA_PADRAO)?;
         conexao.pragma_update(None, "foreign_keys", "ON")?;
         conexao.pragma_update(None, "cache_size", -(CACHE_PADRAO_KIB as i64))?;
         let banco = Banco {
             conexao: Arc::new(Mutex::new(conexao)),
+            caminho,
         };
         banco.migrar()?;
         Ok(banco)
+    }
+
+    /// Uma conexão NOVA ao mesmo arquivo (com os mesmos pragmas e `espera`
+    /// como `busy_timeout`), para trabalho longo que não pode segurar a trava
+    /// desta: a manutenção (o VACUUM completo da conversão leva minutos num
+    /// banco grande) e o checkpoint do WAL. Quem usa esta aqui espera no
+    /// máximo o `busy_timeout` do SQLite, em vez de esperar a trava pelo
+    /// trabalho inteiro. Banco em memória não tem arquivo: devolve um clone
+    /// (a mesma conexão, sem mexer nela).
+    pub fn outra_conexao(&self, espera: Duration) -> anyhow::Result<Banco> {
+        match &self.caminho {
+            Some(caminho) => {
+                let banco = Banco::abrir(caminho)?;
+                banco.conexao().busy_timeout(espera)?;
+                Ok(banco)
+            }
+            None => Ok(self.clone()),
+        }
     }
 
     /// Pega a conexão para fazer consultas. Solte a trava (fim do escopo)
@@ -450,6 +487,52 @@ mod testes {
         assert_eq!(banco.cache_kib().unwrap(), CACHE_PADRAO_KIB);
         banco.limitar_cache(512).unwrap();
         assert_eq!(banco.cache_kib().unwrap(), 512);
+    }
+
+    #[test]
+    fn outra_conexao_nao_depende_da_trava_desta() {
+        let pasta = tempfile::tempdir().unwrap();
+        let banco = Banco::abrir(&pasta.path().join("abiyss.db")).unwrap();
+        // A trava desta conexão presa (como ficava com a manutenção rodando)...
+        let trava = banco.conexao();
+        let outra = banco.outra_conexao(ESPERA_PADRAO).unwrap();
+        // ...e a outra conexão trabalha no mesmo arquivo, sem esperar por ela.
+        std::thread::spawn(move || {
+            outra
+                .conexao()
+                .execute(
+                    "INSERT INTO estado_daemon (chave, valor) VALUES ('x', '1')",
+                    [],
+                )
+                .unwrap();
+        })
+        .join()
+        .unwrap();
+        let valor: String = trava
+            .query_row(
+                "SELECT valor FROM estado_daemon WHERE chave = 'x'",
+                [],
+                |l| l.get(0),
+            )
+            .unwrap();
+        assert_eq!(valor, "1");
+        drop(trava);
+
+        // Em memória não há arquivo: é a mesma conexão.
+        let memoria = Banco::em_memoria().unwrap();
+        memoria
+            .conexao()
+            .execute(
+                "INSERT INTO estado_daemon (chave, valor) VALUES ('y', '2')",
+                [],
+            )
+            .unwrap();
+        let clone = memoria.outra_conexao(ESPERA_PADRAO).unwrap();
+        let n: i64 = clone
+            .conexao()
+            .query_row("SELECT count(*) FROM estado_daemon", [], |l| l.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]

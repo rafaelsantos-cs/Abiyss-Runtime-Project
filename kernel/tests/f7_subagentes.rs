@@ -35,6 +35,7 @@ fn pedido(nivel: Nivel, tarefa: &str, contexto: &str) -> PedidoDelegacao {
         contexto: contexto.into(),
         prazo_segundos: 600,
         goal_id: None,
+        esforco: None,
     }
 }
 
@@ -369,7 +370,10 @@ async fn heartbeat_delega_e_recebe_o_resultado_como_evento() {
     )
     .com_subagentes(ex.controle());
     let r = hb.ciclo().await.unwrap();
-    assert_eq!(r.resultados, vec!["ok: sub-agente 1 (low) delegado"]);
+    assert_eq!(
+        r.resultados,
+        vec!["ok: sub-agente 1 (low, esforço low) delegado"]
+    );
     let info = ex.controle().status(1).unwrap();
     assert_eq!(info.origem, "heartbeat");
     assert_eq!(info.goal_id, Some(goal_id));

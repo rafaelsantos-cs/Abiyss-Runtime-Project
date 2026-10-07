@@ -76,6 +76,9 @@ async fn tres_decisoes_iguais_trazem_o_aviso_no_quarto_ciclo() {
     let amb = Ambiente::novo().await;
     instalar_skill(&amb, "sair-de-loops");
     let goal = criar_goal(&amb);
+    // O goal tem de ser mais antigo que o 1º ciclo: no mesmo milissegundo, o
+    // kernel conta como "o goal mudou durante as repetições" e não avisa.
+    comum::esperar_o_relogio_passar(goal.atualizado_ms).await;
     let mesma = json!([{
         "tipo": "delegar", "nivel": "low", "goal_id": goal.id,
         "tarefa": "Pesquisar preços de VPS", "expectativa": "tabela completa"

@@ -72,7 +72,24 @@ data/abiyss.db               ← SQLite (criado sozinho)
 - **429**: o `Retry-After` bloqueia o pool inteiro até o horário pedido.
 - **Erros temporários** (5xx, rede): backoff exponencial com sorteio.
 - **Um pool nunca usa a capacidade do outro** (baldes, filas e clientes separados).
-- Cada tentativa fica registrada (`chamadas_modelo`) e alimenta a interocepção.
+- Cada tentativa fica registrada (`chamadas_modelo`, com o nível de esforço)
+  e alimenta a interocepção.
+
+### Esforço por situação
+
+A tabela de esforço (`[modelos.<papel>.esforco]`, `abiyss esforco`) traduz
+os níveis `minimal`…`ultra` para os campos de cada modelo. Quem escolhe o nível:
+
+| Onde | Padrão | Mais fundo |
+|---|---|---|
+| chat | `[chat] esforco_padrao = "medium"` | o modelo chama `aprofundar` e o resto daquela resposta sobe até `esforco_maximo` (`high`) |
+| heartbeat | `[daemon.esforco] rotina = "raso"` (medium) | `revisao_goal`, `estagnacao` e `despertar` = `"profundo"` (high) |
+| sub-agentes | `[subagentes.<nível>] esforco_padrao` (ultra: high; medium: medium; low: low) | o `esforco` da delegação, limitado a `esforco_maximo` (ultra; high; medium) |
+| sono | `[sono] modo_esforco = "profundo"` | — |
+
+Nível marcado `a_confirmar` não envia os campos dele (só o modelo, com os
+parâmetros padrão) e o daemon avisa no log, uma vez por modelo. O `abiyss
+status` mostra a latência de cada modelo por nível de esforço.
 
 ### Regra de orçamento
 
@@ -229,9 +246,9 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss chat --mostrar-raciocinio` | Mostra o raciocínio do modelo em cinza |
 | `abiyss daemon` | Roda o Abiyss 24/7 (heartbeat, crons, sub-agentes) |
 | `abiyss daemon --uma-vez` | Um ciclo de heartbeat (+ sub-agentes pendentes) e sai |
-| `abiyss status` | Estado geral: daemon, identidade, último sono, disjuntor, pedidos, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo, 24 h), interocepção |
+| `abiyss status` | Estado geral: daemon, identidade, último sono, disjuntor, pedidos, goals, fila, crons, sub-agentes, latência (p50/p95 por modelo e, dentro dele, por nível de esforço, 24 h), interocepção |
 | `abiyss status --verificar` | Uma linha e código de saída para monitor externo: 0 = ok, 1 = degradado (sinal de vida atrasado, disjuntor aberto, sono falho ou atrasado), 2 = daemon parado |
-| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` |
+| `abiyss esforco` | Tabela de esforço resolvida: `minimal`…`ultra` de cada modelo, com os placeholders `A CONFIRMAR` (e os campos que eles deixam de enviar) |
 | `abiyss manutencao` | Roda agora a retenção (detalhe antigo → agregado diário), o vacuum incremental e o checkpoint do WAL |
 | `abiyss goal add "Título" --nucleo "essência + critério de pronto" [--descricao ..] [--prioridade N]` | Cria um goal (estado `proposto`) |
 | `abiyss goal list [--todos]` | Lista goals (`*` = em foco) |
@@ -368,7 +385,7 @@ linha a linha). O essencial:
 | Diretiva | Valor | Por quê |
 |---|---|---|
 | `Type=notify` | — | o daemon avisa `READY=1` depois de subir os servidores MCP (`TimeoutStartSec=300`) |
-| `WatchdogSec` | `120` | o daemon manda `WATCHDOG=1` a cada 60 s **enquanto o loop principal anda**; tokio travado ou loop parado há mais de `[daemon] max_travado_segundos` (3600) → o systemd mata e reinicia |
+| `WatchdogSec` | `120` | o daemon manda `WATCHDOG=1` a cada 60 s **enquanto o loop principal anda**; tokio travado ou loop parado há mais de `[daemon] max_travado_segundos` (300) → o systemd mata e reinicia. O loop não espera o modelo, o sono, a manutenção nem o VACUUM (conexão própria ao banco) |
 | `Restart=on-failure` | `RestartSec=10` | reinicia em erro, sinal fatal e estouro do watchdog; no máximo 5 vezes em 10 min (`StartLimit*`) |
 | `MemoryHigh` / `MemoryMax` | `3G` / `4G` | valem para o cgroup inteiro (daemon + uv + Python dos servidores MCP) |
 | `MemorySwapMax` | `0` | vazamento vira OOM visível em vez de VM trocando páginas |
@@ -525,6 +542,11 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
   neutralizadas.
 - **Sub-agente não cria sub-agente**: `delegar`/`status`/`cancelar` nunca entram
   na caixa de ferramentas deles, independentemente da config.
+- **Web e comandos em sub-agentes diferentes**: `ultra` e `low` leem a web
+  (`web_rapido`), só o `medium` roda comandos (`terminal`); uma página não
+  consegue mandar o mesmo sub-agente rodar um programa e enviar o resultado
+  para uma URL. O raciocínio e o que continua possível estão em
+  [`docs/LIMITES.md`](docs/LIMITES.md).
 - **Identidade**: as regras do kernel (nome Abiyss, nunca Hermes nem humano)
   ficam no código e vêm antes do núcleo editável.
 
