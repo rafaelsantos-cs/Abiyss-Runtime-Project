@@ -481,6 +481,33 @@ timeout_segundos = 30
 expor = false
 ativo = true
 
+[[mcp.servidores]]
+# terminal: comandos de shell numa caixa de areia (bubblewrap). Só o
+# workspace é gravável (em /workspace); sistema só leitura; sem rede por
+# padrão. Precisa do bwrap e de namespaces de usuário: sem isso o servidor
+# NÃO sobe (o motivo vai para o journal). Instalação e limites em
+# recursos/mcp/terminal/README.md.
+nome = "terminal"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/terminal"
+# Tempo do KERNEL para uma chamada. O servidor recusa subir se
+# TERMINAL_TIMEOUT_MAXIMO + 5 s não couber aqui.
+timeout_segundos = 120
+ativo = true
+
+[mcp.servidores.env]
+# Limites de cada comando (valores SEMPRE entre aspas). O servidor confere
+# que cabem nos do kernel: concorrentes × memória + 128 MiB do próprio
+# servidor ≤ [mcp] max_memoria_mb, e 2 × saída ≤ [mcp] max_bytes_resultado.
+TERMINAL_TIMEOUT_PADRAO = "30"
+TERMINAL_TIMEOUT_MAXIMO = "110"
+TERMINAL_MAX_SAIDA_BYTES = "32000"   # por fluxo (stdout e stderr): começo e fim
+TERMINAL_MAX_CONCORRENTES = "2"
+TERMINAL_MEMORIA_MB = "160"          # por comando (cada processo e a árvore toda)
+TERMINAL_MAX_PROCESSOS = "64"        # processos + threads por comando
+TERMINAL_REDE = "nao"                # "sim" também abre os serviços locais (qmd, SearXNG)
+
 # ---------------------------------------------------------------------------
 # Banco (SQLite).
 # ---------------------------------------------------------------------------
