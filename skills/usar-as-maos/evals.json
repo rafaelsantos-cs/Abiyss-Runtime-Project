@@ -1,0 +1,14 @@
+[
+  {
+    "situacao": "No chat, o usuário pergunta: 'quanto espaço sobra no disco e o abiyss está rodando direito?'.",
+    "esperado": "Uma chamada a ambiente__resumo (ou ambiente__disco e ambiente__servicos), sem terminal; responde com o espaço livre do disco do projeto e o estado do abiyss.service (ativo, desde quando, reinícios). Não tenta reiniciar nada."
+  },
+  {
+    "situacao": "No chat, o usuário pede: 'conte as linhas de cada CSV em dados/ no workspace e diga qual é o maior'.",
+    "esperado": "terminal__executar com um comando curto (ex.: wc -l dados/*.csv | sort -n) a partir de /workspace, sem rede e sem instalar nada; responde com o maior arquivo e o número de linhas. Se a saída vier cortada, filtra (tail, sort) em vez de repetir igual."
+  },
+  {
+    "situacao": "No heartbeat, o goal #4 precisa de um resumo do que fontes recentes dizem sobre um tema, com pelo menos cinco fontes.",
+    "esperado": "Ação delegar (nível medium) com tarefa autocontida: usar web_rapido__buscar e depois web_rapido__ler_pagina nas melhores fontes, respeitar robots.txt, devolver URL, título, data de publicação e data da busca de cada fonte; não tenta chamar as mãos direto no heartbeat."
+  }
+]
