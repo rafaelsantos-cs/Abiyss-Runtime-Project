@@ -1,0 +1,22 @@
+[project]
+name = "abiyss-mcp-ambiente"
+version = "0.1.0"
+description = "Servidor MCP ambiente do Abiyss: o estado da máquina, só leitura (serviços, diário, disco, processos, portas)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+]
+
+[dependency-groups]
+# Só para os testes (`uv run pytest`). O kernel sobe com `--no-dev`.
+dev = [
+    "pytest>=8",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só um script com dependências.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

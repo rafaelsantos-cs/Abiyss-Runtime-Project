@@ -533,6 +533,26 @@ WEB_MAX_PAGINA_MB = "2"                # lido da página (acima disso, só o com
 WEB_MAX_TEXTO_BYTES = "40000"          # texto por resposta; o resto vem em partes
 WEB_INTERVALO_DOMINIO_SEGUNDOS = "2"   # ou o Crawl-delay do site, se maior
 
+[[mcp.servidores]]
+# ambiente: como está a máquina, só leitura. Serviços do systemd da lista
+# abaixo e o diário deles, disco, memória, processos que mais usam memória e
+# portas abertas. Nada muda o sistema, nada usa sudo e o servidor não roda
+# como root. Para ler o diário, o usuário do daemon precisa do grupo adm ou
+# systemd-journal (o ubuntu do cloud-init costuma já vir no adm).
+nome = "ambiente"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/ambiente"
+timeout_segundos = 30
+ativo = true
+
+[mcp.servidores.env]
+# Só estas unidades podem ser vistas (sem sufixo = .service).
+AMBIENTE_SERVICOS = "abiyss.service, docker.service"
+AMBIENTE_MAX_LINHAS_DIARIO = "100"
+AMBIENTE_TIMEOUT_COMANDO = "10"        # systemctl/journalctl; + 5 s ≤ timeout_segundos
+AMBIENTE_MAX_BYTES = "30000"           # por resposta (o diário guarda as linhas mais novas)
+
 # ---------------------------------------------------------------------------
 # Banco (SQLite).
 # ---------------------------------------------------------------------------
