@@ -2,7 +2,10 @@
 //!
 //! - **Pool do cérebro**: exclusivo do Abiyss, com a chave própria. Tem uma
 //!   fatia por minuto reservada para conversa com o usuário: as chamadas
-//!   autônomas (daemon) nunca passam de `limite - reserva` por minuto.
+//!   autônomas (daemon) nunca passam de `limite - reserva` por minuto. As
+//!   conversas com OUTRAS pessoas (gateway) têm a menor prioridade da fila,
+//!   saem da fatia autônoma e têm um teto próprio (`terceiros_por_minuto`):
+//!   o dono e o heartbeat nunca esperam atrás delas.
 //! - **Pool dos sub-agentes**: outra chave, fila com prioridade
 //!   (Ultra > Medium > Low) e limite de chamadas simultâneas por nível.
 //!
@@ -36,6 +39,7 @@ use fila::FilaPrioridade;
 /// Nomes dos baldes na tabela `baldes`.
 pub const BALDE_CEREBRO: &str = "cerebro";
 pub const BALDE_CEREBRO_AUTONOMO: &str = "cerebro_autonomo";
+pub const BALDE_CEREBRO_TERCEIROS: &str = "cerebro_terceiros";
 pub const BALDE_SUBAGENTES: &str = "subagentes";
 
 /// Quem está usando o pool do cérebro.
@@ -48,6 +52,9 @@ pub enum Origem {
     /// Consolidação noturna (sono). Usa os mesmos baldes do autônomo; o
     /// nome separado serve para o orçamento e o registro de chamadas.
     Sono,
+    /// Conversa com outra pessoa pelo gateway (não o dono): a menor
+    /// prioridade, a fatia autônoma e um balde próprio por cima.
+    Terceiros,
 }
 
 impl Origem {
@@ -55,6 +62,7 @@ impl Origem {
         match self {
             Origem::Conversa => 2,
             Origem::Autonomo | Origem::Sono => 1,
+            Origem::Terceiros => 0,
         }
     }
 
@@ -63,6 +71,7 @@ impl Origem {
             Origem::Conversa => "conversa",
             Origem::Autonomo => "autonomo",
             Origem::Sono => "sono",
+            Origem::Terceiros => "terceiros",
         }
     }
 }
@@ -292,6 +301,7 @@ pub struct PoolCerebro {
     nucleo: NucleoPool,
     balde_total: ConfigBalde,
     balde_autonomo: ConfigBalde,
+    balde_terceiros: ConfigBalde,
 }
 
 impl PoolCerebro {
@@ -310,6 +320,11 @@ impl PoolCerebro {
             Origem::Autonomo | Origem::Sono => {
                 vec![self.balde_autonomo.clone(), self.balde_total.clone()]
             }
+            Origem::Terceiros => vec![
+                self.balde_terceiros.clone(),
+                self.balde_autonomo.clone(),
+                self.balde_total.clone(),
+            ],
         };
         self.nucleo
             .executar(
@@ -323,7 +338,11 @@ impl PoolCerebro {
     }
 
     pub fn baldes(&self) -> Vec<ConfigBalde> {
-        vec![self.balde_total.clone(), self.balde_autonomo.clone()]
+        vec![
+            self.balde_total.clone(),
+            self.balde_autonomo.clone(),
+            self.balde_terceiros.clone(),
+        ]
     }
 
     /// Chamadas esperando a vez na fila deste pool (para status e testes).
@@ -416,6 +435,8 @@ impl Orquestrador {
             c.requisicoes_por_minuto - c.reserva_conversa_por_minuto,
             c.rajada,
         );
+        let balde_terceiros =
+            ConfigBalde::por_minuto(BALDE_CEREBRO_TERCEIROS, c.terceiros_por_minuto, 1);
         let cerebro = PoolCerebro {
             nucleo: NucleoPool {
                 nome: "cerebro",
@@ -433,6 +454,7 @@ impl Orquestrador {
             },
             balde_total,
             balde_autonomo,
+            balde_terceiros,
         };
 
         let balde_sub =
@@ -506,5 +528,8 @@ mod testes {
         assert_eq!(Nivel::de_texto("max"), None);
         assert!(Nivel::Ultra.prioridade() > Nivel::Medium.prioridade());
         assert!(Origem::Conversa.prioridade() > Origem::Autonomo.prioridade());
+        // Outras pessoas: atrás do dono E do heartbeat (e do sono).
+        assert!(Origem::Autonomo.prioridade() > Origem::Terceiros.prioridade());
+        assert!(Origem::Sono.prioridade() > Origem::Terceiros.prioridade());
     }
 }

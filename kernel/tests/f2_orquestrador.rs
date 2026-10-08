@@ -22,7 +22,8 @@ use abiyss::db::Banco;
 use abiyss::nim::mock::{MockNim, RespostaMock};
 use abiyss::nim::{self, Mensagem, PedidoChat};
 use abiyss::orquestrador::{
-    BALDE_CEREBRO, BALDE_CEREBRO_AUTONOMO, BALDE_SUBAGENTES, Nivel, Origem, Orquestrador,
+    BALDE_CEREBRO, BALDE_CEREBRO_AUTONOMO, BALDE_CEREBRO_TERCEIROS, BALDE_SUBAGENTES, Nivel,
+    Origem, Orquestrador,
 };
 use rusqlite::params;
 use tokio::sync::Semaphore;
@@ -551,4 +552,71 @@ async fn cada_tentativa_fica_registrada_no_banco() {
     assert_eq!(linhas[1].0, "conversa");
     assert_eq!(linhas[1].1, "ok");
     assert!(linhas[1].2 > 0);
+}
+
+/// Conversa com outras pessoas (gateway): fica atrás do dono E do heartbeat,
+/// mesmo chegando antes, e tem o próprio teto por minuto.
+#[tokio::test]
+async fn terceiros_ficam_atras_do_dono_e_do_heartbeat_e_tem_teto_proprio() {
+    let mock = MockNim::iniciar().await;
+    let mut c = config(&mock);
+    c.pools.cerebro.requisicoes_por_minuto = 600; // 1 ficha a cada 100 ms
+    c.pools.cerebro.reserva_conversa_por_minuto = 100;
+    c.pools.cerebro.terceiros_por_minuto = 120; // 1 a cada 500 ms
+    let (o, banco) = orquestrador_com_fichas(&c);
+    o.cerebro
+        .chamar(Origem::Conversa, &pedido(&c, None, "aquece"), None)
+        .await
+        .unwrap();
+
+    let mut tarefas = Vec::new();
+    for i in 0..3 {
+        let o = o.clone();
+        let p = pedido(&c, None, &format!("terceiro {i}"));
+        tarefas.push(tokio::spawn(async move {
+            o.cerebro.chamar(Origem::Terceiros, &p, None).await.unwrap()
+        }));
+    }
+    esperar(|| o.cerebro.na_fila() == 3, "os três terceiros na fila").await;
+    for (origem, texto) in [(Origem::Autonomo, "heartbeat"), (Origem::Conversa, "dono")] {
+        let o = o.clone();
+        let p = pedido(&c, None, texto);
+        tarefas.push(tokio::spawn(async move {
+            o.cerebro.chamar(origem, &p, None).await.unwrap()
+        }));
+    }
+    esperar(|| o.cerebro.na_fila() == 5, "dono e heartbeat na fila").await;
+    for t in tarefas {
+        t.await.unwrap();
+    }
+    let ordem: Vec<String> = mock
+        .requisicoes()
+        .iter()
+        .map(|r| {
+            r.corpo["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        ordem,
+        [
+            "aquece",
+            "dono",
+            "heartbeat",
+            "terceiro 0",
+            "terceiro 1",
+            "terceiro 2"
+        ],
+        "chegaram depois, foram antes"
+    );
+    // O teto próprio: as fichas dos terceiros ficam a 500 ms umas das outras.
+    let proprias = fichas(&banco, BALDE_CEREBRO_TERCEIROS);
+    assert_eq!(proprias.len(), 3);
+    for par in proprias.windows(2) {
+        assert!(par[1] - par[0] >= 499, "fichas de terceiros: {proprias:?}");
+    }
+    // E saem também da fatia autônoma (nunca da reserva do dono).
+    assert_eq!(fichas(&banco, BALDE_CEREBRO_AUTONOMO).len(), 4);
 }

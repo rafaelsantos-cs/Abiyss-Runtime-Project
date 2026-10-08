@@ -145,6 +145,10 @@ rajada = 1
 # Fatia reservada para conversa com o usuário: o trabalho autônomo do
 # daemon usa no máximo 40 - 10 = 30 req/min.
 reserva_conversa_por_minuto = 10
+# Conversas com OUTRAS pessoas pelo gateway do Discord: no máximo isto por
+# minuto, tirado da fatia autônoma, e com a menor prioridade da fila (o dono
+# e o heartbeat sempre passam na frente).
+terceiros_por_minuto = 6
 # Máximo de chamadas esperando a vez neste pool (acima disso: erro na hora).
 max_na_fila = 64
 
