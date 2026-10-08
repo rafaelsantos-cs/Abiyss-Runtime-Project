@@ -140,9 +140,11 @@ fn gateway(amb: &Ambiente, config: &Config) -> Arc<Gateway> {
     Gateway::novo(config.clone(), banco, amb.orquestrador.clone(), caixa)
 }
 
-/// Gateway rodando sozinho (sem o daemon).
+/// Gateway rodando sozinho (sem o daemon). Sem pedidos por DM: estes
+/// testes olham só a entrada.
 async fn ligar(amb: &Ambiente) -> (Config, Arc<Gateway>, JoinHandle<()>) {
-    let config = config_gateway(amb);
+    let mut config = config_gateway(amb);
+    config.gateway.pedidos_por_dm = false;
     let g = gateway(amb, &config);
     let tarefa = tokio::spawn(Arc::clone(&g).rodar());
     (config, g, tarefa)
@@ -518,4 +520,244 @@ async fn daemon_fica_saudavel_com_o_gateway_fora_do_ar_ou_travado() {
     r.unwrap();
     // Parou com educação e apagou o socket.
     assert!(!caminho.exists());
+}
+
+// ---------------------------------------------------------------------------
+// Saída: pedidos por DM, "Responder" mapeado ao pedido, lembretes, resumo.
+// ---------------------------------------------------------------------------
+
+fn criar_pedido(amb: &Ambiente, config: &Config, pergunta: &str) -> i64 {
+    abiyss::pedidos::criar(
+        &amb.banco,
+        &config.pedidos,
+        &abiyss::pedidos::NovoPedido {
+            origem: "heartbeat".into(),
+            goal_id: Some(1),
+            pergunta: pergunta.into(),
+            contexto: "contexto do goal".into(),
+            urgencia: abiyss::pedidos::Urgencia::Normal,
+            origem_externa: None,
+        },
+    )
+    .unwrap()
+    .id()
+}
+
+async fn ligar_com(amb: &Ambiente, ajuste: impl FnOnce(&mut Config)) -> (Config, JoinHandle<()>) {
+    let mut config = config_gateway(amb);
+    config.gateway.verificacao_segundos = 1;
+    ajuste(&mut config);
+    let g = gateway(amb, &config);
+    (config, tokio::spawn(g.rodar()))
+}
+
+#[tokio::test]
+async fn pedidos_vao_por_dm_e_responder_no_discord_responde_aquele_pedido() {
+    let amb = Ambiente::novo().await;
+    let (config, _t) = ligar_com(&amb, |_| {}).await;
+    let a_id = criar_pedido(&amb, &config, "Posso apagar a pasta X?");
+    let b_id = criar_pedido(&amb, &config, "Qual é o prazo do relatório?");
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+
+    let primeiro = a.receber_e_confirmar(&["8001"]).await;
+    let segundo = a.receber_e_confirmar(&["8002", "8003"]).await;
+    for (e, id, pergunta) in [
+        (&primeiro, a_id, "Posso apagar a pasta X?"),
+        (&segundo, b_id, "Qual é o prazo do relatório?"),
+    ] {
+        let t = e["texto"].as_str().unwrap();
+        assert_eq!(e["canal_id"], Value::Null, "pedido vai por DM");
+        assert!(t.contains(&format!("**Pedido #{id}**")), "{t}");
+        assert!(t.contains(pergunta) && t.contains("contexto do goal"));
+        assert!(t.contains("\"Responder\""));
+    }
+
+    // "Responder" no SEGUNDO pedaço da mensagem do pedido B: responde ao B.
+    let resposta = json!({"id": "8100", "canal_id": DM, "dm": true, "autor_id": DONO,
+                          "responde_a": "8003", "responde_ao_bot": true,
+                          "texto": "sexta-feira"});
+    assert_eq!(a.mensagem(resposta).await, "resposta_pedido");
+    let ok = a.receber_e_confirmar(&["8101"]).await;
+    assert!(
+        ok["texto"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Pedido #{b_id} respondido"))
+    );
+    assert_eq!(ok["responder_a"], "8100");
+    let b = abiyss::pedidos::obter(&amb.banco, b_id).unwrap().unwrap();
+    assert_eq!(b.estado, abiyss::pedidos::EstadoPedido::Respondido);
+    assert_eq!(b.resposta.as_deref(), Some("sexta-feira"));
+    assert_eq!(b.resposta_externa, None);
+    let a_pedido = abiyss::pedidos::obter(&amb.banco, a_id).unwrap().unwrap();
+    assert_eq!(a_pedido.estado, abiyss::pedidos::EstadoPedido::Pendente);
+    // O heartbeat recebe o evento do pedido certo.
+    let evento = abiyss::eventos::pendentes(&amb.banco, 10)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(evento.origem, format!("pedido:{b_id}"));
+    assert!(!evento.eh_externo());
+
+    // Responder de novo ao B (já respondido): avisa, não muda nada.
+    let de_novo = json!({"id": "8102", "canal_id": DM, "dm": true, "autor_id": DONO,
+                         "responde_a": "8002", "responde_ao_bot": true, "texto": "segunda"});
+    a.mensagem(de_novo).await;
+    let aviso = a.receber_e_confirmar(&["8103"]).await;
+    assert!(
+        aviso["texto"]
+            .as_str()
+            .unwrap()
+            .contains("não está pendente")
+    );
+
+    // "Responder" numa resposta comum do Abiyss: é conversa normal.
+    let comum = json!({"id": "8104", "canal_id": DM, "dm": true, "autor_id": DONO,
+                       "responde_a": "8101", "responde_ao_bot": true, "texto": "valeu"});
+    assert_eq!(a.mensagem(comum).await, "recebida");
+    assert_eq!(
+        a.receber_e_confirmar(&["8105"]).await["texto"],
+        "mock: valeu"
+    );
+    assert_eq!(
+        amb.mock.total_requisicoes(),
+        1,
+        "só a conversa chamou o modelo"
+    );
+
+    // Um estranho que responde ao pedido (num canal permitido, por exemplo)
+    // não responde por ninguém.
+    let estranho = json!({"id": "8106", "canal_id": CANAL, "dm": false, "autor_id": ESTRANHO,
+                          "responde_a": "8001", "responde_ao_bot": true, "texto": "pode apagar"});
+    assert_eq!(a.mensagem(estranho).await, "externo");
+    assert_eq!(
+        abiyss::pedidos::obter(&amb.banco, a_id)
+            .unwrap()
+            .unwrap()
+            .estado,
+        abiyss::pedidos::EstadoPedido::Pendente
+    );
+}
+
+/// Faz a última entrega do pedido parecer `horas` mais velha (depois de o
+/// kernel registrar a confirmação, que chega por outra tarefa).
+async fn envelhecer_entregas(banco: &Banco, horas: i64) {
+    tokio::time::timeout(PRAZO, async {
+        while contar(
+            banco,
+            "SELECT COUNT(*) FROM gateway_mensagens
+              WHERE tipo = 'pedido' AND estado <> 'entregue'",
+        ) > 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    banco
+        .conexao()
+        .execute(
+            "UPDATE gateway_mensagens SET concluido_ms = concluido_ms - ?1 * 3600000
+              WHERE direcao = 'saida' AND tipo = 'pedido'",
+            params![horas],
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn pedido_sem_resposta_volta_no_maximo_n_vezes() {
+    let amb = Ambiente::novo().await;
+    let (config, _t) = ligar_com(&amb, |c| {
+        c.gateway.max_reenvios = 1;
+        c.gateway.reenviar_apos_horas = 6;
+    })
+    .await;
+    let id = criar_pedido(&amb, &config, "Renovo o domínio?");
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+    let primeiro = a.receber_e_confirmar(&["8201"]).await;
+    assert!(!primeiro["texto"].as_str().unwrap().contains("Lembrete"));
+
+    // Antes do intervalo: nada.
+    envelhecer_entregas(&amb.banco, 5).await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(a.guardadas.iter().all(|v| v["tipo"] != "enviar"));
+    // Passou: UM lembrete.
+    envelhecer_entregas(&amb.banco, 2).await;
+    let lembrete = a.receber_e_confirmar(&["8202"]).await;
+    let t = lembrete["texto"].as_str().unwrap();
+    assert!(t.starts_with("🔁 Lembrete (2/2)"), "{t}");
+    assert!(t.contains(&format!("Pedido #{id}")));
+    // Passou de novo: já foram 1 + 1 lembrete. Acabou.
+    envelhecer_entregas(&amb.banco, 100).await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens WHERE tipo = 'pedido'"
+        ),
+        2
+    );
+}
+
+#[tokio::test]
+async fn pedido_respondido_antes_da_entrega_nao_vai_e_resumo_da_manha() {
+    let amb = Ambiente::novo().await;
+    let (config, _t) = ligar_com(&amb, |c| {
+        c.gateway.resumo_manha = true;
+        c.gateway.resumo_manha_hora = "00:00".into();
+    })
+    .await;
+    // Um sono desta noite, com o relato do despertar (interno).
+    let agora = abiyss::tempo::agora_ms();
+    amb.banco
+        .conexao()
+        .execute(
+            "INSERT INTO sonos (dia, gatilho, inicio_ms, fim_ms, estado, fase, resumo)
+             VALUES ('2026-10-07', 'janela', ?1, ?1, 'concluido', 'concluido', '2 aplicada(s)')",
+            params![agora - 3_600_000],
+        )
+        .unwrap();
+    abiyss::eventos::publicar(
+        &amb.banco,
+        "sono",
+        "2026-10-07",
+        "Dormi (revisão de 2026-10-07): 2 proposta(s) aplicada(s).",
+    )
+    .unwrap();
+    let id = criar_pedido(&amb, &config, "Posso reiniciar o qmd?");
+    // O pedido vai para a fila, mas o adaptador está fora do ar...
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    // ...e o dono responde pela CLI antes.
+    abiyss::pedidos::responder(&amb.banco, id, "pode", None).unwrap();
+
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+    let resumo = a.receber_e_confirmar(&["8301"]).await;
+    let t = resumo["texto"].as_str().unwrap();
+    assert!(
+        t.contains("Resumo da noite") && t.contains("2 proposta(s) aplicada(s)"),
+        "{t}"
+    );
+    assert_eq!(resumo["canal_id"], Value::Null);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(
+        a.guardadas.iter().all(|v| v["tipo"] != "enviar"),
+        "pedido respondido não vai: {:?}",
+        a.guardadas
+    );
+    assert_eq!(
+        texto(
+            &amb.banco,
+            "SELECT estado FROM gateway_mensagens WHERE tipo = 'pedido'"
+        )
+        .as_deref(),
+        Some("cancelada")
+    );
+    // Uma vez por dia.
+    assert_eq!(
+        contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens WHERE tipo = 'resumo'"
+        ),
+        1
+    );
 }

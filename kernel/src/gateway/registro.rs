@@ -295,6 +295,17 @@ pub fn registrar_falha(banco: &Banco, id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Uma saída que não deve mais ir (ex.: pedido já respondido por outro
+/// caminho antes de a DM ser entregue).
+pub fn cancelar_saida(banco: &Banco, id: i64, agora: i64) -> anyhow::Result<()> {
+    banco.conexao().execute(
+        "UPDATE gateway_mensagens SET estado = 'cancelada', concluido_ms = ?1
+          WHERE id = ?2 AND direcao = 'saida' AND estado = 'pendente'",
+        params![agora, id],
+    )?;
+    Ok(())
+}
+
 /// A saída (lógica) a que pertence uma mensagem do Discord.
 pub fn saida_do_discord(banco: &Banco, discord_id: &str) -> anyhow::Result<Option<Saida>> {
     let s = banco

@@ -11,6 +11,7 @@
 //! permitido (`canal_id`, opcional). Todo o resto é conteúdo externo, e é
 //! ignorado a não ser que venha do canal permitido.
 
+pub mod agenda;
 pub mod comandos;
 pub mod confianca;
 pub mod protocolo;
@@ -44,6 +45,19 @@ pub struct ConfigGateway {
     /// Tempo máximo de UM turno de conversa pelo Discord (passou, o dono
     /// recebe o erro e a conversa segue).
     pub max_duracao_turno_segundos: u64,
+    /// Pedidos pendentes (E9) vão ao dono por DM. Um "Responder" do Discord
+    /// na mensagem do pedido é a resposta.
+    pub pedidos_por_dm: bool,
+    /// Lembretes de um pedido sem resposta (além do primeiro envio).
+    pub max_reenvios: u32,
+    /// Intervalo entre um envio de pedido e o lembrete seguinte.
+    pub reenviar_apos_horas: u64,
+    /// Resumo da noite (o que o sono contou ao acordar) por DM, uma vez por
+    /// dia, a partir de `resumo_manha_hora` (fuso local).
+    pub resumo_manha: bool,
+    pub resumo_manha_hora: String,
+    /// De quanto em quanto tempo o gateway olha pedidos e o resumo.
+    pub verificacao_segundos: u64,
 }
 
 impl Default for ConfigGateway {
@@ -55,6 +69,12 @@ impl Default for ConfigGateway {
             canal_id: String::new(),
             canal_exige_mencao: true,
             max_duracao_turno_segundos: 900,
+            pedidos_por_dm: true,
+            max_reenvios: 2,
+            reenviar_apos_horas: 12,
+            resumo_manha: false,
+            resumo_manha_hora: "08:00".into(),
+            verificacao_segundos: 30,
         }
     }
 }
@@ -79,6 +99,11 @@ impl ConfigGateway {
                  \"Copiar ID do usuário\")"
             );
         }
+        if self.reenviar_apos_horas == 0 || self.verificacao_segundos == 0 {
+            bail!("gateway.reenviar_apos_horas e gateway.verificacao_segundos precisam ser > 0");
+        }
+        crate::ritmo::minuto_de_texto(&self.resumo_manha_hora)
+            .map_err(|e| anyhow::anyhow!("gateway.resumo_manha_hora: {e:#}"))?;
         if !self.canal_id.is_empty() && !id_discord_valido(&self.canal_id) {
             bail!("gateway.canal_id precisa ser o ID de um canal do Discord (só dígitos) ou vazio");
         }

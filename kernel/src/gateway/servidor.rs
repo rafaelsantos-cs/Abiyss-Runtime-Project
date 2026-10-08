@@ -15,7 +15,13 @@
 //!   chega enquanto um turno roda fica na fila e vira o turno seguinte
 //!   (todas juntas);
 //! - `entregar`: manda as saídas pendentes ao adaptador e espera a
-//!   confirmação (sem confirmação, manda de novo).
+//!   confirmação (sem confirmação, manda de novo);
+//! - `agendar`: pedidos pendentes por DM (com lembretes limitados) e o
+//!   resumo da manhã (ver `agenda`).
+//!
+//! "Responder" (reply do Discord) do dono numa mensagem de pedido é a
+//! resposta ÀQUELE pedido: vai direto para `pedidos::responder`, sem
+//! passar pelo modelo.
 
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -38,6 +44,7 @@ use crate::ferramentas::CaixaDeFerramentas;
 use crate::orquestrador::Orquestrador;
 use crate::tempo::agora_ms;
 
+use super::agenda;
 use super::comandos::{self, CHAVE_CONVERSA};
 use super::confianca::{self, MensagemDiscord, Remetente};
 use super::protocolo::{DoAdaptador, MAX_LINHA, ParaAdaptador, VERSAO};
@@ -124,7 +131,8 @@ impl Gateway {
         tokio::join!(
             Arc::clone(&self).aceitar(ouvinte),
             self.conversar(),
-            self.entregar()
+            self.entregar(),
+            self.agendar()
         );
     }
 
@@ -400,6 +408,29 @@ impl Gateway {
             origem_externa: None,
             pedido_id: None,
         };
+        // "Responder" numa mensagem de pedido: é a resposta àquele pedido.
+        if let Some(citada) = &m.responde_a
+            && let Some(saida) = registro::saida_do_discord(&self.banco, citada)?
+            && let Some(pedido) = saida.pedido_id
+        {
+            let entrada = NovaEntrada {
+                pedido_id: Some(pedido),
+                ..nova("resposta_pedido", "respondida")
+            };
+            if registro::registrar_entrada(&self.banco, &entrada, agora)?.is_none() {
+                return Ok("duplicado");
+            }
+            // A resposta é do dono, direto (sem janela de conversa no meio).
+            let texto = match crate::pedidos::responder(&self.banco, pedido, &m.texto, None) {
+                Ok(p) => format!(
+                    "✅ Pedido #{} respondido. O Abiyss vê a resposta no próximo ciclo.",
+                    p.id
+                ),
+                Err(e) => format!("Não registrei a resposta: {e:#}"),
+            };
+            self.responder(m, "comando", &texto)?;
+            return Ok("resposta_pedido");
+        }
         if let Some(comando) = comandos::interpretar(&m.texto) {
             if registro::registrar_entrada(&self.banco, &nova("comando", "respondida"), agora)?
                 .is_none()
@@ -536,6 +567,29 @@ impl Gateway {
     }
 
     // -----------------------------------------------------------------------
+    // Agenda
+    // -----------------------------------------------------------------------
+
+    async fn agendar(&self) {
+        let intervalo = Duration::from_secs(self.config.gateway.verificacao_segundos);
+        loop {
+            let g = &self.config.gateway;
+            let pedidos = agenda::agendar_pedidos(&self.banco, g, agora_ms());
+            let resumo = agenda::agendar_resumo(&self.banco, g);
+            match (pedidos, resumo) {
+                (Ok(0), Ok(false)) => {}
+                (Ok(_), Ok(_)) => self.acordar_entrega.notify_one(),
+                (p, r) => {
+                    for e in [p.err(), r.err()].into_iter().flatten() {
+                        tracing::warn!("gateway: agenda: {e:#}");
+                    }
+                }
+            }
+            tokio::time::sleep(intervalo).await;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Entrega
     // -----------------------------------------------------------------------
 
@@ -556,6 +610,12 @@ impl Gateway {
     fn entregar_pendentes(&self) -> anyhow::Result<()> {
         let agora = agora_ms();
         for s in registro::saidas_a_entregar(&self.banco, agora, 50)? {
+            if let Some(pedido) = s.pedido_id
+                && !agenda::pedido_ainda_pendente(&self.banco, pedido)?
+            {
+                registro::cancelar_saida(&self.banco, s.id, agora)?;
+                continue;
+            }
             let mensagem = ParaAdaptador::Enviar {
                 referencia: s.id,
                 canal_id: s.canal_id,

@@ -414,6 +414,17 @@ canal_exige_mencao = true
 # Mensagens que chegam enquanto ele responde ficam na fila (nenhuma se perde)
 # e viram a próxima resposta, todas juntas.
 max_duracao_turno_segundos = 900
+# Pedidos do Abiyss (E9) por DM; "Responder" no Discord responde àquele pedido.
+pedidos_por_dm = true
+# Sem resposta, o pedido volta como lembrete no máximo N vezes, com este
+# intervalo (e ainda expira em [pedidos] expira_apos_horas).
+max_reenvios = 2
+reenviar_apos_horas = 12
+# Resumo da noite (o relato do sono ao acordar) por DM, uma vez por dia.
+resumo_manha = false
+resumo_manha_hora = "08:00"
+# De quanto em quanto tempo o gateway olha os pedidos e o resumo.
+verificacao_segundos = 30
 
 # ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).
