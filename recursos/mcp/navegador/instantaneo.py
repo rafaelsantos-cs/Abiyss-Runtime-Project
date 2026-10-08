@@ -31,6 +31,8 @@ MAX_NOS = 20_000
 MAX_LINHAS = 5_000
 MAX_QUADROS = 8
 MAX_CARACTERES_POR_QUADRO = 400_000
+# Quadro filho que não responde nisso fica de fora (o principal usa o prazo todo).
+PRAZO_QUADRO_FILHO = 3.0
 
 JS = r"""
 (opcoes) => {
@@ -179,7 +181,7 @@ JS = r"""
   }
   if (document.body) andar(document.body);
   descarregar();
-  return { linhas, proximo: ref, cortado, nos };
+  return { linhas, proximo: ref, cortado, nos, titulo: curto(limpo(document.title), 300) };
 }
 """
 
@@ -187,6 +189,7 @@ JS = r"""
 @dataclass
 class Instantaneo:
     texto: str
+    titulo: str
     cortado_na_pagina: bool
     quadros: int
     erros: list[str] = field(default_factory=list)
@@ -196,12 +199,16 @@ async def tirar(pagina, atributo: str, estado: dict, prazo: float) -> Instantane
     """Instantâneo de todos os quadros (o principal primeiro). `estado`
     guarda o próximo número de referência da sessão ("proximo")."""
     partes: list[str] = []
-    cortado, erros, quadros = False, [], 0
+    cortado, erros, quadros, titulo = False, [], 0, ""
     for indice, quadro in enumerate(pagina.frames[:MAX_QUADROS]):
         restante = prazo - asyncio.get_running_loop().time()
         if restante <= 0:
             erros.append("o prazo acabou antes de ler todos os quadros")
             break
+        if indice > 0:
+            if not quadro.url:
+                continue  # carregamento recusado (file:, endereço interno...): não tem documento
+            restante = min(restante, PRAZO_QUADRO_FILHO)
         opcoes = {
             "atributo": atributo,
             "proximo": estado["proximo"],
@@ -212,6 +219,8 @@ async def tirar(pagina, atributo: str, estado: dict, prazo: float) -> Instantane
         try:
             r = await asyncio.wait_for(quadro.evaluate(JS, opcoes), restante)
         except asyncio.TimeoutError:
+            if indice == 0:
+                raise  # a página inteira travada: quem chamou fecha a aba
             erros.append(f"o quadro {quadro.url[:100] or '(sem URL)'} não respondeu a tempo")
             continue
         except Exception as e:  # quadro que sumiu no meio, página navegando...
@@ -222,6 +231,7 @@ async def tirar(pagina, atributo: str, estado: dict, prazo: float) -> Instantane
         estado["proximo"] = max(estado["proximo"], int(r["proximo"]))
         cortado = cortado or bool(r["cortado"])
         if indice == 0:
+            titulo = r["titulo"]
             partes.extend(r["linhas"])
         elif r["linhas"]:
             partes.append(f"--- quadro {indice}: {quadro.url[:150]} ---")
@@ -229,7 +239,9 @@ async def tirar(pagina, atributo: str, estado: dict, prazo: float) -> Instantane
         quadros += 1
     if len(pagina.frames) > MAX_QUADROS:
         erros.append(f"a página tem {len(pagina.frames)} quadros; li só os {MAX_QUADROS} primeiros")
-    return Instantaneo(texto="\n".join(partes), cortado_na_pagina=cortado, quadros=quadros, erros=erros)
+    return Instantaneo(
+        texto="\n".join(partes), titulo=titulo, cortado_na_pagina=cortado, quadros=quadros, erros=erros
+    )
 
 
 def cortar_bytes(texto: str, max_bytes: int) -> str:

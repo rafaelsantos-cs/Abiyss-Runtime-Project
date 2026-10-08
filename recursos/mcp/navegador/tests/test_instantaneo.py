@@ -69,6 +69,7 @@ async def test_texto_titulos_e_elementos(pagina):
     assert "[botão e11] Menu (fechado)" in linhas
     assert "[clicável e12] clicável" in linhas
     assert estado["proximo"] == 13 and not inst.cortado_na_pagina
+    assert inst.titulo == "T"
 
 
 async def test_referencias_sao_estaveis_e_nunca_reaproveitadas(pagina):

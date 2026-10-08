@@ -226,6 +226,11 @@ def rede_de_mentira():
             <button id="xhr" onclick="fetch('{outro.base}/coleta', {{method: 'POST', body: 'vazou'}}).catch(() => {{}})">Mandar por fetch</button>
             </body></html>"""
         ),
+        "/auto-envio.html": html(
+            lambda: f"""<html><body><p>Esta página envia sozinha</p>
+            <form id="f" method="post" action="{outro.base}/coleta"><input name="d" value="dados-da-pagina"></form>
+            <script>document.getElementById('f').submit();</script></body></html>"""
+        ),
         "/enviar": html("<html><head><title>Recebido</title></head><body><p>Formulário recebido.</p></body></html>"),
         "/busca": html("<html><head><title>Busca</title></head><body><p>Resultados da busca.</p></body></html>"),
         "/grande.html": html(pagina_grande()),
@@ -273,11 +278,11 @@ def fazer_config(env_base):
 
 
 @pytest.fixture
-def config_navegador(tmp_path, rede_de_mentira):
-    """Configuração para usar o Chromium contra os sites de mentira: libera
-    só o `site` e o `outro` (o `interno` continua bloqueado)."""
+def env_navegador(tmp_path, rede_de_mentira):
+    """Ambiente para usar o Chromium contra os sites de mentira: libera só o
+    `site` e o `outro` (o `interno` continua bloqueado)."""
 
-    def fazer(interagir: bool = False, **extra: str) -> config.Config:
+    def fazer(interagir: bool = False, **extra: str) -> dict[str, str]:
         toml = escrever_projeto(tmp_path / f"projeto-{interagir}", interagir=interagir)
         liberados = ", ".join(f"127.0.0.1:{rede_de_mentira[n].porta}" for n in ("site", "outro"))
         env = {
@@ -290,7 +295,15 @@ def config_navegador(tmp_path, rede_de_mentira):
         }
         if CHROMIUM:
             env["NAVEGADOR_CHROMIUM"] = CHROMIUM
-        return config.carregar({**env, **extra})
+        return {**env, **extra}
+
+    return fazer
+
+
+@pytest.fixture
+def config_navegador(env_navegador):
+    def fazer(interagir: bool = False, **extra: str) -> config.Config:
+        return config.carregar(env_navegador(interagir, **extra))
 
     return fazer
 

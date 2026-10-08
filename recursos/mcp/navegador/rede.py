@@ -44,6 +44,8 @@ MAX_CABECALHO = 64 * 1024
 TIMEOUT_CABECALHO = 30.0
 TIMEOUT_CONEXAO = 15.0
 CABECALHOS_DO_PROXY = ("proxy-connection", "proxy-authorization", "connection", "keep-alive")
+# Marca as respostas de recusa do Filtro (o servidor reconhece a página de bloqueio).
+CABECALHO_BLOQUEIO = "X-Abiyss-Bloqueio"
 
 
 class Bloqueio(Exception):
@@ -217,6 +219,7 @@ class Filtro:
         self.total_bloqueados = 0
         self._servidor: asyncio.base_events.Server | None = None
         self._abertas: set[asyncio.StreamWriter] = set()
+        self._tarefas: set[asyncio.Task] = set()
 
     @property
     def endereco(self) -> str:
@@ -232,6 +235,11 @@ class Filtro:
         self._servidor.close()
         for escritor in list(self._abertas):
             escritor.close()
+        tarefas = [t for t in self._tarefas if t is not asyncio.current_task()]
+        for tarefa in tarefas:
+            tarefa.cancel()
+        if tarefas:
+            await asyncio.wait(tarefas, timeout=2)
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self._servidor.wait_closed(), 2)
         self._servidor = None
@@ -258,6 +266,10 @@ class Filtro:
         raise ConnectionError(f"não consegui conectar em {host}:{porta}: {ultimo}")
 
     async def _atender(self, cliente_r: asyncio.StreamReader, cliente_w: asyncio.StreamWriter) -> None:
+        tarefa = asyncio.current_task()
+        if tarefa is not None:
+            self._tarefas.add(tarefa)
+            tarefa.add_done_callback(self._tarefas.discard)
         self._abertas.add(cliente_w)
         remoto_w: asyncio.StreamWriter | None = None
         onde = "?"
@@ -311,9 +323,10 @@ class Filtro:
     async def _responder(escritor: asyncio.StreamWriter, status: int, texto: str) -> None:
         corpo = texto.encode("utf-8")
         frase = {400: "Bad Request", 403: "Forbidden", 502: "Bad Gateway"}.get(status, "Error")
+        marca = f"{CABECALHO_BLOQUEIO}: 1\r\n" if status == 403 else ""
         with contextlib.suppress(Exception):
             escritor.write(
-                f"HTTP/1.1 {status} {frase}\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                f"HTTP/1.1 {status} {frase}\r\nContent-Type: text/plain; charset=utf-8\r\n{marca}"
                 f"Content-Length: {len(corpo)}\r\nConnection: close\r\n\r\n".encode() + corpo
             )
             await escritor.drain()
@@ -333,11 +346,11 @@ class Filtro:
         ida = asyncio.ensure_future(copiar(a_r, b_w))
         volta = asyncio.ensure_future(copiar(b_r, a_w))
         try:
-            feitas, _ = await asyncio.wait({ida, volta}, return_when=asyncio.FIRST_COMPLETED)
-            # O destino terminou: nada mais do navegador interessa. O navegador
-            # terminou de mandar: ainda falta a resposta.
-            if volta not in feitas:
-                await volta
+            # Um lado fechou, acabou: o destino terminou de responder, ou o
+            # navegador desistiu (navegadores não fazem meio-fechamento em
+            # HTTP, e um site que nunca responde não segura a conexão).
+            await asyncio.wait({ida, volta}, return_when=asyncio.FIRST_COMPLETED)
         finally:
             ida.cancel()
             volta.cancel()
+            await asyncio.wait({ida, volta}, timeout=1)

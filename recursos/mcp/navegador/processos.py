@@ -100,7 +100,13 @@ def grupos_destacados(raiz: int, excluir: Iterable[int] = ()) -> dict[int, list[
 
 
 def membros_do_grupo(grupo: int) -> list[int]:
-    return [pid for pid in todos() if grupo_de(pid) == grupo]
+    """Processos vivos do grupo (zumbis, já mortos e esperando o pai, não contam)."""
+    membros = []
+    for pid in todos():
+        campos = _stat(pid)
+        if campos and int(campos[2]) == grupo and campos[0] != "Z":
+            membros.append(pid)
+    return membros
 
 
 def rss_dos_grupos(grupos: Iterable[int]) -> int:
