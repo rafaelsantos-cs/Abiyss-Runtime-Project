@@ -42,8 +42,14 @@ def test_grupos_destacados_e_memoria():
         assert esperar(lambda: len(vivos(falso.pid)) == 2)
         grupos = processos.grupos_destacados(os.getpid())
         assert set(grupos[falso.pid]) == set(vivos(falso.pid))
-        assert processos.rss_dos_grupos([falso.pid]) > 0
         assert processos.grupos_destacados(os.getpid(), excluir=[falso.pid]).get(falso.pid) is None
+        anotados: dict[int, set[str]] = {}
+        processos.anotar(anotados, {falso.pid: grupos[falso.pid]})
+        assert anotados == {falso.pid: {processos.exe_de(p) for p in vivos(falso.pid)}}
+        membros = processos.membros_verificados(anotados)
+        assert set(membros) == set(vivos(falso.pid)) and processos.rss_bytes_de(membros) > 0
+        # Mesmo número de grupo, outro executável: não é o "Chromium" anotado.
+        assert processos.membros_verificados({falso.pid: {"/outro/programa"}}) == []
     finally:
         processos.matar_grupos([falso.pid])
         falso.wait()

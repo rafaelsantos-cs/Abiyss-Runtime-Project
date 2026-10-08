@@ -18,7 +18,6 @@ Só biblioteca padrão; nunca escreve no stdout.
 from __future__ import annotations
 
 import os
-import signal
 import sys
 import threading
 import time
@@ -31,14 +30,7 @@ INTERVALO = 0.5
 def limpar(grupos: dict[int, set[str]]) -> int:
     mortos = 0
     for _ in range(3):  # um processo pode ter criado outro no meio
-        for pid in processos.todos():
-            grupo = processos.grupo_de(pid)
-            if grupo in grupos and processos.exe_de(pid) in grupos[grupo] and pid != os.getpid():
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                    mortos += 1
-                except (ProcessLookupError, PermissionError):
-                    pass
+        mortos += processos.matar(processos.membros_verificados(grupos))
         time.sleep(0.05)
     return mortos
 
@@ -53,9 +45,8 @@ def main() -> int:
     cano_fechou = threading.Event()
 
     def anotar(grupo: int) -> None:
-        exes = {e for pid in processos.membros_do_grupo(grupo) if (e := processos.exe_de(pid))}
         with trava:
-            grupos.setdefault(grupo, set()).update(exes)
+            processos.anotar(grupos, {grupo: processos.membros_do_grupo(grupo)})
 
     def ler_cano() -> None:
         for linha in sys.stdin:

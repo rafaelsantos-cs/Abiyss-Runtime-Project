@@ -328,7 +328,11 @@ async def test_servidor_fecha_o_chromium_ao_sair(config_navegador, rede_de_menti
         await abrir(c, f"{site.base}/sobre.html")
         grupos = set(nav._grupos_do_chromium())
         assert grupos
+        # O perfil temporário do Chromium fica na pasta do servidor, não no /tmp.
+        assert any(p.name.startswith("playwright") for p in nav._tmp.iterdir())
+        assert "TMPDIR" not in os.environ or os.environ["TMPDIR"] != str(nav._tmp)
     assert esperar(lambda: all(not processos.membros_do_grupo(g) for g in grupos), 5)
+    assert not nav._tmp.exists()
 
 
 SERVIDOR_QUE_VAI_MORRER = r"""

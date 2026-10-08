@@ -8,7 +8,10 @@ num grupo de processos novo. Então:
 - a memória do Chromium é medida aqui, somando o RSS dos descendentes deste
   servidor que estão em outro grupo (a mesma conta que o kernel faz para a
   árvore inteira: RSS somado, lido de /proc);
-- para matar o Chromium, mata-se o grupo dele (SIGKILL), com os filhos;
+- para matar o Chromium, cada processo desses grupos leva SIGKILL. Só conta
+  (e só morre) o processo cujo executável foi anotado para aquele grupo:
+  depois que o Chromium morre, o número do grupo pode ser reusado por outro
+  programa;
 - se o próprio servidor morrer de repente, quem mata o Chromium é o vigia
   (vigia.py), que roda numa sessão própria e não morre junto.
 """
@@ -109,13 +112,42 @@ def membros_do_grupo(grupo: int) -> list[int]:
     return membros
 
 
-def rss_dos_grupos(grupos: Iterable[int]) -> int:
-    """RSS somado de todos os processos desses grupos (inclusive os que já
-    ficaram órfãos e não são mais descendentes de ninguém daqui)."""
-    alvo = set(grupos)
-    if not alvo:
-        return 0
-    return sum(rss_bytes(pid) for pid in todos() if grupo_de(pid) in alvo)
+def membros_verificados(grupos: dict[int, set[str]]) -> list[int]:
+    """Processos vivos de um grupo anotado E com um dos executáveis anotados
+    para ele. Um grupo cujo número foi reaproveitado por outro programa
+    (depois que o Chromium morreu) não entra."""
+    membros = []
+    for pid in todos():
+        campos = _stat(pid)
+        if not campos or campos[0] == "Z" or pid == os.getpid():
+            continue
+        grupo = int(campos[2])
+        if grupo in grupos and exe_de(pid) in grupos[grupo]:
+            membros.append(pid)
+    return membros
+
+
+def anotar(grupos: dict[int, set[str]], novos: dict[int, list[int]]) -> None:
+    """Junta a `grupos` os executáveis dos processos de `novos` (pgid → pids)."""
+    for grupo, pids in novos.items():
+        grupos.setdefault(grupo, set()).update(e for pid in pids if (e := exe_de(pid)))
+
+
+def rss_bytes_de(pids: Iterable[int]) -> int:
+    return sum(rss_bytes(pid) for pid in pids)
+
+
+def matar(pids: Iterable[int]) -> int:
+    mortos = 0
+    for pid in set(pids):
+        if pid <= 1 or pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            mortos += 1
+        except (ProcessLookupError, PermissionError):
+            pass
+    return mortos
 
 
 def matar_grupos(grupos: Iterable[int]) -> None:

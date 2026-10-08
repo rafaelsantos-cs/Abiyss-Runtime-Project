@@ -189,7 +189,9 @@ class Navegador:
         self._pw = None
         self._navegador = None
         self._trava = asyncio.Lock()
-        self._grupos: set[int] = set()
+        # Grupos de processos do Chromium → executáveis vistos em cada um.
+        self._grupos: dict[int, set[str]] = {}
+        self._criando = 0
         self._vigia: subprocess.Popen | None = None
         self._sem_sessoes_desde = time.monotonic()
         self._tarefa: asyncio.Task | None = None
@@ -209,7 +211,6 @@ class Navegador:
                 shutil.rmtree(velha, ignore_errors=True)
         self._tmp = base / str(os.getpid())
         self._tmp.mkdir(exist_ok=True)
-        os.environ["TMPDIR"] = str(self._tmp)  # o driver do Playwright cria os perfis aqui
         await self.filtro_global.iniciar()
         self._vigia = subprocess.Popen(
             [sys.executable, str(config.PASTA_DO_SERVIDOR / "vigia.py"), str(os.getpid())],
@@ -249,7 +250,17 @@ class Navegador:
             if self._navegador is not None and self._navegador.is_connected():
                 return self._navegador
             if self._pw is None:
-                self._pw = await async_playwright().start()
+                # O driver do Playwright cria os perfis temporários do Chromium
+                # no TMPDIR dele: só o processo do driver recebe esta pasta.
+                antes = os.environ.get("TMPDIR")
+                os.environ["TMPDIR"] = str(self._tmp)
+                try:
+                    self._pw = await async_playwright().start()
+                finally:
+                    if antes is None:
+                        os.environ.pop("TMPDIR", None)
+                    else:
+                        os.environ["TMPDIR"] = antes
             opcoes = dict(
                 headless=True,
                 args=FLAGS_CHROMIUM + [f"--js-flags=--max-old-space-size={self.cfg.js_heap_mb}"],
@@ -278,9 +289,7 @@ class Navegador:
                 self.sem_sandbox = motivo
             navegador.on("disconnected", lambda _: self._caiu())
             self._navegador = navegador
-            for grupo in self._grupos_do_chromium():
-                self._grupos.add(grupo)
-                self._avisar_vigia(f"grupo {grupo}")
+            self._anotar_grupos()
             log.info("Chromium %s no ar (grupos %s)", navegador.version, sorted(self._grupos))
             return navegador
 
@@ -303,13 +312,31 @@ class Navegador:
         if not self.sessoes:
             self._sem_sessoes_desde = time.monotonic()
 
-    def matar_chromium(self, motivo: str) -> None:
-        """A árvore inteira do Chromium, na hora (SIGKILL nos grupos)."""
-        grupos = set(self._grupos) | set(self._grupos_do_chromium())
-        processos.matar_grupos(grupos)
-        for grupo in grupos:
+    def _anotar_grupos(self) -> None:
+        """Anota os grupos do Chromium que descendem deste servidor agora e
+        esquece os que já não têm processo vivo (o número pode ser reusado)."""
+        atuais = self._grupos_do_chromium()
+        for grupo in atuais.keys() - self._grupos.keys():
+            self._avisar_vigia(f"grupo {grupo}")
+        processos.anotar(self._grupos, atuais)
+        vivos = {processos.grupo_de(pid) for pid in processos.membros_verificados(self._grupos)}
+        for grupo in self._grupos.keys() - vivos:
+            del self._grupos[grupo]
+            self._avisar_vigia(f"fim {grupo}")
+
+    def _matar_arvore(self) -> None:
+        """SIGKILL em cada processo do Chromium (grupo E executável anotados)."""
+        self._anotar_grupos()
+        for _ in range(3):  # um processo pode ter criado outro no meio
+            if not processos.matar(processos.membros_verificados(self._grupos)):
+                break
+        for grupo in self._grupos:
             self._avisar_vigia(f"fim {grupo}")
         self._grupos.clear()
+
+    def matar_chromium(self, motivo: str) -> None:
+        """A árvore inteira do Chromium, na hora."""
+        self._matar_arvore()
         navegador, self._navegador = self._navegador, None
         self._derrubar_sessoes(motivo)
         log.warning("Chromium morto: %s", motivo)
@@ -322,11 +349,7 @@ class Navegador:
         navegador, self._navegador = self._navegador, None
         if navegador is not None:
             await _sem_erro(navegador.close(), 5)
-        grupos = set(self._grupos) | set(self._grupos_do_chromium())
-        processos.matar_grupos(grupos)  # o que sobrou, se sobrou
-        for grupo in grupos:
-            self._avisar_vigia(f"fim {grupo}")
-        self._grupos.clear()
+        self._matar_arvore()  # o que sobrou, se sobrou
         if self._pw is not None:
             await _sem_erro(self._pw.stop(), 5)
             self._pw = None
@@ -337,11 +360,8 @@ class Navegador:
         while True:
             await asyncio.sleep(VERIFICACAO_SEGUNDOS)
             try:
-                for grupo in self._grupos_do_chromium():
-                    if grupo not in self._grupos:
-                        self._grupos.add(grupo)
-                        self._avisar_vigia(f"grupo {grupo}")
-                usado = processos.rss_dos_grupos(self._grupos)
+                self._anotar_grupos()
+                usado = processos.rss_bytes_de(processos.membros_verificados(self._grupos))
                 if usado > limite:
                     self.matar_chromium(
                         f"o Chromium passou do limite de memória ({usado // MIB} MiB > "
@@ -369,12 +389,19 @@ class Navegador:
     # -- sessões -------------------------------------------------------------
 
     async def nova_sessao(self) -> Sessao:
-        if len(self.sessoes) >= self.cfg.max_sessoes:
+        if len(self.sessoes) + self._criando >= self.cfg.max_sessoes:
             ids = ", ".join(sorted(self.sessoes))
             raise ToolError(
                 f"limite de {self.cfg.max_sessoes} sessão(ões) ao mesmo tempo (abertas: {ids}). Use uma "
                 "delas (passe `sessao`) ou feche uma com fechar."
             )
+        self._criando += 1  # a vaga fica reservada enquanto a sessão sobe
+        try:
+            return await self._criar_sessao()
+        finally:
+            self._criando -= 1
+
+    async def _criar_sessao(self) -> Sessao:
         navegador = await self._lancar()
         filtro = Filtro(self.rede, "sessão")
         await filtro.iniciar()
@@ -686,7 +713,15 @@ class Navegador:
                 clip={"x": 0, "y": 0, "width": VIEWPORT["width"], "height": min(int(altura), MAX_ALTURA_CAPTURA)},
             )
         imagem = await pagina.screenshot(**opcoes)
-        descritor = os.open(destino, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        # Pela pasta já aberta (sem seguir link): trocar a pasta ou o arquivo
+        # por um link depois da conferência não muda onde a imagem vai parar.
+        pasta_fd = os.open(pasta, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            descritor = os.open(
+                destino.name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=pasta_fd
+            )
+        finally:
+            os.close(pasta_fd)
         with os.fdopen(descritor, "wb") as arquivo:
             arquivo.write(imagem)
         self._podar_capturas(pasta)
