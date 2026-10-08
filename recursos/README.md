@@ -44,3 +44,9 @@ url = "http://localhost:8181/mcp"
 expor = false          # só o kernel usa (memoria_buscar)
 # token_env = "QMD_TOKEN"   # se o servidor pedir token (Bearer), pelo .env
 ```
+
+## Gateway do Discord
+
+`recursos/gateway/` não é um servidor MCP: é o adaptador do Discord, um
+processo próprio (com o seu `uv`) que fala com o daemon por um socket Unix
+local. Veja `recursos/gateway/README.md` e `docs/GATEWAY.md`.

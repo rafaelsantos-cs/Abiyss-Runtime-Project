@@ -11,7 +11,15 @@
 //! permitido (`canal_id`, opcional). Todo o resto é conteúdo externo, e é
 //! ignorado a não ser que venha do canal permitido.
 
+pub mod comandos;
 pub mod confianca;
+pub mod protocolo;
+pub mod registro;
+#[cfg(unix)]
+pub mod servidor;
+
+#[cfg(unix)]
+pub use servidor::Gateway;
 
 use anyhow::bail;
 use serde::Deserialize;
@@ -22,6 +30,9 @@ use serde::Deserialize;
 pub struct ConfigGateway {
     /// Desligado (o padrão), o daemon nem abre o socket.
     pub ativo: bool,
+    /// Socket Unix por onde o adaptador fala com o daemon (relativo à pasta
+    /// do abiyss.toml). Só o usuário do daemon alcança (0600).
+    pub socket: String,
     /// ID de usuário do Discord do dono (só dígitos). Obrigatório se ativo.
     pub dono_discord_id: String,
     /// ID de UM canal de servidor onde o Abiyss também escuta (vazio =
@@ -30,15 +41,20 @@ pub struct ConfigGateway {
     /// No canal permitido, a mensagem do dono só conta se mencionar o bot
     /// ou responder a uma mensagem dele (DM conta sempre).
     pub canal_exige_mencao: bool,
+    /// Tempo máximo de UM turno de conversa pelo Discord (passou, o dono
+    /// recebe o erro e a conversa segue).
+    pub max_duracao_turno_segundos: u64,
 }
 
 impl Default for ConfigGateway {
     fn default() -> Self {
         ConfigGateway {
             ativo: false,
+            socket: "data/gateway/abiyss.sock".into(),
             dono_discord_id: String::new(),
             canal_id: String::new(),
             canal_exige_mencao: true,
+            max_duracao_turno_segundos: 900,
         }
     }
 }
@@ -52,6 +68,9 @@ impl ConfigGateway {
     pub fn validar(&self) -> anyhow::Result<()> {
         if !self.ativo {
             return Ok(());
+        }
+        if self.socket.trim().is_empty() || self.max_duracao_turno_segundos == 0 {
+            bail!("gateway.socket não pode ser vazio e gateway.max_duracao_turno_segundos > 0");
         }
         if !id_discord_valido(&self.dono_discord_id) {
             bail!(

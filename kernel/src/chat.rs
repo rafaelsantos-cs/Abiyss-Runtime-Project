@@ -40,9 +40,12 @@ use crate::ferramentas::{
 use crate::historico;
 use crate::identidade::{BlocosPrompt, Identidade};
 use crate::interocepcao::{self, Interocepcao};
+use crate::mcp::PonteMcp;
+use crate::memoria::Memoria;
 use crate::memoria::central::MemoriaCentral;
 use crate::nim::{self, Ferramenta, Mensagem, Uso};
 use crate::orquestrador::{AoReceber, Origem, Orquestrador, reemprestar};
+use crate::subagentes::ControleSubagentes;
 
 /// Texto devolvido quando o modelo insiste em ferramentas além do limite.
 pub const AVISO_LIMITE_RODADAS: &str = "(parei: limite de rodadas de ferramentas atingido)";
@@ -58,6 +61,23 @@ pub struct RespostaTurno {
     pub uso: Uso,
     /// Quantas ferramentas foram executadas no turno.
     pub ferramentas_usadas: usize,
+}
+
+/// As ferramentas da conversa com o dono (`abiyss chat` e o gateway):
+/// nativas + MCP + memória + delegação + `responder_pedido`. `delegar` só
+/// grava o pedido no banco; quem executa é o daemon.
+pub fn caixa_de_conversa(
+    config: &Config,
+    banco: Banco,
+    mcp: Arc<PonteMcp>,
+    memoria: Arc<Memoria>,
+) -> anyhow::Result<CaixaDeFerramentas> {
+    let controle = ControleSubagentes::novo(config.clone(), banco.clone(), None);
+    Ok(CaixaDeFerramentas::da_config(config)?
+        .com_mcp(mcp)
+        .com_memoria(memoria)
+        .com_subagentes(controle)
+        .com_pedidos(banco))
 }
 
 pub struct SessaoChat {

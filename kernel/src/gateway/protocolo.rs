@@ -1,0 +1,119 @@
+//! Protocolo entre o kernel e o adaptador: JSON, uma mensagem por linha,
+//! num socket Unix local. O campo `tipo` diz o que é.
+//!
+//! Adaptador → kernel:
+//! - `ola {versao}`: primeira linha de cada conexão;
+//! - `mensagem {mensagem}`: uma mensagem do Discord (só fatos);
+//! - `enviado {ref, ids}`: a saída `ref` foi entregue (IDs no Discord);
+//! - `falhou {ref, erro}`: não deu para entregar (o kernel tenta de novo).
+//!
+//! Kernel → adaptador:
+//! - `ola {versao, dono_id, canal_id, ultimo_dm, ultimo_canal}`: quem é o
+//!   dono, qual canal ouvir e de onde buscar o que chegou com o adaptador
+//!   fora do ar;
+//! - `recebido {id, estado}`: a mensagem foi gravada (ou ignorada);
+//! - `enviar {ref, canal_id, responder_a, texto}`: entregar uma mensagem
+//!   (`canal_id` nulo = DM do dono). Confirmar com `enviado`.
+
+use serde::{Deserialize, Serialize};
+
+use super::confianca::MensagemDiscord;
+
+/// Versão do protocolo. Muda quando uma mensagem muda de forma.
+pub const VERSAO: u32 = 1;
+/// Maior linha aceita do adaptador (uma mensagem do Discord tem no máximo
+/// 4000 caracteres; folga para o JSON).
+pub const MAX_LINHA: usize = 64 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "tipo", rename_all = "snake_case")]
+pub enum DoAdaptador {
+    Ola {
+        versao: u32,
+    },
+    Mensagem {
+        mensagem: MensagemDiscord,
+    },
+    Enviado {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        #[serde(default)]
+        ids: Vec<String>,
+    },
+    Falhou {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        #[serde(default)]
+        erro: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "tipo", rename_all = "snake_case")]
+pub enum ParaAdaptador {
+    Ola {
+        versao: u32,
+        dono_id: String,
+        canal_id: Option<String>,
+        ultimo_dm: Option<String>,
+        ultimo_canal: Option<String>,
+    },
+    Recebido {
+        id: String,
+        estado: String,
+    },
+    Enviar {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        canal_id: Option<String>,
+        responder_a: Option<String>,
+        texto: String,
+    },
+}
+
+impl ParaAdaptador {
+    /// A linha JSON (sem o `\n`).
+    pub fn linha(&self) -> String {
+        serde_json::to_string(self).expect("mensagem do protocolo sempre vira JSON")
+    }
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn formato_das_linhas() {
+        let m: DoAdaptador =
+            serde_json::from_value(json!({"tipo": "enviado", "ref": 7, "ids": ["1", "2"]}))
+                .unwrap();
+        assert_eq!(
+            m,
+            DoAdaptador::Enviado {
+                referencia: 7,
+                ids: vec!["1".into(), "2".into()]
+            }
+        );
+        let m: DoAdaptador = serde_json::from_value(json!({
+            "tipo": "mensagem",
+            "mensagem": {"id": "5", "canal_id": "6", "dm": true, "autor_id": "7", "texto": "oi"}
+        }))
+        .unwrap();
+        assert!(matches!(m, DoAdaptador::Mensagem { mensagem } if mensagem.texto == "oi"));
+        assert!(serde_json::from_str::<DoAdaptador>(r#"{"tipo": "outra"}"#).is_err());
+
+        let linha = ParaAdaptador::Enviar {
+            referencia: 3,
+            canal_id: None,
+            responder_a: Some("5".into()),
+            texto: "olá".into(),
+        }
+        .linha();
+        let v: serde_json::Value = serde_json::from_str(&linha).unwrap();
+        assert_eq!(
+            v,
+            json!({"tipo": "enviar", "ref": 3, "canal_id": null, "responder_a": "5", "texto": "olá"})
+        );
+    }
+}

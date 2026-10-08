@@ -6,6 +6,7 @@ use abiyss::config::Config;
 use abiyss::daemon::{Daemon, OpcoesDaemon, TravaDaemon};
 use abiyss::db::Banco;
 use abiyss::ferramentas::CaixaDeFerramentas;
+use abiyss::gateway::Gateway;
 use abiyss::mcp::PonteMcp;
 use abiyss::memoria::Memoria;
 use abiyss::orquestrador::Orquestrador;
@@ -32,7 +33,31 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
     );
     // Supervisão dos servidores MCP: reinicia quem cai, trava ou passa dos limites.
     let supervisao = tokio::spawn(mcp.clone().supervisionar());
-    let daemon = Daemon::novo(config, banco, orquestrador, ferramentas);
+    let gateway = if config.gateway.ativo {
+        // Conexão própria ao banco: nada do gateway segura a trava da
+        // conexão do loop principal.
+        let banco_gateway = banco.outra_conexao(abiyss::db::ESPERA_PADRAO)?;
+        let memoria =
+            Arc::new(Memoria::abrir(&config, banco_gateway.clone())?.com_mcp(mcp.clone()));
+        let caixa = Arc::new(abiyss::chat::caixa_de_conversa(
+            &config,
+            banco_gateway.clone(),
+            mcp.clone(),
+            memoria,
+        )?);
+        Some(Gateway::novo(
+            config.clone(),
+            banco_gateway,
+            orquestrador.clone(),
+            caixa,
+        ))
+    } else {
+        None
+    };
+    let mut daemon = Daemon::novo(config, banco, orquestrador, ferramentas);
+    if let Some(gateway) = gateway {
+        daemon = daemon.com_gateway(gateway);
+    }
     let resultado = daemon.rodar(&opcoes).await;
     drop(daemon);
     supervisao.abort();

@@ -400,6 +400,8 @@ expira_apos_horas = 72
 
 [gateway]
 ativo = false
+# Socket Unix local (sem porta de rede) entre o daemon e o adaptador.
+socket = "data/gateway/abiyss.sock"
 # ID de USUÁRIO do dono no Discord (só ele conta como o dono falando).
 dono_discord_id = ""
 # Um canal de servidor onde o Abiyss também escuta (vazio = só DMs). Lá, as
@@ -407,6 +409,11 @@ dono_discord_id = ""
 canal_id = ""
 # No canal, a mensagem do dono só conta se mencionar o bot ou responder a ele.
 canal_exige_mencao = true
+# Tempo máximo de UMA resposta pelo Discord (mesmo caminho e esforço do
+# `abiyss chat`: [chat] esforco_padrao, com `aprofundar` até esforco_maximo).
+# Mensagens que chegam enquanto ele responde ficam na fila (nenhuma se perde)
+# e viram a próxima resposta, todas juntas.
+max_duracao_turno_segundos = 900
 
 # ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).
