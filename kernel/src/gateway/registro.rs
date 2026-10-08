@@ -435,6 +435,26 @@ pub fn entradas_do_autor_desde(
     Ok(n as usize)
 }
 
+/// Chamadas ao modelo gastas com UM autor desde `desde`.
+pub fn chamadas_do_autor_desde(banco: &Banco, autor: &str, desde: i64) -> anyhow::Result<usize> {
+    let n: i64 = banco.conexao().query_row(
+        "SELECT COALESCE(SUM(chamadas), 0) FROM gateway_mensagens
+          WHERE direcao = 'entrada' AND autor_id = ?1 AND momento_ms >= ?2",
+        params![autor, desde],
+        |l| l.get(0),
+    )?;
+    Ok(n as usize)
+}
+
+/// Anota as chamadas ao modelo de um turno (na última entrada do lote).
+pub fn anotar_chamadas(banco: &Banco, entrada: i64, chamadas: usize) -> anyhow::Result<()> {
+    banco.conexao().execute(
+        "UPDATE gateway_mensagens SET chamadas = ?1 WHERE id = ?2",
+        params![chamadas as i64, entrada],
+    )?;
+    Ok(())
+}
+
 /// Saídas mandadas ao adaptador desde `desde` (teto por minuto).
 pub fn entregas_desde(banco: &Banco, desde: i64) -> anyhow::Result<usize> {
     let n: i64 = banco.conexao().query_row(

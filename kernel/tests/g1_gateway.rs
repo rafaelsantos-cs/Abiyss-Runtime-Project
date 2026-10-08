@@ -1307,3 +1307,119 @@ async fn dono_nao_espera_atras_de_uma_enxurrada_de_outras_pessoas() {
         "as de terceiros continuam esperando a vez: {na_fila}"
     );
 }
+
+#[tokio::test]
+async fn limite_por_minuto_e_orcamento_do_dia_por_pessoa() {
+    let amb = Ambiente::novo().await;
+    let mut config = config_gateway(&amb);
+    config.gateway.pedidos_por_dm = false;
+    config.gateway.terceiros.max_mensagens_por_minuto = 3;
+    config.gateway.terceiros.max_chamadas_por_dia = 4;
+    let portao = Arc::new(Semaphore::new(0));
+    let p2 = Arc::clone(&portao);
+    amb.mock
+        .definir_roteiro(move |_| RespostaMock::texto("ok").segurada(Arc::clone(&p2)));
+    let g = gateway(&amb, &config);
+    let _t = tokio::spawn(g.rodar());
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+
+    // Por minuto: 3 da Ana viram conversa; a 4ª e a 5ª, ignoradas em silêncio.
+    let estados: Vec<String> = {
+        let mut v = Vec::new();
+        for i in 0..5 {
+            v.push(
+                a.mensagem(dm_de(ANA, DM_ANA, &format!("50{i:02}"), &format!("m{i}")))
+                    .await,
+            );
+        }
+        v
+    };
+    assert_eq!(
+        estados,
+        ["recebida", "recebida", "recebida", "limitado", "limitado"]
+    );
+    // Outra pessoa não paga pela Ana.
+    assert_eq!(
+        a.mensagem(no_canal(ESTRANHO, "5100", "oi bot", true)).await,
+        "recebida"
+    );
+    // O que passou do teto não é guardado nem respondido.
+    assert_eq!(
+        contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens WHERE tipo = 'limitado' AND conteudo IS NULL"
+        ),
+        2
+    );
+    portao.add_permits(100);
+    // Espera todos os turnos (o lote da Ana pode ter virado 1 ou 2 turnos).
+    tokio::time::timeout(PRAZO, async {
+        while contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens
+              WHERE tipo = 'terceiro' AND estado IN ('pendente', 'processando')",
+        ) > 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let antes = amb.mock.total_requisicoes();
+    assert!((2..=3).contains(&antes), "{antes}");
+
+    // Orçamento do dia: 4 chamadas. Marca as da Ana como já gastas.
+    amb.banco
+        .conexao()
+        .execute(
+            "UPDATE gateway_mensagens SET chamadas = 4 WHERE autor_id = ?1 AND chamadas IS NOT NULL",
+            params![ANA],
+        )
+        .unwrap();
+    // (Sai da janela do minuto para não esbarrar no outro teto.)
+    amb.banco
+        .conexao()
+        .execute(
+            "UPDATE gateway_mensagens SET momento_ms = momento_ms - 61000
+              WHERE autor_id = ?1 AND tipo = 'terceiro'",
+            params![ANA],
+        )
+        .unwrap();
+    assert_eq!(
+        a.mensagem(dm_de(ANA, DM_ANA, "5200", "mais uma?")).await,
+        "recebida"
+    );
+    let aviso = a.receber_e_confirmar(&["9520"]).await;
+    assert_eq!(aviso["dm_para"], ANA);
+    assert!(
+        aviso["texto"]
+            .as_str()
+            .unwrap()
+            .starts_with("Por hoje é só")
+    );
+    assert_eq!(
+        a.mensagem(dm_de(ANA, DM_ANA, "5201", "e agora?")).await,
+        "recebida"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        a.guardadas.iter().all(|v| v["tipo"] != "enviar"),
+        "o aviso vai uma vez só por dia"
+    );
+    assert_eq!(
+        amb.mock.total_requisicoes(),
+        antes,
+        "sem orçamento, sem modelo"
+    );
+    assert_eq!(
+        contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens WHERE discord_id IN ('5200', '5201') AND estado = 'limitada'"
+        ),
+        2
+    );
+    // O dono não tem esse orçamento.
+    a.mensagem(dm_do_dono("5300", "oi")).await;
+    a.resposta_a("5300", &["9530"]).await;
+    assert_eq!(amb.mock.total_requisicoes(), antes + 1);
+}

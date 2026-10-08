@@ -476,6 +476,10 @@ nucleo = ""
 # O que o dono deixa compartilhar (arquivo; ausente = nada). Não é a memória
 # central nem o cofre: só o que estiver escrito aqui.
 memoria_publica = "identity/publico.md"
+# Por pessoa: mensagens por minuto que viram conversa (acima: ignoradas em
+# silêncio) e chamadas ao modelo por dia local (acabou: um aviso fixo, uma vez).
+max_mensagens_por_minuto = 5
+max_chamadas_por_dia = 30
 
 # ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).

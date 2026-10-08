@@ -373,6 +373,12 @@ const MIGRACOES: &[&str] = &[
     r#"
     ALTER TABLE gateway_mensagens ADD COLUMN anexo TEXT;
     "#,
+    // 17 (v0.2, gateway em níveis) — chamadas ao modelo gastas para
+    // responder a uma entrada (gravadas na última do lote): o orçamento
+    // diário por pessoa de quem não é o dono soma esta coluna.
+    r#"
+    ALTER TABLE gateway_mensagens ADD COLUMN chamadas INTEGER;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

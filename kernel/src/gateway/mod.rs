@@ -154,6 +154,12 @@ pub struct ConfigTerceiros {
     /// O que o dono deixa compartilhar com outras pessoas (arquivo; ausente
     /// = nada). Não é a memória central nem o cofre.
     pub memoria_publica: String,
+    /// Mensagens por minuto de UMA pessoa que viram conversa; acima disso,
+    /// ignoradas em silêncio (sem resposta que vire spam).
+    pub max_mensagens_por_minuto: usize,
+    /// Chamadas ao modelo por dia (local) para UMA pessoa. Acabou, um aviso
+    /// fixo (uma vez) e mais nada até o dia seguinte.
+    pub max_chamadas_por_dia: usize,
 }
 
 impl Default for ConfigTerceiros {
@@ -167,6 +173,8 @@ impl Default for ConfigTerceiros {
             historico_max_mensagens: 20,
             nucleo: String::new(),
             memoria_publica: "identity/publico.md".into(),
+            max_mensagens_por_minuto: 5,
+            max_chamadas_por_dia: 30,
         }
     }
 }
@@ -254,6 +262,9 @@ impl ConfigGateway {
             bail!("gateway.pessoas: o dono não entra na lista de pessoas (ele é o nível 1)");
         }
         let t = &self.terceiros;
+        if t.max_mensagens_por_minuto == 0 || t.max_chamadas_por_dia == 0 {
+            bail!("gateway.terceiros: max_mensagens_por_minuto e max_chamadas_por_dia > 0");
+        }
         if !(1..=4).contains(&t.max_turnos_simultaneos) || t.max_rodadas == 0 {
             bail!("gateway.terceiros: max_turnos_simultaneos entre 1 e 4 e max_rodadas > 0");
         }

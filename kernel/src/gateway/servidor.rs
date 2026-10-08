@@ -557,6 +557,30 @@ impl Gateway {
                 "duplicado"
             });
         }
+        // Teto por pessoa por minuto: acima disso, ignorada em silêncio.
+        let no_minuto = registro::entradas_do_autor_desde(
+            &self.banco,
+            &m.autor_id,
+            &["terceiro"],
+            agora - 60_000,
+        )?;
+        if no_minuto >= self.config.gateway.terceiros.max_mensagens_por_minuto {
+            let limitada = NovaEntrada {
+                mensagem: m,
+                tipo: "limitado",
+                estado: "limitada",
+                conteudo: None,
+                origem_externa: Some(&origem),
+                pedido_id: None,
+            };
+            return Ok(
+                if registro::registrar_entrada(&self.banco, &limitada, agora)?.is_some() {
+                    "limitado"
+                } else {
+                    "duplicado"
+                },
+            );
+        }
         let nova = NovaEntrada {
             mensagem: m,
             tipo: "terceiro",
@@ -766,8 +790,42 @@ impl Gateway {
             return Ok(());
         };
         let destino = self.destino_terceiro(&primeira.canal_id, &primeira.autor_id);
+        // Orçamento do dia (local) desta pessoa, em chamadas ao modelo.
+        let gastas =
+            registro::chamadas_do_autor_desde(&self.banco, &primeira.autor_id, inicio_do_dia())?;
+        if gastas >= self.config.gateway.terceiros.max_chamadas_por_dia {
+            registro::concluir_entradas(&self.banco, &ids, "limitada", agora_ms())?;
+            self.avisar_orcamento(primeira, &destino)?;
+            return Ok(());
+        }
         let chave = format!("{CHAVE_CONVERSA}:{}", primeira.canal_id);
         self.turno(lote, Some(destino), &chave, Some(quem)).await
+    }
+
+    /// Acabou o orçamento do dia desta pessoa: um aviso fixo (sem modelo),
+    /// uma vez por dia.
+    fn avisar_orcamento(&self, e: &registro::Entrada, destino: &str) -> anyhow::Result<()> {
+        let chave = format!("gateway_orcamento:{}", e.autor_id);
+        let hoje = chrono::Local::now().date_naive().to_string();
+        if daemon::ler_estado(&self.banco, &chave)?.as_deref() == Some(hoje.as_str()) {
+            return Ok(());
+        }
+        daemon::gravar_estado(&self.banco, &chave, &hoje)?;
+        registro::nova_saida(
+            &self.banco,
+            &NovaSaida {
+                tipo: "aviso",
+                estado: "pendente",
+                canal_id: Some(destino),
+                responde_a: Some(&e.discord_id),
+                pedido_id: None,
+                conteudo: "Por hoje é só: já conversamos bastante. Amanhã eu volto a responder.",
+                anexo: None,
+            },
+            agora_ms(),
+        )?;
+        self.acordar_entrega.notify_one();
+        Ok(())
     }
 
     /// Um turno com todas as mensagens do lote (as que chegaram enquanto o
@@ -807,12 +865,14 @@ impl Gateway {
             dm_para: dm_para.clone(),
             responder_a: Some(ultima.discord_id.clone()),
         });
-        let (resposta, estado) = match self.pensar(&texto, saida, chave, quem).await {
-            Ok(r) => (r, "respondida"),
-            Err(e) => (format!("⚠ Não consegui responder: {e:#}"), "erro"),
+        let (resposta, estado, chamadas) = match self.pensar(&texto, saida, chave, quem).await {
+            Ok((r, chamadas)) => (r, "respondida", chamadas),
+            // Falhou no meio: conta pelo menos uma chamada.
+            Err(e) => (format!("⚠ Não consegui responder: {e:#}"), "erro", 1),
         };
         let ids: Vec<i64> = lote.iter().map(|e| e.id).collect();
         registro::concluir_entradas(&self.banco, &ids, estado, agora_ms())?;
+        registro::anotar_chamadas(&self.banco, ultima.id, chamadas)?;
         // Adaptador fora do ar (ou que caiu no meio): a resposta fica
         // pendente e vai como `enviar` quando ele voltar.
         let mandado = self.mandar(&ParaAdaptador::RespostaFim {
@@ -868,7 +928,7 @@ impl Gateway {
         saida: i64,
         chave: &str,
         quem: Option<Terceiro>,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<(String, usize)> {
         let mut sessao = self.sessao(chave, quem)?;
         let limite = Duration::from_secs(self.config.gateway.max_duracao_turno_segundos);
         let mut parcial = String::new();
@@ -906,8 +966,10 @@ impl Gateway {
             ultima = (!forcar).then(std::time::Instant::now);
         };
         match daemon::supervisionar(limite, sessao.enviar(texto, Some(&mut ao_receber))).await {
-            Desfecho::Ok(Ok(r)) if r.texto.trim().is_empty() => Ok("(resposta vazia)".into()),
-            Desfecho::Ok(Ok(r)) => Ok(r.texto),
+            Desfecho::Ok(Ok(r)) if r.texto.trim().is_empty() => {
+                Ok(("(resposta vazia)".into(), r.chamadas))
+            }
+            Desfecho::Ok(Ok(r)) => Ok((r.texto, r.chamadas)),
             Desfecho::Ok(Err(e)) => Err(e),
             Desfecho::TempoEsgotado => bail!("a resposta passou de {} s", limite.as_secs()),
             Desfecho::Panico(m) => bail!("pânico no turno: {m}"),
@@ -990,6 +1052,16 @@ impl Gateway {
         }
         Ok(())
     }
+}
+
+/// Início do dia de hoje no fuso local, em ms (o orçamento é por dia local).
+fn inicio_do_dia() -> i64 {
+    use chrono::TimeZone;
+    let hoje = chrono::Local::now().date_naive();
+    hoje.and_hms_opt(0, 0, 0)
+        .and_then(|meia_noite| chrono::Local.from_local_datetime(&meia_noite).earliest())
+        .map(|d| d.timestamp_millis())
+        .unwrap_or_else(|| agora_ms() - 86_400_000)
 }
 
 /// O texto que sai, no teto (com aviso do corte).
