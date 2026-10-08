@@ -22,9 +22,6 @@ pub const TIPO_SKILL: &str = "skill";
 pub const TIPO_KERNEL: &str = "kernel";
 /// Resumo do sono, publicado ao acordar.
 pub const TIPO_SONO: &str = "sono";
-/// Mensagem de outra pessoa (ou bot) no canal permitido do Discord:
-/// sempre conteúdo EXTERNO.
-pub const TIPO_DISCORD: &str = "discord";
 /// Resposta do usuário a um pedido do Abiyss.
 /// Origem do evento `kernel` publicado ao subir depois de uma ausência.
 pub const ORIGEM_REINICIO: &str = "reinicio";

@@ -21,7 +21,7 @@ def discord_falso(virtual: RelogioVirtual) -> DiscordFalso:
 
 
 def novo(discord_falso, relogio):
-    return Entregador(discord_falso, lambda: {"dono_id": "111", "canal_id": None}, Ritmo(1.2, relogio, relogio.dormir))
+    return Entregador(discord_falso, lambda: {"dono_id": "111", "canais": []}, Ritmo(1.2, relogio, relogio.dormir))
 
 
 async def deixar_passar(relogio, segundos: float) -> None:

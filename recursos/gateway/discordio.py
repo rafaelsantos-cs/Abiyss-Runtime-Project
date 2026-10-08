@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,7 @@ MAX_RECUPERAR = 50
 SEM_MENCOES = discord.AllowedMentions.none()
 
 
-def fatos(mensagem: Any, eu_id: int, canal_permitido: str | None) -> dict[str, Any] | None:
+def fatos(mensagem: Any, eu_id: int, canais: Collection[str]) -> dict[str, Any] | None:
     """Os fatos de uma mensagem do Discord, ou ``None`` se não for para o kernel."""
     if mensagem.author.id == eu_id:
         return None  # o próprio bot
@@ -36,7 +36,7 @@ def fatos(mensagem: Any, eu_id: int, canal_permitido: str | None) -> dict[str, A
         return None  # entrou no servidor, fixou mensagem...
     dm = mensagem.guild is None
     canal_id = str(mensagem.channel.id)
-    if not dm and canal_id != canal_permitido:
+    if not dm and canal_id not in canais:
         return None
     referencia = getattr(mensagem, "reference", None)
     citada = getattr(referencia, "resolved", None) if referencia else None
@@ -107,19 +107,21 @@ class ClienteDiscord(discord.Client):
         intents.guild_messages = True
         super().__init__(intents=intents, allowed_mentions=SEM_MENCOES)
         self.ponte: Any = None
+        # Para liberar a resposta por DM a quem acabou de mandar DM.
+        self.ao_receber_dm: Callable[[str], None] | None = None
 
     def _ola(self) -> dict[str, Any]:
         return (self.ponte.ola if self.ponte else None) or {}
 
-    async def canal(self, canal_id: str | None) -> CanalReal:
-        if canal_id is None:
-            dono_id = self._ola().get("dono_id")
-            if not dono_id:
-                raise RuntimeError("o kernel ainda não disse quem é o dono")
-            dono = self.get_user(int(dono_id)) or await self.fetch_user(int(dono_id))
-            return CanalReal(dono.dm_channel or await dono.create_dm())
-        canal = self.get_channel(int(canal_id)) or await self.fetch_channel(int(canal_id))
-        return CanalReal(canal)
+    async def canal(self, canal_id: str | None, dm_para: str | None = None) -> CanalReal:
+        if canal_id is not None:
+            canal = self.get_channel(int(canal_id)) or await self.fetch_channel(int(canal_id))
+            return CanalReal(canal)
+        pessoa_id = dm_para or self._ola().get("dono_id")
+        if not pessoa_id:
+            raise RuntimeError("o kernel ainda não disse quem é o dono")
+        pessoa = self.get_user(int(pessoa_id)) or await self.fetch_user(int(pessoa_id))
+        return CanalReal(pessoa.dm_channel or await pessoa.create_dm())
 
     async def on_ready(self) -> None:
         log.info("no Discord como %s (id %s)", self.user, self.user.id if self.user else "?")
@@ -132,8 +134,10 @@ class ClienteDiscord(discord.Client):
     async def _encaminhar(self, mensagem: discord.Message) -> None:
         if self.user is None or self.ponte is None:
             return
-        f = fatos(mensagem, self.user.id, self._ola().get("canal_id"))
+        f = fatos(mensagem, self.user.id, self._ola().get("canais") or [])
         if f is not None:
+            if f["dm"] and self.ao_receber_dm is not None:
+                self.ao_receber_dm(f["autor_id"])
             await self.ponte.mensagem(f)
 
     async def recuperar(self, ola: dict[str, Any]) -> None:
@@ -145,9 +149,8 @@ class ClienteDiscord(discord.Client):
         alvos: list[tuple[str, Callable[[], Awaitable[Any]]]] = []
         if ola.get("ultimo_dm"):
             alvos.append((ola["ultimo_dm"], lambda: self._dm_do_dono(ola)))
-        if ola.get("canal_id") and ola.get("ultimo_canal"):
-            canal_id = int(ola["canal_id"])
-            alvos.append((ola["ultimo_canal"], lambda: self._canal_por_id(canal_id)))
+        for canal, ultimo in (ola.get("ultimos_canais") or {}).items():
+            alvos.append((ultimo, lambda c=int(canal): self._canal_por_id(c)))
         for depois, achar in alvos:
             try:
                 canal = await achar()

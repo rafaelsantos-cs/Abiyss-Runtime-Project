@@ -14,9 +14,12 @@ lógica, que os testes exercitam com um Discord de mentira:
 - ``Entregador``: recebe os pedidos do kernel (pela ``Ponte``) e devolve
   os IDs das mensagens criadas.
 
-Destino: ``canal_id`` nulo é a DM do dono; qualquer outro canal só se for
-o canal permitido que o kernel informou no ``ola`` (defesa em dobro: o
-kernel já só manda para lá).
+Destino (defesa em dobro: o kernel já só manda para esses lugares):
+- ``canal_id``: só um dos canais permitidos que o kernel informou no ``ola``;
+- ``dm_para``: DM só ao dono, a uma pessoa conhecida do ``ola`` ou a quem
+  mandou DM ao bot há pouco (``JANELA_DM_RECENTE``; a resposta fixa a
+  desconhecidos). O adaptador nunca puxa conversa com qualquer um;
+- os dois nulos: a DM do dono.
 
 Arquivo: só de dentro do workspace que o kernel informou no ``ola``,
 conferido de novo aqui (``anexo_seguro``): caminho real, sem link
@@ -39,6 +42,8 @@ from partes import dividir
 log = logging.getLogger("abiyss.gateway.saida")
 
 INTERVALO_PADRAO = 1.2
+# Quem mandou DM ao bot há menos que isto pode receber DM de volta.
+JANELA_DM_RECENTE = 3600.0
 # Teto do adaptador para anexos (o do kernel, [gateway] max_bytes_anexo,
 # costuma ser menor; o Discord recusa acima de ~10 MB sem impulso).
 MAX_BYTES_ANEXO = 10 * 1024 * 1024
@@ -58,8 +63,8 @@ class CanalSaida(Protocol):
 
 
 class Mensageiro(Protocol):
-    async def canal(self, canal_id: str | None) -> CanalSaida:
-        """``None`` = a DM do dono."""
+    async def canal(self, canal_id: str | None, dm_para: str | None = None) -> CanalSaida:
+        """Um canal, a DM de ``dm_para``, ou (os dois ``None``) a DM do dono."""
         ...
 
 
@@ -244,23 +249,39 @@ class Entregador:
         self._ola = ola
         self.ritmo = ritmo or Ritmo()
         self.transmissoes: dict[int, Transmissao] = {}
+        self._dm_recentes: dict[str, float] = {}
 
-    async def _canal(self, canal_id: str | None) -> CanalSaida:
-        if canal_id is not None:
-            ola = self._ola() or {}
-            if canal_id != ola.get("canal_id"):
-                raise ErroDestino(f"canal {canal_id} não é o canal permitido")
-        return await self.mensageiro.canal(canal_id)
+    def notar_dm(self, autor_id: str) -> None:
+        """Alguém mandou DM ao bot (pode receber resposta por um tempo)."""
+        self._dm_recentes[autor_id] = self.ritmo.relogio()
+
+    def _dm_permitida(self, pessoa: str, ola: dict[str, Any]) -> bool:
+        if pessoa == ola.get("dono_id") or pessoa in (ola.get("pessoas") or []):
+            return True
+        quando = self._dm_recentes.get(pessoa)
+        return quando is not None and self.ritmo.relogio() - quando <= JANELA_DM_RECENTE
+
+    async def _canal(self, canal_id: str | None, dm_para: str | None = None) -> CanalSaida:
+        ola = self._ola() or {}
+        if canal_id is not None and canal_id not in (ola.get("canais") or []):
+            raise ErroDestino(f"canal {canal_id} não é um canal permitido")
+        if dm_para is not None and not self._dm_permitida(dm_para, ola):
+            raise ErroDestino(f"DM para {dm_para}: não é o dono, nem pessoa conhecida, nem mandou DM")
+        return await self.mensageiro.canal(canal_id, dm_para)
 
     async def processar(self, pedido: dict[str, Any]) -> list[str] | None:
         tipo = pedido.get("tipo")
         ref = pedido.get("ref")
         if tipo == "enviar":
             return await self.enviar(
-                pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""), pedido.get("anexo")
+                pedido.get("canal_id"),
+                pedido.get("responder_a"),
+                pedido.get("texto", ""),
+                pedido.get("anexo"),
+                pedido.get("dm_para"),
             )
         if tipo == "resposta_inicio":
-            canal = await self._canal(pedido.get("canal_id"))
+            canal = await self._canal(pedido.get("canal_id"), pedido.get("dm_para"))
             t = Transmissao(canal, pedido.get("responder_a"), self.ritmo, self.ritmo.relogio)
             self.transmissoes[ref] = t
             await t.comecar()
@@ -273,17 +294,27 @@ class Entregador:
             t = self.transmissoes.pop(ref, None)
             if t is None:
                 # O adaptador reconectou no meio: vale como `enviar`.
-                return await self.enviar(pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""))
+                return await self.enviar(
+                    pedido.get("canal_id"),
+                    pedido.get("responder_a"),
+                    pedido.get("texto", ""),
+                    dm_para=pedido.get("dm_para"),
+                )
             return await t.terminar(pedido.get("texto", ""))
         log.warning("pedido desconhecido do kernel: %s", tipo)
         return None
 
     async def enviar(
-        self, canal_id: str | None, responder_a: str | None, texto: str, anexo: str | None = None
+        self,
+        canal_id: str | None,
+        responder_a: str | None,
+        texto: str,
+        anexo: str | None = None,
+        dm_para: str | None = None,
     ) -> list[str]:
         """Manda ``texto`` (em quantas mensagens precisar). A primeira
         responde a ``responder_a`` e leva o anexo, se houver."""
-        canal = await self._canal(canal_id)
+        canal = await self._canal(canal_id, dm_para)
         arquivo = anexo_seguro(anexo, (self._ola() or {}).get("workspace")) if anexo else None
         ids: list[str] = []
         for i, parte in enumerate(dividir(texto or "(vazio)")):

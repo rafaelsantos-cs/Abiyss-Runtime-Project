@@ -406,13 +406,19 @@ expira_apos_horas = 72
 ativo = false
 # Socket Unix local (sem porta de rede) entre o daemon e o adaptador.
 socket = "data/gateway/abiyss.sock"
+# Três níveis de confiança:
+#   1. o DONO (este ID): conversa completa, comandos, pedidos por DM;
+#   2. PESSOAS CONHECIDAS ([[gateway.pessoas]]) e quem fala nos CANAIS
+#      ([[gateway.canais]]): só conversam (nunca comandos), com contexto
+#      mínimo, ferramentas restritas ([gateway.terceiros]) e a menor
+#      prioridade do cérebro (pools.cerebro.terceiros_por_minuto);
+#   3. qualquer outro: ignorado (ou a resposta fixa abaixo).
+# Em canal, só mensagens que mencionam o bot ou respondem a ele. Bots nunca.
 # ID de USUÁRIO do dono no Discord (só ele conta como o dono falando).
 dono_discord_id = ""
-# Um canal de servidor onde o Abiyss também escuta (vazio = só DMs). Lá, as
-# mensagens de outras pessoas e de bots são conteúdo EXTERNO.
-canal_id = ""
-# No canal, a mensagem do dono só conta se mencionar o bot ou responder a ele.
-canal_exige_mencao = true
+# Resposta fixa (sem modelo) a quem manda DM e não está em lista nenhuma, no
+# máximo uma vez por dia por pessoa. Vazio = silêncio.
+resposta_desconhecidos = ""
 # Tempo máximo de UMA resposta pelo Discord (mesmo caminho e esforço do
 # `abiyss chat`: [chat] esforco_padrao, com `aprofundar` até esforco_maximo).
 # Mensagens que chegam enquanto ele responde ficam na fila (nenhuma se perde)
@@ -434,10 +440,42 @@ verificacao_segundos = 30
 # de ambiente com nome de segredo). Tetos:
 max_caracteres_entrada = 4000      # mensagem maior que chega é cortada
 max_entrada_por_minuto = 20        # do dono; acima disso, sem resposta (com aviso)
-max_externas_por_minuto = 10       # do canal permitido que viram evento
 max_caracteres_saida = 12000       # resposta maior é cortada (inteira no histórico)
 max_saida_por_minuto = 20          # mensagens entregues; o resto espera
 max_bytes_anexo = 8388608          # /arquivo: só de dentro do workspace
+
+# Pessoas conhecidas (nível 2): ID de usuário + como o Abiyss as chama.
+# [[gateway.pessoas]]
+# id = "234567890123456789"
+# rotulo = "Ana, irmã do dono"
+
+# Canais onde o Abiyss escuta (nível 2 para quem não é o dono).
+# [[gateway.canais]]
+# id = "345678901234567890"
+# rotulo = "#geral do servidor da família"
+
+# Conversas com quem não é o dono.
+[gateway.terceiros]
+# Ferramentas (curinga no fim vale). Vazio = nenhuma além de anotar_pessoa.
+# Nunca aceitas, seja o que for escrito aqui: escrever_arquivo, terminal__*,
+# delegar/status/cancelar, responder_pedido, memoria_* (o cofre tem as notas
+# internas do dono) e aprofundar.
+ferramentas = []
+# O que a pessoa diz de si vira proposta de nota EXTERNA
+# (02_external/pessoas/discord-<id>.md); nunca memória interna sem o dono.
+anotar_pessoas = true
+# Esforço fixo do cérebro (sem aprofundar).
+esforco = "low"
+# Turnos de outras pessoas ao mesmo tempo (1 a 4). O dono nunca espera atrás.
+max_turnos_simultaneos = 1
+max_rodadas = 3
+historico_max_mensagens = 20
+# Persona para outras pessoas (vazio = identity/nucleo.md). Use um arquivo
+# próprio se o núcleo tiver algo que não deve sair.
+nucleo = ""
+# O que o dono deixa compartilhar (arquivo; ausente = nada). Não é a memória
+# central nem o cofre: só o que estiver escrito aqui.
+memoria_publica = "identity/publico.md"
 
 # ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).

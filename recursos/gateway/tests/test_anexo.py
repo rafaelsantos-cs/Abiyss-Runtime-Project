@@ -50,7 +50,7 @@ def test_grande_demais_ou_sem_workspace(area):
 
 def test_entregador_anexa_na_primeira_mensagem_e_recusa_o_resto(area, discord_falso, relogio):
     raiz, ws = area
-    e = Entregador(discord_falso, lambda: {"dono_id": "1", "canal_id": None, "workspace": str(ws)},
+    e = Entregador(discord_falso, lambda: {"dono_id": "1", "canais": [], "workspace": str(ws)},
                    Ritmo(1.2, relogio, relogio.dormir))
     pedido = {"tipo": "enviar", "ref": 1, "canal_id": None, "texto": "📎", "anexo": str(ws / "relatorios/hoje.md")}
     asyncio.run(e.processar(pedido))

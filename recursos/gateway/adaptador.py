@@ -34,6 +34,7 @@ async def rodar(cfg: config.Config) -> None:
     entregador = Entregador(cliente, lambda: ponte.ola)
     ponte = Ponte(cfg.socket, entregador.processar, ao_ola=cliente.ao_ola)
     cliente.ponte = ponte
+    cliente.ao_receber_dm = entregador.notar_dm
 
     async def iniciar() -> None:
         if cliente.is_closed():

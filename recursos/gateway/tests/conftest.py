@@ -130,10 +130,11 @@ class DiscordFalso:
     def dm(self) -> CanalFalso:
         return self.canais[None]
 
-    async def canal(self, canal_id: str | None) -> CanalFalso:
-        if canal_id not in self.canais:
-            self.canais[canal_id] = CanalFalso(self, canal_id)
-        return self.canais[canal_id]
+    async def canal(self, canal_id: str | None, dm_para: str | None = None) -> CanalFalso:
+        chave = f"dm:{dm_para}" if dm_para else canal_id
+        if chave not in self.canais:
+            self.canais[chave] = CanalFalso(self, chave)
+        return self.canais[chave]
 
 
 @pytest.fixture
@@ -156,7 +157,7 @@ class DaemonFalso:
 
     def __init__(self, caminho: Path, ola: dict[str, Any] | None = None) -> None:
         self.caminho = caminho
-        self.ola = ola or {"tipo": "ola", "versao": 1, "dono_id": "111", "canal_id": None}
+        self.ola = ola or {"tipo": "ola", "versao": 2, "dono_id": "111", "canais": [], "pessoas": []}
         self.recebidas: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.conexoes = 0
         self._escritor: asyncio.StreamWriter | None = None
@@ -176,7 +177,7 @@ class DaemonFalso:
     async def _atender(self, leitor: asyncio.StreamReader, escritor: asyncio.StreamWriter) -> None:
         self.conexoes += 1
         primeira = json.loads(await leitor.readline())
-        assert primeira == {"tipo": "ola", "versao": 1}
+        assert primeira == {"tipo": "ola", "versao": 2}
         self._escritor = escritor
         await self.mandar(self.ola)
         while linha := await leitor.readline():

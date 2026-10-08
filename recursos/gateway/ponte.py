@@ -26,7 +26,7 @@ from espera import Espera
 
 log = logging.getLogger("abiyss.gateway.ponte")
 
-VERSAO = 1
+VERSAO = 2
 MAX_LINHA = 256 * 1024
 PRAZO_OLA = 10.0
 # Mensagens do Discord esperando o kernel (daemon fora do ar por muito

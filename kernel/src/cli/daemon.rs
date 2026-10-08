@@ -43,13 +43,14 @@ pub async fn executar(config: Config, opcoes: OpcoesDaemon) -> anyhow::Result<()
             &config,
             banco_gateway.clone(),
             mcp.clone(),
-            memoria,
+            memoria.clone(),
         )?);
         Some(Gateway::novo(
             config.clone(),
             banco_gateway,
             orquestrador.clone(),
             caixa,
+            Some(memoria),
         ))
     } else {
         None

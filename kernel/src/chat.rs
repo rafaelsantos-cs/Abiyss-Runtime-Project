@@ -77,16 +77,17 @@ pub const APROFUNDAR: &str = "aprofundar";
 pub const ANOTAR_PESSOA: &str = "anotar_pessoa";
 
 /// Ferramentas que uma conversa com outra pessoa NUNCA tem, seja qual for a
-/// config: escrever, rodar comandos, delegar, responder pelo dono, propor
-/// memória livre, mudar o esforço. (Goals, config e skills não têm
-/// ferramenta na conversa.) Curinga no fim vale como prefixo.
+/// config: escrever, rodar comandos, delegar, responder pelo dono, a
+/// memória do dono (buscar e ler também: o cofre tem 01_internal), mudar o
+/// esforço. (Goals, config e skills não têm ferramenta na conversa.)
+/// Curinga no fim vale como prefixo.
 pub const NUNCA_PARA_TERCEIROS: &[&str] = &[
     crate::ferramentas::ESCREVER_ARQUIVO,
     crate::ferramentas::DELEGAR,
     crate::ferramentas::STATUS,
     crate::ferramentas::CANCELAR,
     crate::ferramentas::RESPONDER_PEDIDO,
-    crate::ferramentas::MEMORIA_PROPOR,
+    "memoria_*",
     APROFUNDAR,
     "terminal__*",
 ];
@@ -152,7 +153,12 @@ pub struct Terceiro {
 impl Terceiro {
     /// Rótulo da origem externa de tudo o que esta pessoa diz.
     pub fn origem(&self) -> String {
-        format!("discord:pessoa:{}", self.discord_id)
+        Terceiro::origem_de(&self.discord_id)
+    }
+
+    /// A origem externa de uma pessoa do Discord, pelo ID.
+    pub fn origem_de(discord_id: &str) -> String {
+        format!("discord:pessoa:{discord_id}")
     }
 
     /// A mensagem como fica no histórico: marcada e como dado.
@@ -732,10 +738,13 @@ mod testes {
         ] {
             assert!(padrao_proibido_para_terceiros(ruim).is_some(), "{ruim}");
         }
+        // A memória do dono inteira (buscar e ler também).
+        assert!(padrao_proibido_para_terceiros("memoria_buscar").is_some());
+        assert!(padrao_proibido_para_terceiros("memoria_ler").is_some());
         for ok in [
             "ler_arquivo",
             "web_rapido__*",
-            "memoria_buscar",
+            "ler_skill",
             "ambiente__resumo",
         ] {
             assert_eq!(padrao_proibido_para_terceiros(ok), None, "{ok}");

@@ -32,7 +32,7 @@ def mensagem(autor=DONO, guild=None, canal=5, **extra):
 
 
 def test_dm_do_dono_vira_fatos_sem_decidir_nada():
-    f = fatos(mensagem(), EU, None)
+    f = fatos(mensagem(), EU, [])
     assert f == {
         "id": "1", "canal_id": "5", "dm": True, "autor_id": "111", "autor_nome": "Dono",
         "autor_bot": False, "menciona_bot": False, "responde_a": None, "responde_ao_bot": False,
@@ -41,11 +41,11 @@ def test_dm_do_dono_vira_fatos_sem_decidir_nada():
 
 
 def test_proprio_bot_sistema_e_outros_canais_nem_vao_ao_kernel():
-    assert fatos(mensagem(autor=EU), EU, None) is None
-    assert fatos(mensagem(type=discord.MessageType.pins_add), EU, None) is None
-    assert fatos(mensagem(guild=NS(id=1), canal=333), EU, CANAL) is None
+    assert fatos(mensagem(autor=EU), EU, []) is None
+    assert fatos(mensagem(type=discord.MessageType.pins_add), EU, []) is None
+    assert fatos(mensagem(guild=NS(id=1), canal=333), EU, [CANAL]) is None
     # Canal permitido: vai (o kernel decide se é o dono ou externo).
-    assert fatos(mensagem(guild=NS(id=1), canal=int(CANAL)), EU, CANAL)["dm"] is False
+    assert fatos(mensagem(guild=NS(id=1), canal=int(CANAL)), EU, [CANAL])["dm"] is False
 
 
 def test_reply_mencao_webhook_e_anexos():
@@ -56,7 +56,7 @@ def test_reply_mencao_webhook_e_anexos():
         webhook_id=5,
         attachments=[NS(filename="foto.png")],
     )
-    f = fatos(m, EU, None)
+    f = fatos(m, EU, [])
     assert f["responde_a"] == "77" and f["responde_ao_bot"] and f["menciona_bot"]
     assert f["autor_bot"], "webhook conta como bot"
     assert "foto.png" in f["texto"]

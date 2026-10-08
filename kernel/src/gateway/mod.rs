@@ -1,5 +1,5 @@
-//! Gateway: o dono conversa com o Abiyss pelo Discord, e o Abiyss alcança o
-//! dono sem a CLI.
+//! Gateway: o dono (e outras pessoas, com menos poder) conversa com o
+//! Abiyss pelo Discord, e o Abiyss alcança o dono sem a CLI.
 //!
 //! O kernel não fala com o Discord. Quem fala é um processo separado, o
 //! adaptador em `recursos/gateway/` (Python + discord.py), que só relata
@@ -11,10 +11,16 @@
 //! no único caminho até o adaptador; o token do bot só existe no ambiente
 //! do adaptador; arquivo, só de dentro do workspace (`/arquivo`).
 //!
-//! Confiança (ver `confianca`): só mensagens do ID de usuário do dono
-//! (`dono_discord_id`) contam como o dono falando — por DM, ou no canal
-//! permitido (`canal_id`, opcional). Todo o resto é conteúdo externo, e é
-//! ignorado a não ser que venha do canal permitido.
+//! Confiança (ver `confianca`), em três níveis:
+//! 1. o DONO (`dono_discord_id`): conversa completa, comandos, pedidos;
+//! 2. PESSOAS CONHECIDAS (`[[gateway.pessoas]]`, ID + rótulo) e quem fala
+//!    nos CANAIS PERMITIDOS (`[[gateway.canais]]`): conversam, mas só
+//!    conversam (nunca comandos), com contexto mínimo, ferramentas
+//!    restritas (`[gateway.terceiros]`) e a menor prioridade do cérebro
+//!    (ver `chat::Perfil::Terceiro`);
+//! 3. qualquer outro: ignorado (opcionalmente uma resposta fixa, sem modelo).
+//!
+//! Em canal, só com menção ao bot ou resposta a ele. Bots nunca.
 
 pub mod agenda;
 pub mod comandos;
@@ -30,6 +36,8 @@ pub use servidor::Gateway;
 
 use anyhow::bail;
 use serde::Deserialize;
+
+use crate::esforco::NivelEsforco;
 
 use crate::db::Banco;
 use crate::tempo::formatar_ms;
@@ -49,12 +57,16 @@ pub struct ConfigGateway {
     pub socket: String,
     /// ID de usuário do Discord do dono (só dígitos). Obrigatório se ativo.
     pub dono_discord_id: String,
-    /// ID de UM canal de servidor onde o Abiyss também escuta (vazio =
-    /// só DMs). Lá, o dono fala com o Abiyss; os outros são conteúdo externo.
-    pub canal_id: String,
-    /// No canal permitido, a mensagem do dono só conta se mencionar o bot
-    /// ou responder a uma mensagem dele (DM conta sempre).
-    pub canal_exige_mencao: bool,
+    /// Pessoas conhecidas (nível 2): conversam por DM e nos canais.
+    pub pessoas: Vec<Conhecido>,
+    /// Canais de servidor onde o Abiyss escuta (nível 2 para quem não é o
+    /// dono). Em canal, só mensagens que mencionam o bot ou respondem a ele.
+    pub canais: Vec<Conhecido>,
+    /// Resposta fixa (sem modelo) a quem não é ninguém disso, por DM, no
+    /// máximo uma vez por dia por pessoa. Vazio = silêncio.
+    pub resposta_desconhecidos: String,
+    /// Como as conversas com quem não é o dono rodam.
+    pub terceiros: ConfigTerceiros,
     /// Tempo máximo de UM turno de conversa pelo Discord (passou, o dono
     /// recebe o erro e a conversa segue).
     pub max_duracao_turno_segundos: u64,
@@ -76,8 +88,6 @@ pub struct ConfigGateway {
     /// Mensagens do dono por minuto; acima disso, registradas sem resposta
     /// (um aviso por minuto). Protege contra rajadas e loops.
     pub max_entrada_por_minuto: usize,
-    /// Mensagens externas (canal permitido) por minuto que viram evento.
-    pub max_externas_por_minuto: usize,
     /// Texto que sai maior que isto é cortado (o inteiro fica no histórico).
     pub max_caracteres_saida: usize,
     /// Mensagens entregues por minuto (as edições da resposta que chega aos
@@ -93,8 +103,10 @@ impl Default for ConfigGateway {
             ativo: false,
             socket: "data/gateway/abiyss.sock".into(),
             dono_discord_id: String::new(),
-            canal_id: String::new(),
-            canal_exige_mencao: true,
+            pessoas: Vec::new(),
+            canais: Vec::new(),
+            resposta_desconhecidos: String::new(),
+            terceiros: ConfigTerceiros::default(),
             max_duracao_turno_segundos: 900,
             pedidos_por_dm: true,
             max_reenvios: 2,
@@ -104,10 +116,57 @@ impl Default for ConfigGateway {
             verificacao_segundos: 30,
             max_caracteres_entrada: 4000,
             max_entrada_por_minuto: 20,
-            max_externas_por_minuto: 10,
             max_caracteres_saida: 12_000,
             max_saida_por_minuto: 20,
             max_bytes_anexo: 8 * 1024 * 1024,
+        }
+    }
+}
+
+/// Uma pessoa ou um canal da lista (`[[gateway.pessoas]]`, `[[gateway.canais]]`).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Conhecido {
+    /// ID do Discord (só dígitos).
+    pub id: String,
+    /// Como o Abiyss chama (vai para o contexto: "Ana, amiga do dono").
+    pub rotulo: String,
+}
+
+/// `[gateway.terceiros]`: conversas com quem não é o dono.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConfigTerceiros {
+    /// Ferramentas permitidas (curinga no fim vale). Vazio = nenhuma além
+    /// de `anotar_pessoa`. As de `chat::NUNCA_PARA_TERCEIROS` são recusadas
+    /// ao carregar a config.
+    pub ferramentas: Vec<String>,
+    /// `anotar_pessoa`: o que a pessoa diz de si vira nota EXTERNA.
+    pub anotar_pessoas: bool,
+    /// Esforço fixo (sem `aprofundar`).
+    pub esforco: NivelEsforco,
+    /// Turnos de outras pessoas rodando ao mesmo tempo (no máximo 4).
+    pub max_turnos_simultaneos: usize,
+    pub max_rodadas: usize,
+    pub historico_max_mensagens: usize,
+    /// Persona para outras pessoas (vazio = o núcleo de identidade).
+    pub nucleo: String,
+    /// O que o dono deixa compartilhar com outras pessoas (arquivo; ausente
+    /// = nada). Não é a memória central nem o cofre.
+    pub memoria_publica: String,
+}
+
+impl Default for ConfigTerceiros {
+    fn default() -> Self {
+        ConfigTerceiros {
+            ferramentas: Vec::new(),
+            anotar_pessoas: true,
+            esforco: NivelEsforco::Low,
+            max_turnos_simultaneos: 1,
+            max_rodadas: 3,
+            historico_max_mensagens: 20,
+            nucleo: String::new(),
+            memoria_publica: "identity/publico.md".into(),
         }
     }
 }
@@ -171,7 +230,6 @@ impl ConfigGateway {
         }
         if self.max_caracteres_entrada == 0
             || self.max_entrada_por_minuto == 0
-            || self.max_externas_por_minuto == 0
             || self.max_saida_por_minuto == 0
             || self.max_bytes_anexo == 0
         {
@@ -182,15 +240,42 @@ impl ConfigGateway {
         }
         crate::ritmo::minuto_de_texto(&self.resumo_manha_hora)
             .map_err(|e| anyhow::anyhow!("gateway.resumo_manha_hora: {e:#}"))?;
-        if !self.canal_id.is_empty() && !id_discord_valido(&self.canal_id) {
-            bail!("gateway.canal_id precisa ser o ID de um canal do Discord (só dígitos) ou vazio");
+        for (lista, nome) in [(&self.pessoas, "pessoas"), (&self.canais, "canais")] {
+            for c in lista {
+                if !id_discord_valido(&c.id) {
+                    bail!("gateway.{nome}: id '{}' não é um ID do Discord", c.id);
+                }
+                if c.rotulo.trim().is_empty() {
+                    bail!("gateway.{nome}: o id {} precisa de um rótulo", c.id);
+                }
+            }
+        }
+        if self.pessoa(&self.dono_discord_id).is_some() {
+            bail!("gateway.pessoas: o dono não entra na lista de pessoas (ele é o nível 1)");
+        }
+        let t = &self.terceiros;
+        if !(1..=4).contains(&t.max_turnos_simultaneos) || t.max_rodadas == 0 {
+            bail!("gateway.terceiros: max_turnos_simultaneos entre 1 e 4 e max_rodadas > 0");
+        }
+        for padrao in &t.ferramentas {
+            if let Some(proibida) = crate::chat::padrao_proibido_para_terceiros(padrao) {
+                bail!(
+                    "gateway.terceiros.ferramentas: '{padrao}' alcança '{proibida}', que quem \
+                     não é o dono nunca usa"
+                );
+            }
         }
         Ok(())
     }
 
-    /// O canal permitido, se houver.
-    pub fn canal(&self) -> Option<&str> {
-        (!self.canal_id.is_empty()).then_some(self.canal_id.as_str())
+    /// A pessoa conhecida com este ID, se houver.
+    pub fn pessoa(&self, id: &str) -> Option<&Conhecido> {
+        self.pessoas.iter().find(|p| p.id == id)
+    }
+
+    /// O canal permitido com este ID, se houver.
+    pub fn canal(&self, id: &str) -> Option<&Conhecido> {
+        self.canais.iter().find(|c| c.id == id)
     }
 }
 
@@ -206,13 +291,39 @@ mod testes {
         assert!(c.validar().is_err(), "sem dono");
         c.dono_discord_id = "123456789012345678".into();
         assert!(c.validar().is_ok());
-        assert_eq!(c.canal(), None);
-        c.canal_id = "#geral".into();
+        let conhecido = |id: &str, rotulo: &str| Conhecido {
+            id: id.into(),
+            rotulo: rotulo.into(),
+        };
+        c.canais = vec![conhecido("#geral", "geral")];
         assert!(c.validar().is_err());
-        c.canal_id = "223456789012345678".into();
+        c.canais = vec![conhecido("223456789012345678", "#geral")];
         assert!(c.validar().is_ok());
-        assert_eq!(c.canal(), Some("223456789012345678"));
+        assert!(c.canal("223456789012345678").is_some());
+        c.pessoas = vec![conhecido("323456789012345678", " ")];
+        assert!(c.validar().is_err(), "sem rótulo");
+        c.pessoas = vec![conhecido("123456789012345678", "eu")];
+        assert!(c.validar().is_err(), "o dono não é pessoa da lista");
+        c.pessoas = vec![conhecido("323456789012345678", "Ana")];
+        assert!(c.validar().is_ok());
         c.dono_discord_id = "12345".into();
         assert!(c.validar().is_err(), "curto demais");
+    }
+
+    #[test]
+    fn ferramentas_proibidas_para_terceiros_sao_recusadas_ao_carregar() {
+        let mut c = ConfigGateway {
+            ativo: true,
+            dono_discord_id: "123456789012345678".into(),
+            ..Default::default()
+        };
+        for ruim in ["*", "terminal__*", "escrever_arquivo", "memoria_buscar"] {
+            c.terceiros.ferramentas = vec![ruim.into()];
+            assert!(c.validar().is_err(), "{ruim}");
+        }
+        c.terceiros.ferramentas = vec!["web_rapido__*".into(), "ler_arquivo".into()];
+        assert!(c.validar().is_ok());
+        c.terceiros.max_turnos_simultaneos = 0;
+        assert!(c.validar().is_err());
     }
 }

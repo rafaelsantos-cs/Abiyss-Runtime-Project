@@ -10,12 +10,18 @@
 //! Três trabalhos em paralelo:
 //! - `aceitar`: uma conexão por vez (a nova substitui a antiga); cada linha
 //!   do adaptador é tratada na hora (gravar, classificar, comandos);
-//! - `conversar`: as mensagens do dono, uma conversa por vez, pelo mesmo
+//! - `conversar`: as mensagens do DONO, uma conversa por vez, pelo mesmo
 //!   caminho do `abiyss chat` (`SessaoChat`, esforço do `[chat]`). O que
 //!   chega enquanto um turno roda fica na fila e vira o turno seguinte
 //!   (todas juntas). A resposta vai ao adaptador enquanto é escrita
 //!   (`resposta_inicio`/`parcial`/`fim`, no máximo uma parcial a cada
 //!   `INTERVALO_PARCIAL`); o ritmo das edições no Discord é do adaptador;
+//! - `conversar_terceiros` (× `[gateway.terceiros] max_turnos_simultaneos`):
+//!   as de quem NÃO é o dono, numa fila à parte. Uma conversa por canal (DM
+//!   ou canal de servidor), perfil `chat::Perfil::Terceiro` (contexto
+//!   mínimo, ferramentas restritas, menor prioridade do cérebro). O dono
+//!   nunca espera atrás delas: o turno dele roda noutra tarefa, e no pool
+//!   do cérebro elas passam por último;
 //! - `entregar`: manda as saídas pendentes ao adaptador e espera a
 //!   confirmação (sem confirmação, manda de novo);
 //! - `agendar`: pedidos pendentes por DM (com lembretes limitados) e o
@@ -37,12 +43,12 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinSet;
 
-use crate::chat::SessaoChat;
+use crate::chat::{SessaoChat, Terceiro};
 use crate::config::Config;
 use crate::daemon::{self, Desfecho};
 use crate::db::Banco;
-use crate::eventos;
 use crate::ferramentas::CaixaDeFerramentas;
+use crate::memoria::Memoria;
 use crate::nim::EventoStream;
 use crate::orquestrador::Orquestrador;
 use crate::tempo::agora_ms;
@@ -51,7 +57,7 @@ use super::agenda;
 use super::comandos::{self, CHAVE_CONVERSA};
 use super::confianca::{self, MensagemDiscord, Remetente};
 use super::ocultar::Ocultador;
-use super::protocolo::{DoAdaptador, MAX_LINHA, ParaAdaptador, VERSAO};
+use super::protocolo::{self, DoAdaptador, MAX_LINHA, PREFIXO_DM, ParaAdaptador, VERSAO};
 use super::registro::{self, NovaEntrada, NovaSaida};
 
 /// Linhas esperando para ir ao adaptador. Cheio (adaptador que não lê), o
@@ -62,6 +68,7 @@ const PRAZO_OLA: Duration = Duration::from_secs(10);
 /// Mesmo sem aviso, a conversa e a entrega olham a fila de tempos em tempos.
 const REVISAO_CONVERSA: Duration = Duration::from_secs(30);
 const REVISAO_ENTREGA: Duration = Duration::from_secs(5);
+const REVISAO_TERCEIROS: Duration = Duration::from_secs(5);
 /// No máximo uma `resposta_parcial` a cada tanto (o adaptador edita no
 /// Discord ainda mais devagar; isto só poupa o socket).
 const INTERVALO_PARCIAL: Duration = Duration::from_millis(250);
@@ -79,8 +86,14 @@ pub struct Gateway {
     orquestrador: Orquestrador,
     /// As ferramentas da conversa (as mesmas do `abiyss chat`).
     caixa: Arc<CaixaDeFerramentas>,
+    /// As de quem não é o dono: a caixa acima restrita a
+    /// `[gateway.terceiros] ferramentas` (sem delegação nem pedidos).
+    caixa_terceiros: Arc<CaixaDeFerramentas>,
+    /// Para `anotar_pessoa` (notas externas de pessoas).
+    memoria: Option<Arc<Memoria>>,
     ligacao: Mutex<Option<Ligacao>>,
     acordar_conversa: Notify,
+    acordar_terceiros: Notify,
     acordar_entrega: Notify,
     ocupado: AtomicBool,
     /// Todo texto que sai passa por ele (ver `mandar`).
@@ -98,19 +111,27 @@ impl Drop for ArquivoSocket {
 
 impl Gateway {
     /// `banco` deve ser uma conexão própria (`Banco::outra_conexao`).
+    /// `caixa` é a da conversa com o dono; a de outras pessoas sai dela,
+    /// restrita. `memoria` liga `anotar_pessoa` (se `anotar_pessoas`).
     pub fn novo(
         config: Config,
         banco: Banco,
         orquestrador: Orquestrador,
         caixa: Arc<CaixaDeFerramentas>,
+        memoria: Option<Arc<Memoria>>,
     ) -> Arc<Gateway> {
+        let caixa_terceiros = Arc::new(caixa.restrita(&config.gateway.terceiros.ferramentas));
+        let memoria = memoria.filter(|_| config.gateway.terceiros.anotar_pessoas);
         Arc::new(Gateway {
             config,
             banco,
             orquestrador,
             caixa,
+            caixa_terceiros,
+            memoria,
             ligacao: Mutex::new(None),
             acordar_conversa: Notify::new(),
+            acordar_terceiros: Notify::new(),
             acordar_entrega: Notify::new(),
             ocupado: AtomicBool::new(false),
             ocultador: Ocultador::do_ambiente(),
@@ -139,15 +160,21 @@ impl Gateway {
         tracing::info!("gateway: esperando o adaptador em {}", caminho.display());
         self.marcar_adaptador("desconectado");
         self.recuperar();
+        let terceiros = futures::future::join_all(
+            (0..self.config.gateway.terceiros.max_turnos_simultaneos)
+                .map(|_| self.conversar_terceiros()),
+        );
         tokio::join!(
             Arc::clone(&self).aceitar(ouvinte),
             self.conversar(),
+            terceiros,
             self.entregar(),
             self.agendar()
         );
     }
 
-    /// Ao subir: avisa o dono das mensagens que ficaram no meio de um turno.
+    /// Ao subir: avisa o dono das mensagens DELE que ficaram no meio de um
+    /// turno (as de outras pessoas só ficam `interrompida`).
     fn recuperar(&self) {
         let interrompidas = match registro::recuperar_interrompidas(&self.banco, agora_ms()) {
             Ok(l) => l,
@@ -156,7 +183,7 @@ impl Gateway {
                 return;
             }
         };
-        for e in &interrompidas {
+        for e in interrompidas.iter().filter(|e| e.tipo == "dono") {
             let aviso = "Reiniciei no meio da resposta a esta mensagem. Ela já está no \
                          histórico da conversa; mande \"continue\" se ainda quiser a resposta.";
             let destino = self.destino(&e.canal_id);
@@ -181,7 +208,28 @@ impl Gateway {
     /// Onde responder a uma mensagem do dono: no canal permitido, se veio
     /// de lá; senão, na DM dele (`None`).
     fn destino(&self, canal_id: &str) -> Option<String> {
-        (self.config.gateway.canal() == Some(canal_id)).then(|| canal_id.to_string())
+        self.config
+            .gateway
+            .canal(canal_id)
+            .map(|_| canal_id.to_string())
+    }
+
+    /// Onde responder a outra pessoa: no canal permitido, se veio de lá;
+    /// senão, na DM DELA (`dm:<id>`). Nunca na DM do dono.
+    fn destino_terceiro(&self, canal_id: &str, autor_id: &str) -> String {
+        match self.config.gateway.canal(canal_id) {
+            Some(_) => canal_id.to_string(),
+            None => format!("{PREFIXO_DM}{autor_id}"),
+        }
+    }
+
+    /// Onde responder a quem mandou `m` (o tipo diz o nível).
+    fn destino_de(&self, m: &MensagemDiscord, dono: bool) -> Option<String> {
+        if dono {
+            self.destino(&m.canal_id)
+        } else {
+            Some(self.destino_terceiro(&m.canal_id, &m.autor_id))
+        }
     }
 
     /// Manda uma linha ao adaptador, se houver um conectado e a fila dele
@@ -204,12 +252,14 @@ impl Gateway {
             ParaAdaptador::Enviar {
                 referencia,
                 canal_id,
+                dm_para,
                 responder_a,
                 texto,
                 anexo,
             } => ParaAdaptador::Enviar {
                 referencia,
                 canal_id,
+                dm_para,
                 responder_a,
                 texto: pronto(texto),
                 anexo,
@@ -217,11 +267,13 @@ impl Gateway {
             ParaAdaptador::RespostaFim {
                 referencia,
                 canal_id,
+                dm_para,
                 responder_a,
                 texto,
             } => ParaAdaptador::RespostaFim {
                 referencia,
                 canal_id,
+                dm_para,
                 responder_a,
                 texto: pronto(texto),
             },
@@ -355,14 +407,16 @@ impl Gateway {
 
     fn ola(&self) -> anyhow::Result<ParaAdaptador> {
         let g = &self.config.gateway;
-        let (ultimo_dm, ultimo_canal) =
-            registro::ultimos_recebidos(&self.banco, &g.dono_discord_id, g.canal())?;
+        let canais: Vec<&str> = g.canais.iter().map(|c| c.id.as_str()).collect();
+        let (ultimo_dm, ultimos_canais) =
+            registro::ultimos_recebidos(&self.banco, &g.dono_discord_id, &canais)?;
         Ok(ParaAdaptador::Ola {
             versao: VERSAO,
             dono_id: g.dono_discord_id.clone(),
-            canal_id: g.canal().map(str::to_string),
+            canais: canais.iter().map(|c| c.to_string()).collect(),
+            pessoas: g.pessoas.iter().map(|p| p.id.clone()).collect(),
             ultimo_dm,
-            ultimo_canal,
+            ultimos_canais: ultimos_canais.into_iter().collect(),
             workspace: self
                 .config
                 .caminho_workspace()
@@ -440,51 +494,82 @@ impl Gateway {
                     "duplicado"
                 })
             }
-            Remetente::Externo { origem } => {
-                let no_minuto =
-                    registro::entradas_desde(&self.banco, &["externo"], agora - 60_000)?;
-                if no_minuto >= g.max_externas_por_minuto {
-                    let gravada = registro::registrar_entrada(
-                        &self.banco,
-                        &nova("limitado", "limitada", None, Some(&origem)),
-                        agora,
-                    )?;
-                    return Ok(if gravada.is_some() {
-                        "limitado"
-                    } else {
-                        "duplicado"
-                    });
-                }
+            Remetente::Desconhecido => {
                 let gravada = registro::registrar_entrada(
                     &self.banco,
-                    &nova("externo", "externa", Some(&m.texto), Some(&origem)),
+                    &nova("ignorado", "ignorada", None, None),
                     agora,
                 )?;
                 if gravada.is_none() {
                     return Ok("duplicado");
                 }
-                // Para o heartbeat, rotulado como conteúdo externo.
-                eventos::publicar_com_origem(
-                    &self.banco,
-                    eventos::TIPO_DISCORD,
-                    &format!("canal:{}", m.canal_id),
-                    &format!(
-                        "Mensagem no canal do Discord, de {} (id {}{}): {}",
-                        if m.autor_nome.is_empty() {
-                            "?"
-                        } else {
-                            &m.autor_nome
-                        },
-                        m.autor_id,
-                        if m.autor_bot { ", bot" } else { "" },
-                        m.texto
-                    ),
-                    Some(&origem),
-                )?;
-                Ok("externo")
+                // Resposta fixa (sem modelo), no máximo uma por dia por pessoa.
+                let fixa = g.resposta_desconhecidos.trim();
+                if !fixa.is_empty()
+                    && registro::entradas_do_autor_desde(
+                        &self.banco,
+                        &m.autor_id,
+                        &["ignorado"],
+                        agora - 24 * 3_600_000,
+                    )? == 1
+                {
+                    self.responder(m, "aviso", fixa, None, false)?;
+                }
+                Ok("ignorado")
             }
+            Remetente::Terceiro { rotulo, .. } => self.receber_de_terceiro(m, &rotulo, agora),
             Remetente::Dono => self.receber_do_dono(m, agora),
         }
+    }
+
+    /// Nível 2: só conversa. Nunca comando, nunca resposta a pedido.
+    fn receber_de_terceiro(
+        &self,
+        m: &MensagemDiscord,
+        rotulo: &str,
+        agora: i64,
+    ) -> anyhow::Result<&'static str> {
+        let origem = Terceiro::origem_de(&m.autor_id);
+        // "Responder" numa mensagem de pedido: só o dono responde pedidos.
+        if let Some(citada) = &m.responde_a
+            && registro::saida_do_discord(&self.banco, citada)?
+                .is_some_and(|s| s.pedido_id.is_some())
+        {
+            tracing::info!(
+                "gateway: {rotulo} ({}) respondeu a um pedido; ignorado (só o dono responde)",
+                m.autor_id
+            );
+            let gravada = registro::registrar_entrada(
+                &self.banco,
+                &NovaEntrada {
+                    mensagem: m,
+                    tipo: "ignorado",
+                    estado: "ignorada",
+                    conteudo: None,
+                    origem_externa: Some(&origem),
+                    pedido_id: None,
+                },
+                agora,
+            )?;
+            return Ok(if gravada.is_some() {
+                "ignorado"
+            } else {
+                "duplicado"
+            });
+        }
+        let nova = NovaEntrada {
+            mensagem: m,
+            tipo: "terceiro",
+            estado: "pendente",
+            conteudo: Some(&m.texto),
+            origem_externa: Some(&origem),
+            pedido_id: None,
+        };
+        if registro::registrar_entrada(&self.banco, &nova, agora)?.is_none() {
+            return Ok("duplicado");
+        }
+        self.acordar_terceiros.notify_one();
+        Ok("recebida")
     }
 
     fn receber_do_dono(&self, m: &MensagemDiscord, agora: i64) -> anyhow::Result<&'static str> {
@@ -519,6 +604,7 @@ impl Gateway {
                         self.config.gateway.max_entrada_por_minuto
                     ),
                     None,
+                    true,
                 )?;
             }
             return Ok("limitado");
@@ -543,7 +629,7 @@ impl Gateway {
                 ),
                 Err(e) => format!("Não registrei a resposta: {e:#}"),
             };
-            self.responder(m, "comando", &texto, None)?;
+            self.responder(m, "comando", &texto, None, true)?;
             return Ok("resposta_pedido");
         }
         if let Some(comando) = comandos::interpretar(&m.texto) {
@@ -555,7 +641,7 @@ impl Gateway {
             let resposta = comandos::executar(comando, &self.config, &self.banco)
                 .unwrap_or_else(|e| format!("Não consegui executar o comando: {e:#}").into());
             let anexo = resposta.anexo.map(|c| c.display().to_string());
-            self.responder(m, "comando", &resposta.texto, anexo.as_deref())?;
+            self.responder(m, "comando", &resposta.texto, anexo.as_deref(), true)?;
             return Ok("comando");
         }
         if registro::registrar_entrada(&self.banco, &nova("dono", "pendente"), agora)?.is_none() {
@@ -569,15 +655,17 @@ impl Gateway {
         })
     }
 
-    /// Põe na fila de saída uma resposta direta a `m` (no mesmo lugar).
+    /// Põe na fila de saída uma resposta direta a `m` (no mesmo lugar;
+    /// `dono` diz se quem escreveu é o dono).
     fn responder(
         &self,
         m: &MensagemDiscord,
         tipo: &str,
         texto: &str,
         anexo: Option<&str>,
+        dono: bool,
     ) -> anyhow::Result<i64> {
-        let destino = self.destino(&m.canal_id);
+        let destino = self.destino_de(m, dono);
         let id = registro::nova_saida(
             &self.banco,
             &NovaSaida {
@@ -613,23 +701,90 @@ impl Gateway {
                 continue;
             }
             self.ocupado.store(true, Ordering::Relaxed);
-            if let Err(e) = self.turno(&lote).await {
+            let destino = lote.last().and_then(|e| self.destino(&e.canal_id));
+            if let Err(e) = self.turno(&lote, destino, CHAVE_CONVERSA, None).await {
                 tracing::error!("gateway: turno da conversa: {e:#}");
             }
             self.ocupado.store(false, Ordering::Relaxed);
         }
     }
 
+    /// Um dos trabalhadores das conversas com outras pessoas (há
+    /// `max_turnos_simultaneos` deles: o teto global de turnos assim).
+    async fn conversar_terceiros(&self) {
+        loop {
+            let lote = registro::tomar_lote_terceiro(&self.banco).unwrap_or_else(|e| {
+                tracing::warn!("gateway: não consegui ler a fila de terceiros: {e:#}");
+                Vec::new()
+            });
+            if lote.is_empty() {
+                tokio::select! {
+                    _ = self.acordar_terceiros.notified() => {}
+                    _ = tokio::time::sleep(REVISAO_TERCEIROS) => {}
+                }
+                continue;
+            }
+            if let Err(e) = self.turno_terceiro(&lote).await {
+                tracing::error!("gateway: turno de terceiro: {e:#}");
+            }
+            // Acabou um: talvez outro trabalhador esteja dormindo com fila.
+            self.acordar_terceiros.notify_one();
+        }
+    }
+
+    /// Quem é a pessoa do lote, pela config atual (ela pode ter saído da
+    /// lista; o canal pode ter deixado de ser permitido).
+    fn terceiro(&self, e: &registro::Entrada) -> Option<Terceiro> {
+        let g = &self.config.gateway;
+        let t = &g.terceiros;
+        let (rotulo, conhecido) = match (g.pessoa(&e.autor_id), g.canal(&e.canal_id)) {
+            (Some(p), _) => (p.rotulo.clone(), true),
+            (None, Some(c)) => (format!("alguém no canal {}", c.rotulo), false),
+            (None, None) => return None,
+        };
+        let arquivo = |caminho: &str| -> Option<PathBuf> {
+            (!caminho.trim().is_empty()).then(|| self.config.resolver(caminho))
+        };
+        Some(Terceiro {
+            rotulo,
+            discord_id: e.autor_id.clone(),
+            conhecido,
+            nucleo: arquivo(&t.nucleo),
+            memoria_publica: arquivo(&t.memoria_publica),
+            esforco: t.esforco,
+            max_rodadas: t.max_rodadas,
+            historico_max_mensagens: t.historico_max_mensagens,
+            memoria: self.memoria.clone(),
+        })
+    }
+
+    async fn turno_terceiro(&self, lote: &[registro::Entrada]) -> anyhow::Result<()> {
+        let primeira = lote.first().context("lote vazio")?;
+        let ids: Vec<i64> = lote.iter().map(|e| e.id).collect();
+        let Some(quem) = self.terceiro(primeira) else {
+            registro::concluir_entradas(&self.banco, &ids, "ignorada", agora_ms())?;
+            return Ok(());
+        };
+        let destino = self.destino_terceiro(&primeira.canal_id, &primeira.autor_id);
+        let chave = format!("{CHAVE_CONVERSA}:{}", primeira.canal_id);
+        self.turno(lote, Some(destino), &chave, Some(quem)).await
+    }
+
     /// Um turno com todas as mensagens do lote (as que chegaram enquanto o
-    /// anterior rodava vêm juntas, na ordem).
-    async fn turno(&self, lote: &[registro::Entrada]) -> anyhow::Result<()> {
+    /// anterior rodava vêm juntas, na ordem). `quem` = `None` é o dono.
+    async fn turno(
+        &self,
+        lote: &[registro::Entrada],
+        destino: Option<String>,
+        chave: &str,
+        quem: Option<Terceiro>,
+    ) -> anyhow::Result<()> {
         let ultima = lote.last().context("lote vazio")?;
         let texto = lote
             .iter()
             .map(|e| e.conteudo.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let destino = self.destino(&ultima.canal_id);
         // A saída nasce `transmitindo`: a entrega normal não a pega até o
         // turno terminar.
         let saida = registro::nova_saida(
@@ -645,12 +800,14 @@ impl Gateway {
             },
             agora_ms(),
         )?;
+        let (canal_id, dm_para) = protocolo::destino(destino.as_deref());
         self.mandar(&ParaAdaptador::RespostaInicio {
             referencia: saida,
-            canal_id: destino.clone(),
+            canal_id: canal_id.clone(),
+            dm_para: dm_para.clone(),
             responder_a: Some(ultima.discord_id.clone()),
         });
-        let (resposta, estado) = match self.pensar(&texto, saida).await {
+        let (resposta, estado) = match self.pensar(&texto, saida, chave, quem).await {
             Ok(r) => (r, "respondida"),
             Err(e) => (format!("⚠ Não consegui responder: {e:#}"), "erro"),
         };
@@ -660,7 +817,8 @@ impl Gateway {
         // pendente e vai como `enviar` quando ele voltar.
         let mandado = self.mandar(&ParaAdaptador::RespostaFim {
             referencia: saida,
-            canal_id: destino,
+            canal_id,
+            dm_para,
             responder_a: Some(ultima.discord_id.clone()),
             texto: resposta.clone(),
         });
@@ -669,15 +827,24 @@ impl Gateway {
         Ok(())
     }
 
-    /// A conversa do gateway: a de sempre (entre reinícios) ou uma nova.
-    fn sessao(&self) -> anyhow::Result<SessaoChat> {
-        let (config, orq, banco, caixa) = (
+    /// A conversa guardada em `chave` (a do dono, ou a de um canal/DM de
+    /// outra pessoa), a de sempre ou uma nova. Outra pessoa recebe a caixa
+    /// restrita e o perfil de terceiro.
+    fn sessao(&self, chave: &str, quem: Option<Terceiro>) -> anyhow::Result<SessaoChat> {
+        let caixa = match &quem {
+            None => Arc::clone(&self.caixa),
+            Some(_) => Arc::clone(&self.caixa_terceiros),
+        };
+        let (config, orq, banco) = (
             self.config.clone(),
             self.orquestrador.clone(),
             self.banco.clone(),
-            Arc::clone(&self.caixa),
         );
-        if let Some(id) = comandos::conversa_atual(&self.banco)?
+        let perfil = |s: SessaoChat| match quem.clone() {
+            Some(t) => s.como_terceiro(t),
+            None => s,
+        };
+        if let Some(id) = daemon::ler_estado(&self.banco, chave)?.and_then(|v| v.parse().ok())
             && let Ok(s) = SessaoChat::retomar(
                 config.clone(),
                 orq.clone(),
@@ -686,17 +853,23 @@ impl Gateway {
                 id,
             )
         {
-            return Ok(s);
+            return Ok(perfil(s));
         }
         let sessao = SessaoChat::nova(config, orq, banco, caixa)?;
-        daemon::gravar_estado(&self.banco, CHAVE_CONVERSA, &sessao.conversa.to_string())?;
-        Ok(sessao)
+        daemon::gravar_estado(&self.banco, chave, &sessao.conversa.to_string())?;
+        Ok(perfil(sessao))
     }
 
     /// O turno de conversa, com tempo máximo e pânico isolado. O texto vai
     /// ao adaptador enquanto chega (saída `saida`).
-    async fn pensar(&self, texto: &str, saida: i64) -> anyhow::Result<String> {
-        let mut sessao = self.sessao()?;
+    async fn pensar(
+        &self,
+        texto: &str,
+        saida: i64,
+        chave: &str,
+        quem: Option<Terceiro>,
+    ) -> anyhow::Result<String> {
+        let mut sessao = self.sessao(chave, quem)?;
         let limite = Duration::from_secs(self.config.gateway.max_duracao_turno_segundos);
         let mut parcial = String::new();
         let mut ultima: Option<std::time::Instant> = None;
@@ -801,9 +974,11 @@ impl Gateway {
                 registro::cancelar_saida(&self.banco, s.id, agora)?;
                 continue;
             }
+            let (canal_id, dm_para) = protocolo::destino(s.canal_id.as_deref());
             let mensagem = ParaAdaptador::Enviar {
                 referencia: s.id,
-                canal_id: s.canal_id,
+                canal_id,
+                dm_para,
                 responder_a: s.responde_a,
                 texto: s.conteudo,
                 anexo: s.anexo,
