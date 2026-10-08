@@ -137,6 +137,7 @@ impl Gateway {
         };
         let _arquivo = ArquivoSocket(caminho.clone());
         tracing::info!("gateway: esperando o adaptador em {}", caminho.display());
+        self.marcar_adaptador("desconectado");
         self.recuperar();
         tokio::join!(
             Arc::clone(&self).aceitar(ouvinte),
@@ -309,6 +310,7 @@ impl Gateway {
         let (linhas, mut pendentes) = mpsc::channel::<String>(FILA_DO_SOCKET);
         *self.ligacao.lock().unwrap_or_else(|e| e.into_inner()) = Some(Ligacao { geracao, linhas });
         tracing::info!("gateway: adaptador conectado");
+        self.marcar_adaptador("conectado");
         self.acordar_entrega.notify_one();
 
         let enviar = async {
@@ -337,8 +339,18 @@ impl Gateway {
         let mut ligacao = self.ligacao.lock().unwrap_or_else(|e| e.into_inner());
         if ligacao.as_ref().is_some_and(|l| l.geracao == geracao) {
             *ligacao = None;
+            drop(ligacao);
+            self.marcar_adaptador("desconectado");
         }
         tracing::info!("gateway: adaptador desconectado");
+    }
+
+    /// Para o `abiyss status` (outro processo) saber do adaptador.
+    fn marcar_adaptador(&self, estado: &str) {
+        let valor = format!("{estado}:{}", agora_ms());
+        if let Err(e) = daemon::gravar_estado(&self.banco, super::CHAVE_ADAPTADOR, &valor) {
+            tracing::warn!("gateway: {e:#}");
+        }
     }
 
     fn ola(&self) -> anyhow::Result<ParaAdaptador> {

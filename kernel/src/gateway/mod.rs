@@ -31,6 +31,13 @@ pub use servidor::Gateway;
 use anyhow::bail;
 use serde::Deserialize;
 
+use crate::db::Banco;
+use crate::tempo::formatar_ms;
+
+/// Chave em `estado_daemon`: o adaptador está conectado? (`conectado:<ms>`
+/// ou `desconectado:<ms>`; gravada pelo gateway, lida pelo `abiyss status`.)
+pub const CHAVE_ADAPTADOR: &str = "gateway_adaptador";
+
 /// `[gateway]` no abiyss.toml.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -103,6 +110,40 @@ impl Default for ConfigGateway {
             max_bytes_anexo: 8 * 1024 * 1024,
         }
     }
+}
+
+/// Uma linha para o `abiyss status`.
+pub fn resumo_status(banco: &Banco) -> anyhow::Result<String> {
+    let adaptador = match crate::daemon::ler_estado(banco, CHAVE_ADAPTADOR)?
+        .as_deref()
+        .and_then(|v| v.split_once(':'))
+        .and_then(|(e, ms)| Some((e.to_string(), ms.parse::<i64>().ok()?)))
+    {
+        Some((estado, ms)) if estado == "conectado" => {
+            format!("adaptador conectado desde {}", formatar_ms(ms))
+        }
+        Some((_, ms)) => format!("adaptador DESCONECTADO desde {}", formatar_ms(ms)),
+        None => "o adaptador nunca conectou".to_string(),
+    };
+    let contar = |sql: &str| -> anyhow::Result<i64> {
+        Ok(banco.conexao().query_row(sql, [], |l| l.get(0))?)
+    };
+    let saidas = contar(
+        "SELECT COUNT(*) FROM gateway_mensagens
+          WHERE direcao = 'saida' AND estado IN ('pendente', 'transmitindo')",
+    )?;
+    let entradas = contar(
+        "SELECT COUNT(*) FROM gateway_mensagens
+          WHERE direcao = 'entrada' AND estado IN ('pendente', 'processando')",
+    )?;
+    let falhas = contar(
+        "SELECT COUNT(*) FROM gateway_mensagens
+          WHERE direcao = 'saida' AND estado = 'falhou' AND momento_ms >= strftime('%s', 'now') * 1000 - 86400000",
+    )?;
+    Ok(format!(
+        "Gateway (Discord): {adaptador}; {saidas} saída(s) na fila, {entradas} mensagem(ns) do \
+         dono esperando, {falhas} entrega(s) desistida(s) nas últimas 24 h"
+    ))
 }
 
 /// Um ID do Discord ("snowflake"): só dígitos, de 15 a 20.

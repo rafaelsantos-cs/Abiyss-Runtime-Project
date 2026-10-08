@@ -268,6 +268,14 @@ async fn dono_por_dm_conversa_pelo_caminho_do_chat() {
         "system + 1ª pergunta + 1ª resposta + 2ª pergunta"
     );
 
+    // O `abiyss status` (outro processo) vê o adaptador e a fila.
+    let status = abiyss::status::relatorio(&config, &amb.banco).unwrap();
+    assert!(
+        status.contains("Gateway (Discord): adaptador conectado desde"),
+        "{status}"
+    );
+    assert!(status.contains("saída(s) na fila"), "{status}");
+
     // Reconectar: o `ola` diz até onde o kernel já recebeu da DM.
     drop(a);
     let a = Adaptador::conectar(&socket(&config)).await;
