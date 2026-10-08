@@ -35,6 +35,7 @@ from playwright.async_api import TimeoutError as TempoPlaywright
 from pydantic import Field
 
 import config
+from ao_vivo import AoVivo
 from sessoes import INFO_ELEMENTO, MAX_TEXTO_DIGITADO, Navegador, Sessao
 
 log = logging.getLogger("navegador")
@@ -62,12 +63,19 @@ def criar_servidor(cfg: config.Config) -> tuple[MCPServer, Navegador]:
         else "Modo SÓ LEITURA: clicar só segue links; digitar e envio de formulário estão desligados."
     )
 
+    ao_vivo = AoVivo(nav, cfg.ao_vivo_porta) if cfg.ao_vivo_porta else None
+    nav.ao_vivo = ao_vivo
+
     @asynccontextmanager
     async def ciclo(_):
         await nav.iniciar()
+        if ao_vivo:
+            await ao_vivo.iniciar()
         try:
             yield {}
         finally:
+            if ao_vivo:
+                await ao_vivo.fechar()
             await nav.encerrar()
 
     servidor = MCPServer("navegador", lifespan=ciclo)

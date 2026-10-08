@@ -151,6 +151,7 @@ No `abiyss.toml`: `[navegador] interagir` (acima) e a tabela `env` do item
 | `NAVEGADOR_MAX_CAPTURAS` | 50 | PNGs guardados em `workspace/navegador/` (os mais velhos saem) |
 | `NAVEGADOR_SANDBOX` | auto | sandbox do Chromium: `auto` tenta e, se não der, sobe sem (aviso no journal); `sim` exige; `nao` desliga |
 | `NAVEGADOR_CHROMIUM` | (o do Playwright) | caminho de outro executável do Chromium |
+| `NAVEGADOR_AO_VIVO_PORTA` | 0 | visão ao vivo (abaixo); 0 = desligada |
 | `NAVEGADOR_EXCECOES_REDE_LOCAL` | (vazio) | `ip:porta` internos liberados — **só para testes** |
 
 O servidor recusa subir se o prazo + 10 s passar do `timeout_segundos` do
@@ -206,6 +207,18 @@ A unit limita o cgroup inteiro (daemon + todos os servidores MCP) a
 sessões simples ~65 tarefas. Somado ao terminal (até 64 por comando, 2 ao
 mesmo tempo) dá para chegar perto do teto; se o Chromium falhar com "Resource
 temporarily unavailable", aumente o `TasksMax` da unit.
+
+## Visão ao vivo (opcional)
+
+`NAVEGADOR_AO_VIVO_PORTA = "8790"` liga uma página que mostra a captura de
+cada sessão aberta, renovada a cada 1,5 s. Só ver (nada de clique ou tecla),
+só em 127.0.0.1, com um token sorteado a cada subida (no journal:
+`journalctl -u abiyss | grep "visão ao vivo"`). Da sua máquina:
+
+```bash
+ssh -L 8790:127.0.0.1:8790 ubuntu@<vm>
+# abra a URL do journal: http://127.0.0.1:8790/?t=<token>
+```
 
 ## Testes
 

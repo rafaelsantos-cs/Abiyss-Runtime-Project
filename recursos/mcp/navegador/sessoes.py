@@ -194,6 +194,7 @@ class Navegador:
         self._sem_sessoes_desde = time.monotonic()
         self._tarefa: asyncio.Task | None = None
         self._tmp = cfg.pasta_dados / "tmp" / str(os.getpid())
+        self.ao_vivo = None  # ao_vivo.AoVivo, se ligado
 
     # -- ciclo de vida -------------------------------------------------------
 
