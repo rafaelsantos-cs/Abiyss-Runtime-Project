@@ -1,0 +1,23 @@
+[project]
+name = "abiyss-mcp-navegador"
+version = "0.1.0"
+description = "Servidor MCP navegador do Abiyss: o nível agêntico do navegador (Chromium sem tela pelo Playwright), com saída em texto"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+    "playwright>=1.56,<2",
+]
+
+[dependency-groups]
+# Só para os testes (`uv run pytest`). O kernel sobe com `--no-dev`.
+dev = [
+    "pytest>=8",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só um script com dependências.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

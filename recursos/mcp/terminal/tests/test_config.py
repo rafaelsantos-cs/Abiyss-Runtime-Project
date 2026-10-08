@@ -181,6 +181,7 @@ def test_alcanca_ve_nome_exato_e_curinga_largo():
     assert alcanca(["web_rapido__ler_pagina"], "web_rapido")
     assert alcanca(["*"], "web_rapido") and alcanca(["web*"], "web_rapido")
     assert not alcanca(["terminal__*", "ler_arquivo"], "web_rapido")
+    assert alcanca(["nav*"], "navegador") and not alcanca(["web_rapido__*"], "navegador")
 
 
 @pytest.mark.anyio
@@ -190,7 +191,11 @@ async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
     dados = tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())
     pasta = "recursos/mcp/" + PASTA_SERVIDOR.name
     meu = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == pasta)
-    web = next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == "recursos/mcp/web_rapido")
+    # As mãos que leem a web: a leitura rápida e o navegador (Chromium).
+    webs = [
+        next(s["nome"] for s in dados["mcp"]["servidores"] if s.get("diretorio") == f"recursos/mcp/{p}")
+        for p in ("web_rapido", "navegador")
+    ]
     async with Client(servidor.criar_servidor(fazer_config(), ambiente_falso())) as cliente:
         nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
     assert nomes
@@ -203,4 +208,5 @@ async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
         # mandar ler um arquivo (ou rodar um programa) e buscar uma URL do
         # atacante com o conteúdo (docs/LIMITES.md).
         if any(permitida(lista, nome) for nome in nomes):
-            assert not alcanca(lista, web), f"{nivel}: terminal e {web} no mesmo nível"
+            for web in webs:
+                assert not alcanca(lista, web), f"{nivel}: terminal e {web} no mesmo nível"

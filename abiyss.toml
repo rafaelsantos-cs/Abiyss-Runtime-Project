@@ -443,12 +443,13 @@ max_notas_relacionadas = 8
 # Sub-agentes (executados pelo daemon). Cada um roda com contexto limpo,
 # ferramentas do seu nível e orçamento próprio; nunca cria outro sub-agente
 # (delegar/status/cancelar não são dadas a eles, independente desta lista).
-# As mãos (servidores MCP terminal, web_rapido e ambiente) entram por aqui:
-# é pela delegação que o heartbeat as usa. Ler a web e rodar comandos NUNCA
-# ficam no mesmo nível: uma página poderia mandar o sub-agente ler um arquivo
-# (ou rodar um programa) e buscar uma URL do atacante com o conteúdo
-# (docs/LIMITES.md). Pesquisa na web: ultra ou low. Comandos: medium. O low
-# continua só de leitura (sem escrever_arquivo e sem o terminal).
+# As mãos (servidores MCP terminal, web_rapido, navegador e ambiente) entram
+# por aqui: é pela delegação que o heartbeat as usa. Ler a web e rodar
+# comandos NUNCA ficam no mesmo nível: uma página poderia mandar o sub-agente
+# ler um arquivo (ou rodar um programa) e buscar uma URL do atacante com o
+# conteúdo (docs/LIMITES.md). Pesquisa na web: ultra ou low. O navegador
+# (Chromium) só no ultra. Comandos: medium. O low continua só de leitura
+# (sem escrever_arquivo e sem o terminal).
 # ---------------------------------------------------------------------------
 
 [subagentes]
@@ -469,7 +470,7 @@ esforco_padrao = "high"
 esforco_maximo = "ultra"
 ferramentas = [
   "ler_arquivo", "listar_arquivos", "escrever_arquivo", "exemplo__*",
-  "web_rapido__*", "ambiente__*",
+  "web_rapido__*", "navegador__*", "ambiente__*",
 ]
 
 [subagentes.medium]
@@ -605,6 +606,52 @@ AMBIENTE_SERVICOS = "abiyss.service, docker.service"
 AMBIENTE_MAX_LINHAS_DIARIO = "100"
 AMBIENTE_TIMEOUT_COMANDO = "10"        # systemctl/journalctl; + 5 s ≤ timeout_segundos
 AMBIENTE_MAX_BYTES = "30000"           # por resposta (o diário guarda as linhas mais novas)
+
+[[mcp.servidores]]
+# navegador: o nível agêntico do navegador. Um Chromium sem tela
+# (Playwright) dirigido por um sub-agente (só o ultra), com saída em texto
+# (o instantâneo da página, com referências para clicar). Mesmas regras de
+# rede do web_rapido, também em cada redirecionamento e em cada pedido que
+# a página faz. Sessões anônimas, sem downloads; modo só leitura por padrão
+# ([navegador] logo abaixo). Instalação e limites em
+# recursos/mcp/navegador/README.md.
+#
+# DESLIGADO por padrão: o kernel mede a árvore inteira (uv, Python, o driver
+# do Playwright e o Chromium) contra [mcp] max_memoria_mb, e 512 MiB não
+# cabem (o servidor recusa subir e diz por quê). Para ligar: instale o
+# Chromium (README), ponha [mcp] max_memoria_mb = 1024 e ativo = true.
+nome = "navegador"
+comando = "uv"
+args = ["run", "--frozen", "--quiet", "--no-dev", "servidor.py"]
+diretorio = "recursos/mcp/navegador"
+# O servidor recusa subir se NAVEGADOR_PRAZO_SEGUNDOS + 10 s não couber aqui.
+timeout_segundos = 90
+ativo = false
+
+[mcp.servidores.env]
+# Limites (valores SEMPRE entre aspas). O servidor confere que cabem nos do
+# kernel: NAVEGADOR_MEMORIA_MB + NAVEGADOR_RESERVA_SERVIDOR_MB ≤ [mcp]
+# max_memoria_mb, e o instantâneo + 8 KiB ≤ [mcp] max_bytes_resultado.
+NAVEGADOR_PRAZO_SEGUNDOS = "80"           # por chamada
+NAVEGADOR_TIMEOUT_CARREGAMENTO = "30"     # carregar uma página; + 10 s ≤ o prazo
+NAVEGADOR_TIMEOUT_ACAO = "10"             # clicar, digitar, capturar
+NAVEGADOR_MAX_SESSOES = "2"               # sessões (contextos anônimos) ao mesmo tempo
+NAVEGADOR_MAX_PAGINAS = "3"               # abas por sessão
+NAVEGADOR_SESSAO_OCIOSA_SEGUNDOS = "600"  # sessão parada fecha sozinha
+NAVEGADOR_MAX_TEXTO_BYTES = "40000"       # instantâneo por resposta; o resto em partes
+NAVEGADOR_MEMORIA_MB = "768"              # árvore do Chromium; passou, é morta
+NAVEGADOR_RESERVA_SERVIDOR_MB = "256"     # uv + Python + driver do Playwright
+NAVEGADOR_SANDBOX = "auto"                # sandbox do Chromium: auto, sim ou nao (README)
+NAVEGADOR_AO_VIVO_PORTA = "0"             # ver as sessões em 127.0.0.1:<porta> (0 = desligado)
+
+# Modo do navegador (é do dono; o servidor lê ao subir).
+#   interagir = false  só leitura: navegar, ler, rolar, voltar, abas, capturar
+#                      a tela e clicar em LINKS. Nada é digitado ou enviado.
+#   interagir = true   digitar e enviar formulários, mas nunca para outra
+#                      origem (formulário ou POST). Uma página maliciosa
+#                      recebe o que for digitado NELA (docs/LIMITES.md).
+[navegador]
+interagir = false
 
 # ---------------------------------------------------------------------------
 # Banco (SQLite).

@@ -110,7 +110,8 @@ async def test_subagentes_recebem_as_ferramentas(fazer_config, anyio_backend):
     async with Client(servidor.criar_servidor(fazer_config())[0]) as cliente:
         nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
     assert nomes
-    # A web fica com o ultra e o low; o medium (que roda comandos) não lê a web.
+    # A web fica com o ultra e o low; o medium (que roda comandos) não lê a
+    # web. (O navegador, a outra mão que lê a web, tem o mesmo teste.)
     for nivel in ("ultra", "medium", "low"):
         lista = dados["subagentes"][nivel]["ferramentas"]
         for nome in nomes:
