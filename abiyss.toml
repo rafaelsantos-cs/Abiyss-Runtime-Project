@@ -621,13 +621,15 @@ cache_kib = 2048
 # roda na hora). Detalhe mais velho que N dias vira agregado diário (dia
 # UTC) e é apagado: chamadas_modelo → chamadas_modelo_diarias, eventos JÁ
 # consumidos → eventos_diarios (pendentes nunca são apagados), ciclos →
-# ciclos_diarios. Mínimo de 2 dias (status e interocepção leem as últimas 24 h).
+# ciclos_diarios, mensagens do gateway já terminadas → gateway_mensagens_diarias
+# (as da fila e as ligadas a um pedido pendente ficam). Mínimo de 2 dias (status e interocepção leem as últimas 24 h).
 # ---------------------------------------------------------------------------
 
 [retencao]
 chamadas_modelo_dias = 30
 eventos_dias = 30
 ciclos_dias = 30
+gateway_dias = 30
 # Retenção + vacuum incremental.
 manutencao_minutos = 360
 # Checkpoint do WAL (o arquivo -wal é truncado; teto de 64 MiB entre checkpoints).

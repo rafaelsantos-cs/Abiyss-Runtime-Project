@@ -6,7 +6,9 @@
 //! - `chamadas_modelo` → `chamadas_modelo_diarias`;
 //! - `fila_eventos` (só eventos JÁ CONSUMIDOS; pendente nunca é apagado)
 //!   → `eventos_diarios`;
-//! - `ciclos` → `ciclos_diarios`.
+//! - `ciclos` → `ciclos_diarios`;
+//! - `gateway_mensagens` (só as que já terminaram: nada na fila, nada
+//!   ligado a um pedido ainda pendente) → `gateway_mensagens_diarias`.
 //!
 //! Os dias são dias UTC inteiros: um dia só é agregado quando ele inteiro
 //! já passou do limite, e cada dia é agregado numa transação própria
@@ -32,6 +34,8 @@ pub struct ConfigRetencao {
     pub eventos_dias: u32,
     /// Dias de detalhe em `ciclos`.
     pub ciclos_dias: u32,
+    /// Dias de detalhe das mensagens do gateway (Discord) já terminadas.
+    pub gateway_dias: u32,
     /// Intervalo entre rodadas de retenção + vacuum incremental.
     pub manutencao_minutos: u64,
     /// Intervalo entre checkpoints do WAL.
@@ -50,6 +54,7 @@ impl Default for ConfigRetencao {
             chamadas_modelo_dias: 30,
             eventos_dias: 30,
             ciclos_dias: 30,
+            gateway_dias: 30,
             manutencao_minutos: 360,
             checkpoint_minutos: 15,
             vacuum_max_paginas: 2_000,
@@ -66,6 +71,7 @@ impl ConfigRetencao {
             ("chamadas_modelo_dias", self.chamadas_modelo_dias),
             ("eventos_dias", self.eventos_dias),
             ("ciclos_dias", self.ciclos_dias),
+            ("gateway_dias", self.gateway_dias),
         ] {
             if dias < 2 {
                 anyhow::bail!("retencao.{nome} precisa ser pelo menos 2");
@@ -85,16 +91,19 @@ pub struct RelatorioRetencao {
     pub chamadas_apagadas: usize,
     pub eventos_apagados: usize,
     pub ciclos_apagados: usize,
+    pub gateway_apagadas: usize,
 }
 
 impl RelatorioRetencao {
     pub fn como_texto(&self) -> String {
         format!(
-            "{} dia(s) agregado(s); apagadas {} chamada(s), {} evento(s), {} ciclo(s)",
+            "{} dia(s) agregado(s); apagadas {} chamada(s), {} evento(s), {} ciclo(s), \
+             {} mensagem(ns) do gateway",
             self.dias_agregados,
             self.chamadas_apagadas,
             self.eventos_apagados,
-            self.ciclos_apagados
+            self.ciclos_apagados,
+            self.gateway_apagadas
         )
     }
 }
@@ -197,6 +206,27 @@ const AGREGAR_CICLOS: &str = "
 const APAGAR_CICLOS: &str = "
     DELETE FROM ciclos WHERE inicio_ms >= ?1 AND inicio_ms < ?2";
 
+/// Mensagens do gateway que ainda servem: na fila (entrada esperando a
+/// conversa, saída esperando entrega) ou ligadas a um pedido pendente (o
+/// "responder" do dono no Discord precisa achar a mensagem do pedido).
+const GATEWAY_TERMINADAS: &str = "
+    estado NOT IN ('pendente', 'processando', 'transmitindo')
+    AND (pedido_id IS NULL
+         OR pedido_id NOT IN (SELECT id FROM pedidos_usuario WHERE estado = 'pendente'))";
+
+const AGREGAR_GATEWAY: &str = "
+    INSERT INTO gateway_mensagens_diarias (dia, direcao, tipo, estado, mensagens)
+    SELECT ?1, direcao, tipo, estado, COUNT(*)
+      FROM gateway_mensagens
+     WHERE momento_ms >= ?2 AND momento_ms < ?3 AND GATEWAY_TERMINADAS
+     GROUP BY direcao, tipo, estado
+    ON CONFLICT (dia, direcao, tipo, estado) DO UPDATE SET
+        mensagens = mensagens + excluded.mensagens";
+
+const APAGAR_GATEWAY: &str = "
+    DELETE FROM gateway_mensagens
+     WHERE momento_ms >= ?1 AND momento_ms < ?2 AND GATEWAY_TERMINADAS";
+
 /// Agrega e apaga tudo que passou da retenção. Idempotente: rodar de novo
 /// sem linhas velhas não muda nada.
 pub fn aplicar_retencao(
@@ -223,6 +253,22 @@ pub fn aplicar_retencao(
     let limite = limite_ms(agora_ms, config.ciclos_dias);
     for dia in dias_antes_de(banco, "ciclos", "inicio_ms", "", limite)? {
         relatorio.ciclos_apagados += agregar_dia(banco, dia, AGREGAR_CICLOS, APAGAR_CICLOS)?;
+        dias_tocados.insert(dia);
+    }
+
+    // Os ids do Discord de cada mensagem saem junto (ON DELETE CASCADE).
+    let limite = limite_ms(agora_ms, config.gateway_dias);
+    let terminadas = format!("AND {GATEWAY_TERMINADAS}");
+    let agregar = AGREGAR_GATEWAY.replace("GATEWAY_TERMINADAS", GATEWAY_TERMINADAS);
+    let apagar = APAGAR_GATEWAY.replace("GATEWAY_TERMINADAS", GATEWAY_TERMINADAS);
+    for dia in dias_antes_de(
+        banco,
+        "gateway_mensagens",
+        "momento_ms",
+        &terminadas,
+        limite,
+    )? {
+        relatorio.gateway_apagadas += agregar_dia(banco, dia, &agregar, &apagar)?;
         dias_tocados.insert(dia);
     }
 

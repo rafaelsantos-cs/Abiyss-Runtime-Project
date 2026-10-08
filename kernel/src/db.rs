@@ -323,6 +323,50 @@ const MIGRACOES: &[&str] = &[
     ALTER TABLE chamadas_modelo ADD COLUMN esforco_confirmado INTEGER;
     ALTER TABLE subagentes ADD COLUMN esforco TEXT;
     "#,
+    // 15 (v0.2, gateway) — registro das mensagens do gateway (Discord): uma
+    // linha por mensagem lógica, nos dois sentidos. É também a fila: entrada
+    // `pendente` espera a vez da conversa; saída `pendente` espera o
+    // adaptador confirmar a entrega. `gateway_ids_discord` liga cada
+    // mensagem do Discord (uma resposta longa vira várias) à linha lógica:
+    // é por ela que um "responder" no Discord acha o pedido certo. A
+    // retenção agrega o detalhe velho em `gateway_mensagens_diarias`.
+    r#"
+    CREATE TABLE gateway_mensagens (
+        id             INTEGER PRIMARY KEY,
+        momento_ms     INTEGER NOT NULL,
+        direcao        TEXT    NOT NULL,
+        tipo           TEXT    NOT NULL,
+        estado         TEXT    NOT NULL,
+        canal_id       TEXT,
+        autor_id       TEXT,
+        discord_id     TEXT,
+        responde_a     TEXT,
+        pedido_id      INTEGER,
+        conteudo       TEXT,
+        origem_externa TEXT,
+        tentativas     INTEGER NOT NULL DEFAULT 0,
+        tentativa_ms   INTEGER,
+        concluido_ms   INTEGER
+    );
+    CREATE INDEX idx_gateway_fila ON gateway_mensagens(direcao, estado, id);
+    CREATE INDEX idx_gateway_momento ON gateway_mensagens(momento_ms);
+    CREATE INDEX idx_gateway_pedido ON gateway_mensagens(pedido_id);
+    CREATE UNIQUE INDEX idx_gateway_entrada_discord
+        ON gateway_mensagens(discord_id) WHERE direcao = 'entrada';
+    CREATE TABLE gateway_ids_discord (
+        discord_id  TEXT    PRIMARY KEY,
+        mensagem_id INTEGER NOT NULL REFERENCES gateway_mensagens(id) ON DELETE CASCADE
+    );
+    CREATE INDEX idx_gateway_ids_mensagem ON gateway_ids_discord(mensagem_id);
+    CREATE TABLE gateway_mensagens_diarias (
+        dia       TEXT    NOT NULL,
+        direcao   TEXT    NOT NULL,
+        tipo      TEXT    NOT NULL,
+        estado    TEXT    NOT NULL,
+        mensagens INTEGER NOT NULL,
+        PRIMARY KEY (dia, direcao, tipo, estado)
+    );
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é
