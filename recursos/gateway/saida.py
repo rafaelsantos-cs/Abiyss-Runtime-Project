@@ -4,7 +4,13 @@ O lado Discord de verdade fica em ``discordio`` (discord.py). Aqui só há a
 lógica, que os testes exercitam com um Discord de mentira:
 
 - ``Ritmo``: no máximo uma operação no Discord (enviar, editar) a cada
-  ``intervalo`` segundos;
+  ``intervalo`` segundos (1,2 s), para todas as entregas juntas;
+- ``Transmissao``: a resposta da conversa chegando aos poucos. Uma
+  mensagem "pensando" (``.`` → ``..`` → ``...``) que vira a resposta,
+  editada no ritmo; passou de 2000 caracteres, continua em mensagens
+  novas (``partes.dividir``, sem quebrar blocos de código). Se uma edição
+  falhar, para de editar e, no fim, manda a resposta inteira como
+  mensagem(ns) nova(s) (e tenta apagar as parciais);
 - ``Entregador``: recebe os pedidos do kernel (pela ``Ponte``) e devolve
   os IDs das mensagens criadas.
 
@@ -26,6 +32,7 @@ from partes import dividir
 log = logging.getLogger("abiyss.gateway.saida")
 
 INTERVALO_PADRAO = 1.2
+PENSANDO = (".", "..", "...")
 
 
 class MensagemSaida(Protocol):
@@ -60,17 +67,132 @@ class Ritmo:
         dormir: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.intervalo = intervalo
+        self.relogio = relogio
         self._relogio = relogio
         self._dormir = dormir
         self._ultima: float | None = None
+        # Transmissões e entregas dividem o mesmo ritmo.
+        self._trava = asyncio.Lock()
+
+    async def esperar_um_pouco(self) -> None:
+        """Nada a fazer agora: espera um pedaço do intervalo."""
+        await self._dormir(self.intervalo / 4)
 
     async def vez(self) -> None:
         """Espera a vez da próxima operação (e marca o instante dela)."""
-        if self._ultima is not None:
-            falta = self._ultima + self.intervalo - self._relogio()
-            if falta > 0:
-                await self._dormir(falta)
-        self._ultima = self._relogio()
+        async with self._trava:
+            if self._ultima is not None:
+                falta = self._ultima + self.intervalo - self._relogio()
+                if falta > 0:
+                    await self._dormir(falta)
+            self._ultima = self._relogio()
+
+
+class Transmissao:
+    """Uma resposta sendo escrita: uma mensagem editada no ritmo."""
+
+    def __init__(
+        self,
+        canal: CanalSaida,
+        responder_a: str | None,
+        ritmo: Ritmo,
+        relogio: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.canal = canal
+        self.responder_a = responder_a
+        self.ritmo = ritmo
+        self._relogio = relogio
+        self.texto = ""
+        self.mensagens: list[MensagemSaida] = []
+        self.mostrado: list[str] = []
+        self.edicao_falhou = False
+        self._inicio = relogio()
+        self._tarefa: asyncio.Task[None] | None = None
+
+    async def comecar(self) -> None:
+        """Manda o "pensando" e começa a acompanhar o texto."""
+        try:
+            await self.ritmo.vez()
+            m = await self.canal.enviar(PENSANDO[0], self.responder_a)
+            self.mensagens, self.mostrado = [m], [PENSANDO[0]]
+        except Exception as e:  # noqa: BLE001 — sem a mensagem, o fim manda tudo de uma vez
+            log.warning("não consegui mandar o \"pensando\": %s", e)
+            self.edicao_falhou = True
+            return
+        self._tarefa = asyncio.create_task(self._acompanhar())
+
+    def atualizar(self, texto: str) -> None:
+        """O texto inteiro até agora (vazio = pensando). Só guarda: quem
+        edita é o acompanhamento, no ritmo."""
+        self.texto = texto
+
+    def _alvo(self) -> list[str]:
+        if not self.texto.strip():
+            quadro = int((self._relogio() - self._inicio) / self.ritmo.intervalo) % len(PENSANDO)
+            return [PENSANDO[quadro]]
+        return dividir(self.texto)
+
+    async def _acompanhar(self) -> None:
+        while not self.edicao_falhou:
+            alvo = self._alvo()
+            if alvo != self.mostrado[: len(alvo)]:
+                try:
+                    await self._mostrar(alvo, apagar_sobras=False)
+                except Exception as e:  # noqa: BLE001 — para de editar; o fim manda tudo de novo
+                    log.warning("edição recusada pelo Discord (%s): a resposta vai inteira no fim", e)
+                    self.edicao_falhou = True
+            else:
+                await self.ritmo.esperar_um_pouco()
+
+    async def _mostrar(self, alvo: list[str], apagar_sobras: bool) -> None:
+        """Deixa as mensagens com os pedaços de ``alvo`` (uma operação por vez, no ritmo)."""
+        for i, parte in enumerate(alvo):
+            if i < len(self.mensagens):
+                if self.mostrado[i] != parte:
+                    await self.ritmo.vez()
+                    await self.mensagens[i].editar(parte)
+                    self.mostrado[i] = parte
+            else:
+                await self.ritmo.vez()
+                self.mensagens.append(await self.canal.enviar(parte, None))
+                self.mostrado.append(parte)
+        if apagar_sobras:
+            while len(self.mensagens) > len(alvo):
+                sobra = self.mensagens.pop()
+                self.mostrado.pop()
+                await self.ritmo.vez()
+                await sobra.apagar()
+
+    async def terminar(self, texto: str) -> list[str]:
+        """O texto final. Devolve os IDs das mensagens que ficam."""
+        self.texto = texto
+        if self._tarefa is not None:
+            self._tarefa.cancel()
+            try:
+                await self._tarefa
+            except asyncio.CancelledError:
+                pass
+        alvo = dividir(texto or "(vazio)")
+        if not self.edicao_falhou:
+            try:
+                await self._mostrar(alvo, apagar_sobras=True)
+                return [str(m.id) for m in self.mensagens]
+            except Exception as e:  # noqa: BLE001 — cai para mensagens novas
+                log.warning("edição final recusada (%s): mandando a resposta inteira", e)
+        # Plano B: a resposta inteira em mensagem(ns) nova(s); as parciais
+        # (se houver) saem, se der.
+        for m in self.mensagens:
+            try:
+                await m.apagar()
+            except Exception:  # noqa: BLE001 — sobrou um "..." no canal: só estética
+                pass
+        self.mensagens, self.mostrado = [], []
+        ids = []
+        for i, parte in enumerate(alvo):
+            await self.ritmo.vez()
+            m = await self.canal.enviar(parte, self.responder_a if i == 0 else None)
+            ids.append(str(m.id))
+        return ids
 
 
 class Entregador:
@@ -83,6 +205,7 @@ class Entregador:
         self.mensageiro = mensageiro
         self._ola = ola
         self.ritmo = ritmo or Ritmo()
+        self.transmissoes: dict[int, Transmissao] = {}
 
     async def _canal(self, canal_id: str | None) -> CanalSaida:
         if canal_id is not None:
@@ -93,8 +216,25 @@ class Entregador:
 
     async def processar(self, pedido: dict[str, Any]) -> list[str] | None:
         tipo = pedido.get("tipo")
+        ref = pedido.get("ref")
         if tipo == "enviar":
             return await self.enviar(pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""))
+        if tipo == "resposta_inicio":
+            canal = await self._canal(pedido.get("canal_id"))
+            t = Transmissao(canal, pedido.get("responder_a"), self.ritmo, self.ritmo.relogio)
+            self.transmissoes[ref] = t
+            await t.comecar()
+            return None
+        if tipo == "resposta_parcial":
+            if (t := self.transmissoes.get(ref)) is not None:
+                t.atualizar(pedido.get("texto", ""))
+            return None
+        if tipo == "resposta_fim":
+            t = self.transmissoes.pop(ref, None)
+            if t is None:
+                # O adaptador reconectou no meio: vale como `enviar`.
+                return await self.enviar(pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""))
+            return await t.terminar(pedido.get("texto", ""))
         log.warning("pedido desconhecido do kernel: %s", tipo)
         return None
 

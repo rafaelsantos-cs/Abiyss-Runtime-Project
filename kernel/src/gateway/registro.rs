@@ -213,11 +213,21 @@ pub fn nova_saida(banco: &Banco, nova: &NovaSaida<'_>, agora: i64) -> anyhow::Re
     Ok(conexao.last_insert_rowid())
 }
 
-/// Atualiza o texto de uma saída (e o estado).
-pub fn atualizar_saida(banco: &Banco, id: i64, conteudo: &str, estado: &str) -> anyhow::Result<()> {
+/// O turno terminou: a resposta fica `pendente` com o texto final. Se o
+/// fim da transmissão já foi mandado ao adaptador (`mandado_em`), isso conta
+/// como uma tentativa (a entrega só repete sem confirmação no prazo).
+pub fn finalizar_transmissao(
+    banco: &Banco,
+    id: i64,
+    conteudo: &str,
+    mandado_em: Option<i64>,
+) -> anyhow::Result<()> {
     banco.conexao().execute(
-        "UPDATE gateway_mensagens SET conteudo = ?1, estado = ?2 WHERE id = ?3",
-        params![conteudo, estado, id],
+        "UPDATE gateway_mensagens
+            SET conteudo = ?1, estado = 'pendente',
+                tentativas = tentativas + (?2 IS NOT NULL), tentativa_ms = ?2
+          WHERE id = ?3 AND estado = 'transmitindo'",
+        params![conteudo, mandado_em, id],
     )?;
     Ok(())
 }

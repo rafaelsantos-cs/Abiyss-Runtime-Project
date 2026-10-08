@@ -13,7 +13,14 @@
 //!   fora do ar;
 //! - `recebido {id, estado}`: a mensagem foi gravada (ou ignorada);
 //! - `enviar {ref, canal_id, responder_a, texto}`: entregar uma mensagem
-//!   (`canal_id` nulo = DM do dono). Confirmar com `enviado`.
+//!   (`canal_id` nulo = DM do dono). Confirmar com `enviado`;
+//! - `resposta_inicio {ref, canal_id, responder_a}`, `resposta_parcial
+//!   {ref, texto}` e `resposta_fim {ref, texto}`: a resposta da conversa
+//!   chegando aos poucos. `texto` é sempre o texto INTEIRO até ali (vazio =
+//!   pensando). O adaptador edita uma mensagem só, no ritmo dele;
+//!   confirmar o `resposta_fim {ref, canal_id, responder_a, texto}` com
+//!   `enviado`. Um `resposta_fim` de uma `ref` que o adaptador não conhece
+//!   (reconectou no meio) vale como `enviar`.
 
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +70,26 @@ pub enum ParaAdaptador {
         estado: String,
     },
     Enviar {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        canal_id: Option<String>,
+        responder_a: Option<String>,
+        texto: String,
+    },
+    RespostaInicio {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        canal_id: Option<String>,
+        responder_a: Option<String>,
+    },
+    RespostaParcial {
+        #[serde(rename = "ref")]
+        referencia: i64,
+        texto: String,
+    },
+    /// Repete o destino: um adaptador que reconectou no meio (não conhece
+    /// a `ref`) entrega como um `enviar`.
+    RespostaFim {
         #[serde(rename = "ref")]
         referencia: i64,
         canal_id: Option<String>,

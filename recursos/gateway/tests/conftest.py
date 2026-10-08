@@ -27,6 +27,58 @@ class RelogioFalso:
         await asyncio.sleep(0)
 
 
+class RelogioVirtual:
+    """Tempo virtual de verdade: quem dorme espera o teste fazer o relógio
+    andar (``avancar``), e acorda na ordem e no instante certos."""
+
+    def __init__(self) -> None:
+        self.agora = 1000.0
+        self._dormindo: list[tuple[float, int, asyncio.Future[None]]] = []
+        self._seq = 0
+
+    def __call__(self) -> float:
+        return self.agora
+
+    async def dormir(self, segundos: float) -> None:
+        if segundos <= 0:
+            await asyncio.sleep(0)
+            return
+        import heapq
+
+        futuro = asyncio.get_running_loop().create_future()
+        self._seq += 1
+        heapq.heappush(self._dormindo, (self.agora + segundos, self._seq, futuro))
+        await futuro
+
+    @staticmethod
+    async def _assentar() -> None:
+        for _ in range(50):
+            await asyncio.sleep(0)
+
+    async def avancar(self, segundos: float) -> None:
+        import heapq
+
+        alvo = self.agora + segundos
+        await self._assentar()
+        while self._dormindo and self._dormindo[0][0] <= alvo:
+            instante, _, futuro = heapq.heappop(self._dormindo)
+            self.agora = max(self.agora, instante)
+            if not futuro.done():
+                futuro.set_result(None)
+            await self._assentar()
+        self.agora = alvo
+        await self._assentar()
+
+    async def ate_terminar(self, coro, passo: float = 0.1):
+        """Roda ``coro`` fazendo o relógio andar até ela terminar."""
+        tarefa = asyncio.ensure_future(coro)
+        for _ in range(100_000):
+            if tarefa.done():
+                return tarefa.result()
+            await self.avancar(passo)
+        raise AssertionError("não terminou no tempo virtual")
+
+
 class MensagemFalsa:
     def __init__(self, canal: "CanalFalso", id: int, texto: str, responder_a: str | None) -> None:
         self.canal = canal
@@ -66,7 +118,7 @@ class CanalFalso:
 
 
 class DiscordFalso:
-    def __init__(self, relogio: RelogioFalso) -> None:
+    def __init__(self, relogio: "RelogioFalso | RelogioVirtual") -> None:
         self.relogio = relogio
         self.proximo_id = 9000
         self.falhar_edicoes = False
@@ -91,6 +143,11 @@ def relogio() -> RelogioFalso:
 @pytest.fixture
 def discord_falso(relogio: RelogioFalso) -> DiscordFalso:
     return DiscordFalso(relogio)
+
+
+@pytest.fixture
+def virtual() -> RelogioVirtual:
+    return RelogioVirtual()
 
 
 class DaemonFalso:

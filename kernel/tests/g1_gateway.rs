@@ -108,6 +108,39 @@ impl Adaptador {
         }
     }
 
+    /// Espera uma resposta da conversa (`resposta_inicio` ... `resposta_fim`),
+    /// confirma a entrega com `ids` e devolve o destino (do início) com o
+    /// texto final (do fim) e as parciais que vieram no meio.
+    async fn resposta(&mut self, ids: &[&str]) -> Value {
+        let inicio = self.esperar("resposta_inicio").await;
+        let mut parciais = Vec::new();
+        let fim = loop {
+            let v = if let Some(i) = self
+                .guardadas
+                .iter()
+                .position(|v| v["ref"] == inicio["ref"] && v["tipo"] != "resposta_inicio")
+            {
+                self.guardadas.remove(i).unwrap()
+            } else {
+                let v = self.ler().await;
+                if v["ref"] != inicio["ref"] {
+                    self.guardadas.push_back(v);
+                    continue;
+                }
+                v
+            };
+            match v["tipo"].as_str() {
+                Some("resposta_parcial") => parciais.push(v["texto"].clone()),
+                Some("resposta_fim") => break v,
+                _ => panic!("inesperado no meio da resposta: {v}"),
+            }
+        };
+        self.mandar(json!({"tipo": "enviado", "ref": fim["ref"], "ids": ids}))
+            .await;
+        json!({"ref": fim["ref"], "canal_id": inicio["canal_id"], "responder_a": inicio["responder_a"],
+               "texto": fim["texto"], "parciais": parciais})
+    }
+
     /// Espera um `enviar`, confirma a entrega com `ids` e devolve a linha.
     async fn receber_e_confirmar(&mut self, ids: &[&str]) -> Value {
         let e = self.esperar("enviar").await;
@@ -175,7 +208,7 @@ async fn dono_por_dm_conversa_pelo_caminho_do_chat() {
         a.mensagem(dm_do_dono("1001", "oi, tudo bem?")).await,
         "recebida"
     );
-    let e = a.receber_e_confirmar(&["9001"]).await;
+    let e = a.resposta(&["9001"]).await;
     assert_eq!(e["texto"], "mock: oi, tudo bem?");
     assert_eq!(e["responder_a"], "1001");
     assert_eq!(e["canal_id"], Value::Null, "resposta de DM vai para a DM");
@@ -225,7 +258,7 @@ async fn dono_por_dm_conversa_pelo_caminho_do_chat() {
 
     // A segunda mensagem continua a MESMA conversa.
     a.mensagem(dm_do_dono("1002", "e agora?")).await;
-    a.receber_e_confirmar(&["9002"]).await;
+    a.resposta(&["9002"]).await;
     let mensagens = amb.mock.requisicoes()[1].corpo["messages"]
         .as_array()
         .unwrap()
@@ -304,7 +337,7 @@ async fn estranhos_bots_e_outros_canais_nao_falam_como_dono() {
     let dono_no_canal = json!({"id": "2005", "canal_id": CANAL, "dm": false, "autor_id": DONO,
                                "menciona_bot": true, "texto": "e aí?"});
     assert_eq!(a.mensagem(dono_no_canal).await, "recebida");
-    let e = a.receber_e_confirmar(&["9005"]).await;
+    let e = a.resposta(&["9005"]).await;
     assert_eq!(e["canal_id"], CANAL);
     assert_eq!(e["texto"], "mock: e aí?");
 }
@@ -335,11 +368,11 @@ async fn mensagens_que_chegam_ocupado_ficam_na_fila_e_nenhuma_se_perde() {
     assert!(ajuda["texto"].as_str().unwrap().contains("/pedidos"));
 
     portao.add_permits(1);
-    let primeira = a.receber_e_confirmar(&["9001"]).await;
+    let primeira = a.resposta(&["9001"]).await;
     assert_eq!(primeira["texto"], "primeira resposta");
     assert_eq!(primeira["responder_a"], "3001");
     // As duas da fila viram UM turno, na ordem, respondendo à última.
-    let segunda = a.receber_e_confirmar(&["9002"]).await;
+    let segunda = a.resposta(&["9002"]).await;
     assert_eq!(segunda["texto"], "mock: dois\n\ntrês");
     assert_eq!(segunda["responder_a"], "3003");
     assert_eq!(amb.mock.total_requisicoes(), 2);
@@ -381,11 +414,11 @@ async fn comandos_status_pedidos_e_nova() {
     );
 
     a.mensagem(dm_do_dono("4003", "oi")).await;
-    a.esperar("enviar").await;
+    a.esperar("resposta_fim").await;
     a.mensagem(dm_do_dono("4004", "/nova")).await;
     a.esperar("enviar").await;
     a.mensagem(dm_do_dono("4005", "oi de novo")).await;
-    a.esperar("enviar").await;
+    a.esperar("resposta_fim").await;
     // A conversa nova não leva o histórico da antiga.
     let mensagens = amb.mock.requisicoes()[1].corpo["messages"]
         .as_array()
@@ -438,8 +471,10 @@ async fn saida_espera_o_adaptador_e_turno_interrompido_vira_aviso() {
     // Adaptador cai antes de confirmar: a saída fica pendente e vai de novo
     // na próxima conexão (pelo menos uma vez).
     a.mensagem(dm_do_dono("5002", "oi")).await;
-    let sem_confirmar = a.esperar("enviar").await;
+    let sem_confirmar = a.esperar("resposta_fim").await;
     drop(a);
+    // A transmissão terminou sem confirmação: vira saída pendente comum.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     banco_esquece_tentativa(&amb.banco);
     let mut a = Adaptador::conectar(&socket(&config)).await;
     let de_novo = a.receber_e_confirmar(&["9101"]).await;
@@ -615,10 +650,7 @@ async fn pedidos_vao_por_dm_e_responder_no_discord_responde_aquele_pedido() {
     let comum = json!({"id": "8104", "canal_id": DM, "dm": true, "autor_id": DONO,
                        "responde_a": "8101", "responde_ao_bot": true, "texto": "valeu"});
     assert_eq!(a.mensagem(comum).await, "recebida");
-    assert_eq!(
-        a.receber_e_confirmar(&["8105"]).await["texto"],
-        "mock: valeu"
-    );
+    assert_eq!(a.resposta(&["8105"]).await["texto"], "mock: valeu");
     assert_eq!(
         amb.mock.total_requisicoes(),
         1,
@@ -759,5 +791,48 @@ async fn pedido_respondido_antes_da_entrega_nao_vai_e_resumo_da_manha() {
             "SELECT COUNT(*) FROM gateway_mensagens WHERE tipo = 'resumo'"
         ),
         1
+    );
+}
+
+#[tokio::test]
+async fn resposta_chega_aos_poucos_e_ferramenta_volta_ao_pensando() {
+    let amb = Ambiente::novo().await;
+    let longo = format!("Resposta final. {}", "palavra ".repeat(400));
+    amb.mock.enfileirar(RespostaMock::ferramenta(
+        "listar_arquivos",
+        json!({"caminho": "."}),
+    ));
+    amb.mock.enfileirar(RespostaMock::texto(longo.clone()));
+    let (config, _g, _t) = ligar(&amb).await;
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+    a.mensagem(dm_do_dono("6001", "o que tem no workspace?"))
+        .await;
+    let r = a.resposta(&["9600"]).await;
+    assert_eq!(r["texto"], longo.as_str());
+    assert_eq!(r["responder_a"], "6001");
+    let parciais: Vec<&str> = r["parciais"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    // O pedido de ferramenta mandou o adaptador de volta ao "pensando".
+    assert!(parciais.contains(&""), "{parciais:?}");
+    // Cada parcial é o texto inteiro até ali; o primeiro pedaço vai na hora
+    // e os outros no máximo a cada 250 ms (o mock manda tudo de uma vez).
+    let com_texto: Vec<&&str> = parciais.iter().filter(|p| !p.is_empty()).collect();
+    assert!(!com_texto.is_empty());
+    assert!(com_texto.iter().all(|p| longo.starts_with(**p)));
+    assert!(com_texto.len() < 10, "parciais demais: {}", com_texto.len());
+    // Pelo streaming (o mesmo do `abiyss chat` no terminal).
+    assert_eq!(amb.mock.requisicoes()[0].corpo["stream"], true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        texto(
+            &amb.banco,
+            "SELECT estado || ':' || discord_id FROM gateway_mensagens WHERE direcao = 'saida'"
+        )
+        .as_deref(),
+        Some("entregue:9600")
     );
 }

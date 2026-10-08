@@ -13,7 +13,9 @@
 //! - `conversar`: as mensagens do dono, uma conversa por vez, pelo mesmo
 //!   caminho do `abiyss chat` (`SessaoChat`, esforço do `[chat]`). O que
 //!   chega enquanto um turno roda fica na fila e vira o turno seguinte
-//!   (todas juntas);
+//!   (todas juntas). A resposta vai ao adaptador enquanto é escrita
+//!   (`resposta_inicio`/`parcial`/`fim`, no máximo uma parcial a cada
+//!   `INTERVALO_PARCIAL`); o ritmo das edições no Discord é do adaptador;
 //! - `entregar`: manda as saídas pendentes ao adaptador e espera a
 //!   confirmação (sem confirmação, manda de novo);
 //! - `agendar`: pedidos pendentes por DM (com lembretes limitados) e o
@@ -41,6 +43,7 @@ use crate::daemon::{self, Desfecho};
 use crate::db::Banco;
 use crate::eventos;
 use crate::ferramentas::CaixaDeFerramentas;
+use crate::nim::EventoStream;
 use crate::orquestrador::Orquestrador;
 use crate::tempo::agora_ms;
 
@@ -58,6 +61,9 @@ const PRAZO_OLA: Duration = Duration::from_secs(10);
 /// Mesmo sem aviso, a conversa e a entrega olham a fila de tempos em tempos.
 const REVISAO_CONVERSA: Duration = Duration::from_secs(30);
 const REVISAO_ENTREGA: Duration = Duration::from_secs(5);
+/// No máximo uma `resposta_parcial` a cada tanto (o adaptador edita no
+/// Discord ainda mais devagar; isto só poupa o socket).
+const INTERVALO_PARCIAL: Duration = Duration::from_millis(250);
 
 /// A conexão atual com o adaptador.
 struct Ligacao {
@@ -506,25 +512,41 @@ impl Gateway {
             .map(|e| e.conteudo.as_str())
             .collect::<Vec<_>>()
             .join("\n\n");
-        let (resposta, estado) = match self.pensar(&texto).await {
+        let destino = self.destino(&ultima.canal_id);
+        // A saída nasce `transmitindo`: a entrega normal não a pega até o
+        // turno terminar.
+        let saida = registro::nova_saida(
+            &self.banco,
+            &NovaSaida {
+                tipo: "resposta",
+                estado: "transmitindo",
+                canal_id: destino.as_deref(),
+                responde_a: Some(&ultima.discord_id),
+                pedido_id: None,
+                conteudo: "",
+            },
+            agora_ms(),
+        )?;
+        self.mandar(&ParaAdaptador::RespostaInicio {
+            referencia: saida,
+            canal_id: destino.clone(),
+            responder_a: Some(ultima.discord_id.clone()),
+        });
+        let (resposta, estado) = match self.pensar(&texto, saida).await {
             Ok(r) => (r, "respondida"),
             Err(e) => (format!("⚠ Não consegui responder: {e:#}"), "erro"),
         };
         let ids: Vec<i64> = lote.iter().map(|e| e.id).collect();
         registro::concluir_entradas(&self.banco, &ids, estado, agora_ms())?;
-        let destino = self.destino(&ultima.canal_id);
-        registro::nova_saida(
-            &self.banco,
-            &NovaSaida {
-                tipo: "resposta",
-                estado: "pendente",
-                canal_id: destino.as_deref(),
-                responde_a: Some(&ultima.discord_id),
-                pedido_id: None,
-                conteudo: &resposta,
-            },
-            agora_ms(),
-        )?;
+        // Adaptador fora do ar (ou que caiu no meio): a resposta fica
+        // pendente e vai como `enviar` quando ele voltar.
+        let mandado = self.mandar(&ParaAdaptador::RespostaFim {
+            referencia: saida,
+            canal_id: destino,
+            responder_a: Some(ultima.discord_id.clone()),
+            texto: resposta.clone(),
+        });
+        registro::finalizar_transmissao(&self.banco, saida, &resposta, mandado.then(agora_ms))?;
         self.acordar_entrega.notify_one();
         Ok(())
     }
@@ -553,11 +575,37 @@ impl Gateway {
         Ok(sessao)
     }
 
-    /// O turno de conversa, com tempo máximo e pânico isolado.
-    async fn pensar(&self, texto: &str) -> anyhow::Result<String> {
+    /// O turno de conversa, com tempo máximo e pânico isolado. O texto vai
+    /// ao adaptador enquanto chega (saída `saida`).
+    async fn pensar(&self, texto: &str, saida: i64) -> anyhow::Result<String> {
         let mut sessao = self.sessao()?;
         let limite = Duration::from_secs(self.config.gateway.max_duracao_turno_segundos);
-        match daemon::supervisionar(limite, sessao.enviar(texto, None)).await {
+        let mut parcial = String::new();
+        let mut ultima: Option<std::time::Instant> = None;
+        let mut ao_receber = |evento: EventoStream| {
+            let forcar = match evento {
+                EventoStream::Texto(t) => {
+                    parcial.push_str(&t);
+                    false
+                }
+                // Nova rodada de ferramentas: o texto anterior não é a
+                // resposta; o adaptador volta ao "pensando".
+                EventoStream::InicioFerramenta(_) => {
+                    parcial.clear();
+                    true
+                }
+                EventoStream::Raciocinio(_) => return,
+            };
+            if forcar || ultima.is_none_or(|u| u.elapsed() >= INTERVALO_PARCIAL) {
+                self.mandar(&ParaAdaptador::RespostaParcial {
+                    referencia: saida,
+                    texto: parcial.clone(),
+                });
+                // Depois de voltar ao "pensando", o primeiro texto vai na hora.
+                ultima = (!forcar).then(std::time::Instant::now);
+            }
+        };
+        match daemon::supervisionar(limite, sessao.enviar(texto, Some(&mut ao_receber))).await {
             Desfecho::Ok(Ok(r)) if r.texto.trim().is_empty() => Ok("(resposta vazia)".into()),
             Desfecho::Ok(Ok(r)) => Ok(r.texto),
             Desfecho::Ok(Err(e)) => Err(e),
