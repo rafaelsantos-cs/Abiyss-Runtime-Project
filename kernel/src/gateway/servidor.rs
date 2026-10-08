@@ -50,6 +50,7 @@ use crate::tempo::agora_ms;
 use super::agenda;
 use super::comandos::{self, CHAVE_CONVERSA};
 use super::confianca::{self, MensagemDiscord, Remetente};
+use super::ocultar::Ocultador;
 use super::protocolo::{DoAdaptador, MAX_LINHA, ParaAdaptador, VERSAO};
 use super::registro::{self, NovaEntrada, NovaSaida};
 
@@ -82,6 +83,8 @@ pub struct Gateway {
     acordar_conversa: Notify,
     acordar_entrega: Notify,
     ocupado: AtomicBool,
+    /// Todo texto que sai passa por ele (ver `mandar`).
+    ocultador: Ocultador,
 }
 
 /// Apaga o arquivo do socket quando o gateway para.
@@ -110,6 +113,7 @@ impl Gateway {
             acordar_conversa: Notify::new(),
             acordar_entrega: Notify::new(),
             ocupado: AtomicBool::new(false),
+            ocultador: Ocultador::do_ambiente(),
         })
     }
 
@@ -164,6 +168,7 @@ impl Gateway {
                     responde_a: Some(&e.discord_id),
                     pedido_id: None,
                     conteudo: aviso,
+                    anexo: None,
                 },
                 agora_ms(),
             ) {
@@ -179,12 +184,54 @@ impl Gateway {
     }
 
     /// Manda uma linha ao adaptador, se houver um conectado e a fila dele
-    /// tiver espaço. Nunca espera.
+    /// tiver espaço. Nunca espera. É o ÚNICO caminho até o adaptador: todo
+    /// texto passa aqui pelo ocultador de segredos e pelo teto de tamanho.
     fn mandar(&self, mensagem: &ParaAdaptador) -> bool {
+        let linha = self.preparar(mensagem.clone()).linha();
         let ligacao = self.ligacao.lock().unwrap_or_else(|e| e.into_inner());
         match ligacao.as_ref() {
-            Some(l) => l.linhas.try_send(mensagem.linha()).is_ok(),
+            Some(l) => l.linhas.try_send(linha).is_ok(),
             None => false,
+        }
+    }
+
+    /// O texto como pode sair: sem segredos e dentro do teto.
+    fn preparar(&self, mensagem: ParaAdaptador) -> ParaAdaptador {
+        let max = self.config.gateway.max_caracteres_saida;
+        let pronto = |t: String| cortar_saida(&self.ocultador.ocultar(&t), max);
+        match mensagem {
+            ParaAdaptador::Enviar {
+                referencia,
+                canal_id,
+                responder_a,
+                texto,
+                anexo,
+            } => ParaAdaptador::Enviar {
+                referencia,
+                canal_id,
+                responder_a,
+                texto: pronto(texto),
+                anexo,
+            },
+            ParaAdaptador::RespostaFim {
+                referencia,
+                canal_id,
+                responder_a,
+                texto,
+            } => ParaAdaptador::RespostaFim {
+                referencia,
+                canal_id,
+                responder_a,
+                texto: pronto(texto),
+            },
+            // Ainda chegando: a última palavra espera se completar.
+            ParaAdaptador::RespostaParcial { referencia, texto } => {
+                ParaAdaptador::RespostaParcial {
+                    referencia,
+                    texto: cortar_saida(&self.ocultador.ocultar_parcial(&texto), max),
+                }
+            }
+            outra => outra,
         }
     }
 
@@ -304,6 +351,12 @@ impl Gateway {
             canal_id: g.canal().map(str::to_string),
             ultimo_dm,
             ultimo_canal,
+            workspace: self
+                .config
+                .caminho_workspace()
+                .canonicalize()?
+                .display()
+                .to_string(),
         })
     }
 
@@ -345,6 +398,9 @@ impl Gateway {
     /// no `recebido`.
     pub fn receber(&self, m: &MensagemDiscord) -> anyhow::Result<&'static str> {
         let agora = agora_ms();
+        let cortada = cortar_entrada(m, self.config.gateway.max_caracteres_entrada);
+        let m = &cortada;
+        let g = &self.config.gateway;
         let nova = |tipo, estado, conteudo, origem_externa| NovaEntrada {
             mensagem: m,
             tipo,
@@ -373,6 +429,20 @@ impl Gateway {
                 })
             }
             Remetente::Externo { origem } => {
+                let no_minuto =
+                    registro::entradas_desde(&self.banco, &["externo"], agora - 60_000)?;
+                if no_minuto >= g.max_externas_por_minuto {
+                    let gravada = registro::registrar_entrada(
+                        &self.banco,
+                        &nova("limitado", "limitada", None, Some(&origem)),
+                        agora,
+                    )?;
+                    return Ok(if gravada.is_some() {
+                        "limitado"
+                    } else {
+                        "duplicado"
+                    });
+                }
                 let gravada = registro::registrar_entrada(
                     &self.banco,
                     &nova("externo", "externa", Some(&m.texto), Some(&origem)),
@@ -414,6 +484,33 @@ impl Gateway {
             origem_externa: None,
             pedido_id: None,
         };
+        // Teto por minuto (rajada, script, conta comprometida): registrada,
+        // sem resposta; um aviso por minuto.
+        let desde = agora - 60_000;
+        let tipos_do_dono = ["dono", "comando", "resposta_pedido"];
+        if registro::entradas_desde(&self.banco, &tipos_do_dono, desde)?
+            >= self.config.gateway.max_entrada_por_minuto
+        {
+            let ja_avisou = registro::entradas_desde(&self.banco, &["limitado"], desde)? > 0;
+            if registro::registrar_entrada(&self.banco, &nova("limitado", "limitada"), agora)?
+                .is_none()
+            {
+                return Ok("duplicado");
+            }
+            if !ja_avisou {
+                self.responder(
+                    m,
+                    "aviso",
+                    &format!(
+                        "⚠ Mais de {} mensagens em um minuto: esta e as próximas deste minuto \
+                         ficam registradas, mas sem resposta. Espere um pouco e mande de novo.",
+                        self.config.gateway.max_entrada_por_minuto
+                    ),
+                    None,
+                )?;
+            }
+            return Ok("limitado");
+        }
         // "Responder" numa mensagem de pedido: é a resposta àquele pedido.
         if let Some(citada) = &m.responde_a
             && let Some(saida) = registro::saida_do_discord(&self.banco, citada)?
@@ -434,7 +531,7 @@ impl Gateway {
                 ),
                 Err(e) => format!("Não registrei a resposta: {e:#}"),
             };
-            self.responder(m, "comando", &texto)?;
+            self.responder(m, "comando", &texto, None)?;
             return Ok("resposta_pedido");
         }
         if let Some(comando) = comandos::interpretar(&m.texto) {
@@ -443,9 +540,10 @@ impl Gateway {
             {
                 return Ok("duplicado");
             }
-            let texto = comandos::executar(comando, &self.config, &self.banco)
-                .unwrap_or_else(|e| format!("Não consegui executar o comando: {e:#}"));
-            self.responder(m, "comando", &texto)?;
+            let resposta = comandos::executar(comando, &self.config, &self.banco)
+                .unwrap_or_else(|e| format!("Não consegui executar o comando: {e:#}").into());
+            let anexo = resposta.anexo.map(|c| c.display().to_string());
+            self.responder(m, "comando", &resposta.texto, anexo.as_deref())?;
             return Ok("comando");
         }
         if registro::registrar_entrada(&self.banco, &nova("dono", "pendente"), agora)?.is_none() {
@@ -460,7 +558,13 @@ impl Gateway {
     }
 
     /// Põe na fila de saída uma resposta direta a `m` (no mesmo lugar).
-    fn responder(&self, m: &MensagemDiscord, tipo: &str, texto: &str) -> anyhow::Result<i64> {
+    fn responder(
+        &self,
+        m: &MensagemDiscord,
+        tipo: &str,
+        texto: &str,
+        anexo: Option<&str>,
+    ) -> anyhow::Result<i64> {
         let destino = self.destino(&m.canal_id);
         let id = registro::nova_saida(
             &self.banco,
@@ -471,6 +575,7 @@ impl Gateway {
                 responde_a: Some(&m.id),
                 pedido_id: None,
                 conteudo: texto,
+                anexo,
             },
             agora_ms(),
         )?;
@@ -524,6 +629,7 @@ impl Gateway {
                 responde_a: Some(&ultima.discord_id),
                 pedido_id: None,
                 conteudo: "",
+                anexo: None,
             },
             agora_ms(),
         )?;
@@ -582,6 +688,9 @@ impl Gateway {
         let limite = Duration::from_secs(self.config.gateway.max_duracao_turno_segundos);
         let mut parcial = String::new();
         let mut ultima: Option<std::time::Instant> = None;
+        // O que o adaptador já viu (sem segredos e sem a palavra incompleta):
+        // parcial que não muda isso nem gasta a vez.
+        let mut visivel = String::new();
         let mut ao_receber = |evento: EventoStream| {
             let forcar = match evento {
                 EventoStream::Texto(t) => {
@@ -596,14 +705,20 @@ impl Gateway {
                 }
                 EventoStream::Raciocinio(_) => return,
             };
-            if forcar || ultima.is_none_or(|u| u.elapsed() >= INTERVALO_PARCIAL) {
-                self.mandar(&ParaAdaptador::RespostaParcial {
-                    referencia: saida,
-                    texto: parcial.clone(),
-                });
-                // Depois de voltar ao "pensando", o primeiro texto vai na hora.
-                ultima = (!forcar).then(std::time::Instant::now);
+            if !forcar && ultima.is_some_and(|u| u.elapsed() < INTERVALO_PARCIAL) {
+                return;
             }
+            let novo = self.ocultador.ocultar_parcial(&parcial);
+            if !forcar && novo == visivel {
+                return;
+            }
+            self.mandar(&ParaAdaptador::RespostaParcial {
+                referencia: saida,
+                texto: parcial.clone(),
+            });
+            visivel = novo;
+            // Depois de voltar ao "pensando", o primeiro texto vai na hora.
+            ultima = (!forcar).then(std::time::Instant::now);
         };
         match daemon::supervisionar(limite, sessao.enviar(texto, Some(&mut ao_receber))).await {
             Desfecho::Ok(Ok(r)) if r.texto.trim().is_empty() => Ok("(resposta vazia)".into()),
@@ -657,7 +772,17 @@ impl Gateway {
 
     fn entregar_pendentes(&self) -> anyhow::Result<()> {
         let agora = agora_ms();
-        for s in registro::saidas_a_entregar(&self.banco, agora, 50)? {
+        // Teto por minuto: o que não couber espera a próxima volta.
+        let feitas = registro::entregas_desde(&self.banco, agora - 60_000)?;
+        let cabem = self
+            .config
+            .gateway
+            .max_saida_por_minuto
+            .saturating_sub(feitas);
+        if cabem == 0 {
+            return Ok(());
+        }
+        for s in registro::saidas_a_entregar(&self.banco, agora, cabem)? {
             if let Some(pedido) = s.pedido_id
                 && !agenda::pedido_ainda_pendente(&self.banco, pedido)?
             {
@@ -669,6 +794,7 @@ impl Gateway {
                 canal_id: s.canal_id,
                 responder_a: s.responde_a,
                 texto: s.conteudo,
+                anexo: s.anexo,
             };
             if !self.mandar(&mensagem) {
                 break;
@@ -677,6 +803,32 @@ impl Gateway {
         }
         Ok(())
     }
+}
+
+/// O texto que sai, no teto (com aviso do corte).
+fn cortar_saida(texto: &str, max: usize) -> String {
+    let total = texto.chars().count();
+    if total <= max {
+        return texto.to_string();
+    }
+    let mut t: String = texto.chars().take(max).collect();
+    t.push_str(&format!(
+        "\n…(cortado: a resposta tinha {total} caracteres; a inteira está no histórico da conversa)"
+    ));
+    t
+}
+
+/// A mensagem que chegou, com o texto no teto (com aviso do corte).
+fn cortar_entrada(m: &MensagemDiscord, max: usize) -> MensagemDiscord {
+    let mut m = m.clone();
+    let total = m.texto.chars().count();
+    if total > max {
+        m.texto = m.texto.chars().take(max).collect();
+        m.texto.push_str(&format!(
+            "\n…(mensagem cortada pelo gateway: tinha {total} caracteres)"
+        ));
+    }
+    m
 }
 
 /// Abre o socket: só o usuário do daemon alcança (pasta 0700 se fomos nós

@@ -836,3 +836,147 @@ async fn resposta_chega_aos_poucos_e_ferramenta_volta_ao_pensando() {
         Some("entregue:9600")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Segurança: segredos, tetos e arquivos só do workspace.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn segredos_nao_saem_nem_na_resposta_que_chega_aos_poucos() {
+    let amb = Ambiente::novo().await;
+    let chave = format!("nvapi-{}", "Zx9".repeat(12));
+    let texto_modelo = format!(
+        "Achei a config: password=hunter2 e a chave {chave}. A URL é \
+         https://admin:s3nh4@db.local/x e o resto está ok. {}",
+        "fim ".repeat(50)
+    );
+    amb.mock.enfileirar(RespostaMock::texto(texto_modelo));
+    let (config, _g, _t) = ligar(&amb).await;
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+    a.mensagem(dm_do_dono("7001", "mostra a config")).await;
+    let r = a.resposta(&["9700"]).await;
+    let mut tudo = vec![r["texto"].as_str().unwrap().to_string()];
+    tudo.extend(
+        r["parciais"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string()),
+    );
+    for t in &tudo {
+        for segredo in ["hunter2", chave.as_str(), "s3nh4", "admin:"] {
+            assert!(!t.contains(segredo), "vazou {segredo}: {t}");
+        }
+    }
+    assert!(tudo[0].contains("password=*** e a chave ***"));
+    assert!(tudo[0].contains("https://***@db.local/x"));
+}
+
+#[tokio::test]
+async fn tetos_de_tamanho_e_por_minuto() {
+    let amb = Ambiente::novo().await;
+    amb.mock.enfileirar(RespostaMock::texto("r".repeat(3000)));
+    let mut config = config_gateway(&amb);
+    config.gateway.pedidos_por_dm = false;
+    config.gateway.max_caracteres_entrada = 50;
+    config.gateway.max_caracteres_saida = 500;
+    config.gateway.max_entrada_por_minuto = 3;
+    config.gateway.max_saida_por_minuto = 4;
+    let g = gateway(&amb, &config);
+    let _t = tokio::spawn(g.rodar());
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+
+    // Entrada grande: o modelo recebe cortada, com aviso.
+    a.mensagem(dm_do_dono("7101", &"e".repeat(200))).await;
+    let r = a.resposta(&["9701"]).await;
+    let pergunta = amb.mock.requisicoes()[0].corpo["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(pergunta.starts_with(&"e".repeat(50)));
+    assert!(pergunta.contains("cortada pelo gateway: tinha 200 caracteres"));
+    // Saída grande: cortada, com aviso (a inteira fica no histórico).
+    let resposta = r["texto"].as_str().unwrap();
+    assert!(resposta.starts_with(&"r".repeat(500)));
+    assert!(resposta.contains("tinha 3000 caracteres"));
+    assert!(resposta.chars().count() < 700);
+
+    // Por minuto: 3 do dono valem; a 4ª e a 5ª ficam sem resposta, com UM aviso.
+    assert_eq!(a.mensagem(dm_do_dono("7102", "/ajuda")).await, "comando");
+    assert_eq!(a.mensagem(dm_do_dono("7103", "/ajuda")).await, "comando");
+    assert_eq!(a.mensagem(dm_do_dono("7104", "/ajuda")).await, "limitado");
+    assert_eq!(a.mensagem(dm_do_dono("7105", "/ajuda")).await, "limitado");
+    // Saída por minuto: 4 (a resposta + 3 enviar). Chegam a resposta (já
+    // contada), 2 ajudas e o aviso; nada além disso no minuto.
+    let mut enviados = Vec::new();
+    for _ in 0..3 {
+        enviados.push(a.receber_e_confirmar(&["1"]).await);
+    }
+    let textos: Vec<&str> = enviados
+        .iter()
+        .map(|e| e["texto"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        textos
+            .iter()
+            .filter(|t| t.contains("Mais de 3 mensagens"))
+            .count(),
+        1,
+        "{textos:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(a.guardadas.iter().all(|v| v["tipo"] != "enviar"));
+    assert_eq!(
+        contar(
+            &amb.banco,
+            "SELECT COUNT(*) FROM gateway_mensagens WHERE tipo = 'limitado' AND conteudo = '/ajuda'"
+        ),
+        2,
+        "registradas, não perdidas"
+    );
+}
+
+#[tokio::test]
+async fn arquivo_so_de_dentro_do_workspace() {
+    let amb = Ambiente::novo().await;
+    let (config, _g, _t) = ligar(&amb).await;
+    let workspace = config.caminho_workspace();
+    std::fs::create_dir_all(workspace.join("relatorios")).unwrap();
+    std::fs::write(workspace.join("relatorios/hoje.md"), "# Hoje\n").unwrap();
+    std::fs::write(amb.caminho("segredo.txt"), "não pode sair").unwrap();
+    std::os::unix::fs::symlink(amb.caminho("segredo.txt"), workspace.join("atalho.txt")).unwrap();
+    let mut a = Adaptador::conectar(&socket(&config)).await;
+    let real = workspace.canonicalize().unwrap();
+    assert_eq!(a.ola["workspace"], real.display().to_string());
+
+    a.mensagem(dm_do_dono("7201", "/arquivo relatorios/hoje.md"))
+        .await;
+    let ok = a.receber_e_confirmar(&["9720"]).await;
+    assert_eq!(
+        ok["anexo"],
+        real.join("relatorios/hoje.md").display().to_string()
+    );
+    for (id, pedido) in [
+        ("7202", "../segredo.txt"),
+        ("7203", "atalho.txt"),
+        ("7204", "/etc/passwd"),
+        ("7205", "relatorios"),
+        ("7206", "nao-existe.md"),
+    ] {
+        a.mensagem(dm_do_dono(id, &format!("/arquivo {pedido}")))
+            .await;
+        let e = a.receber_e_confirmar(&["9721"]).await;
+        assert!(e.get("anexo").is_none(), "{pedido}: {e}");
+        assert!(
+            e["texto"]
+                .as_str()
+                .unwrap()
+                .starts_with("Não consegui executar o comando"),
+            "{pedido}: {e}"
+        );
+    }
+}

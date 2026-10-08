@@ -6,6 +6,11 @@
 //! FATOS (quem escreveu, onde, em resposta a quê) e entrega o que o kernel
 //! manda. Todas as decisões de confiança ficam aqui, no kernel.
 //!
+//! Segurança da saída (ver `ocultar` e `servidor`): todo texto passa pelo
+//! ocultador de segredos e pelos tetos de tamanho e de mensagens por minuto
+//! no único caminho até o adaptador; o token do bot só existe no ambiente
+//! do adaptador; arquivo, só de dentro do workspace (`/arquivo`).
+//!
 //! Confiança (ver `confianca`): só mensagens do ID de usuário do dono
 //! (`dono_discord_id`) contam como o dono falando — por DM, ou no canal
 //! permitido (`canal_id`, opcional). Todo o resto é conteúdo externo, e é
@@ -14,6 +19,7 @@
 pub mod agenda;
 pub mod comandos;
 pub mod confianca;
+pub mod ocultar;
 pub mod protocolo;
 pub mod registro;
 #[cfg(unix)]
@@ -58,6 +64,20 @@ pub struct ConfigGateway {
     pub resumo_manha_hora: String,
     /// De quanto em quanto tempo o gateway olha pedidos e o resumo.
     pub verificacao_segundos: u64,
+    /// Mensagem que chega maior que isto é cortada (com aviso no texto).
+    pub max_caracteres_entrada: usize,
+    /// Mensagens do dono por minuto; acima disso, registradas sem resposta
+    /// (um aviso por minuto). Protege contra rajadas e loops.
+    pub max_entrada_por_minuto: usize,
+    /// Mensagens externas (canal permitido) por minuto que viram evento.
+    pub max_externas_por_minuto: usize,
+    /// Texto que sai maior que isto é cortado (o inteiro fica no histórico).
+    pub max_caracteres_saida: usize,
+    /// Mensagens entregues por minuto (as edições da resposta que chega aos
+    /// poucos não contam: o adaptador já as espaça). O resto espera.
+    pub max_saida_por_minuto: usize,
+    /// Maior arquivo do workspace que `/arquivo` manda.
+    pub max_bytes_anexo: u64,
 }
 
 impl Default for ConfigGateway {
@@ -75,6 +95,12 @@ impl Default for ConfigGateway {
             resumo_manha: false,
             resumo_manha_hora: "08:00".into(),
             verificacao_segundos: 30,
+            max_caracteres_entrada: 4000,
+            max_entrada_por_minuto: 20,
+            max_externas_por_minuto: 10,
+            max_caracteres_saida: 12_000,
+            max_saida_por_minuto: 20,
+            max_bytes_anexo: 8 * 1024 * 1024,
         }
     }
 }
@@ -101,6 +127,17 @@ impl ConfigGateway {
         }
         if self.reenviar_apos_horas == 0 || self.verificacao_segundos == 0 {
             bail!("gateway.reenviar_apos_horas e gateway.verificacao_segundos precisam ser > 0");
+        }
+        if self.max_caracteres_entrada == 0
+            || self.max_entrada_por_minuto == 0
+            || self.max_externas_por_minuto == 0
+            || self.max_saida_por_minuto == 0
+            || self.max_bytes_anexo == 0
+        {
+            bail!("gateway: os limites (max_*) precisam ser > 0");
+        }
+        if self.max_caracteres_saida < 500 {
+            bail!("gateway.max_caracteres_saida precisa ser pelo menos 500");
         }
         crate::ritmo::minuto_de_texto(&self.resumo_manha_hora)
             .map_err(|e| anyhow::anyhow!("gateway.resumo_manha_hora: {e:#}"))?;

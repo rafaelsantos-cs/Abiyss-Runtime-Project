@@ -105,10 +105,11 @@ class CanalFalso:
         self.id = id
         self.mensagens: list[MensagemFalsa] = []
 
-    async def enviar(self, texto: str, responder_a: str | None) -> MensagemFalsa:
+    async def enviar(self, texto: str, responder_a: str | None, arquivo: Path | None = None) -> MensagemFalsa:
         assert len(texto.encode("utf-16-le")) // 2 <= 2000, "o Discord recusaria"
         self.discord.proximo_id += 1
         m = MensagemFalsa(self, self.discord.proximo_id, texto, responder_a)
+        m.arquivo = arquivo
         self.mensagens.append(m)
         self.discord.operacoes.append((self.discord.relogio(), "enviar", m.id, texto))
         return m

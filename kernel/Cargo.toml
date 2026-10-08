@@ -25,6 +25,9 @@ fastrand = "2"
 futures = "0.3"
 # Só para matar o grupo de processos de um servidor MCP (kill(-pgid)).
 libc = "0.2"
+# Ocultar segredos no que sai pelo gateway (mesmos padrões do servidor
+# MCP ambiente, recursos/mcp/ambiente/sistema.py).
+regex = "1"
 reqwest = { version = "0.13", features = ["json", "stream"] }
 # SDK oficial do MCP em Rust: só a parte de CLIENTE, com dois transportes:
 # processo filho (stdio) e HTTP "streamable" (servidores remotos, ex.: qmd).

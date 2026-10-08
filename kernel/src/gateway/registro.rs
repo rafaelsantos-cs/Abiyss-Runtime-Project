@@ -48,6 +48,8 @@ pub struct Saida {
     pub pedido_id: Option<i64>,
     pub conteudo: String,
     pub tentativas: i64,
+    /// Caminho real de um arquivo do workspace.
+    pub anexo: Option<String>,
 }
 
 /// O que gravar de uma mensagem que chegou.
@@ -192,14 +194,15 @@ pub struct NovaSaida<'a> {
     pub responde_a: Option<&'a str>,
     pub pedido_id: Option<i64>,
     pub conteudo: &'a str,
+    pub anexo: Option<&'a str>,
 }
 
 pub fn nova_saida(banco: &Banco, nova: &NovaSaida<'_>, agora: i64) -> anyhow::Result<i64> {
     let conexao = banco.conexao();
     conexao.execute(
         "INSERT INTO gateway_mensagens
-           (momento_ms, direcao, tipo, estado, canal_id, responde_a, pedido_id, conteudo)
-         VALUES (?1, 'saida', ?2, ?3, ?4, ?5, ?6, ?7)",
+           (momento_ms, direcao, tipo, estado, canal_id, responde_a, pedido_id, conteudo, anexo)
+         VALUES (?1, 'saida', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             agora,
             nova.tipo,
@@ -207,7 +210,8 @@ pub fn nova_saida(banco: &Banco, nova: &NovaSaida<'_>, agora: i64) -> anyhow::Re
             nova.canal_id,
             nova.responde_a,
             nova.pedido_id,
-            nova.conteudo
+            nova.conteudo,
+            nova.anexo
         ],
     )?;
     Ok(conexao.last_insert_rowid())
@@ -237,7 +241,7 @@ pub fn finalizar_transmissao(
 pub fn saidas_a_entregar(banco: &Banco, agora: i64, limite: usize) -> anyhow::Result<Vec<Saida>> {
     let conexao = banco.conexao();
     let mut consulta = conexao.prepare(
-        "SELECT id, tipo, canal_id, responde_a, pedido_id, conteudo, tentativas
+        "SELECT id, tipo, canal_id, responde_a, pedido_id, conteudo, tentativas, anexo
            FROM gateway_mensagens
           WHERE direcao = 'saida' AND estado = 'pendente'
             AND (tentativa_ms IS NULL OR tentativa_ms <= ?1)
@@ -253,6 +257,7 @@ pub fn saidas_a_entregar(banco: &Banco, agora: i64, limite: usize) -> anyhow::Re
                 pedido_id: l.get(4)?,
                 conteudo: l.get::<_, Option<String>>(5)?.unwrap_or_default(),
                 tentativas: l.get(6)?,
+                anexo: l.get(7)?,
             })
         })?
         .collect::<Result<_, _>>()?;
@@ -321,7 +326,8 @@ pub fn saida_do_discord(banco: &Banco, discord_id: &str) -> anyhow::Result<Optio
     let s = banco
         .conexao()
         .query_row(
-            "SELECT g.id, g.tipo, g.canal_id, g.responde_a, g.pedido_id, g.conteudo, g.tentativas
+            "SELECT g.id, g.tipo, g.canal_id, g.responde_a, g.pedido_id, g.conteudo, g.tentativas,
+                    g.anexo
                FROM gateway_ids_discord i JOIN gateway_mensagens g ON g.id = i.mensagem_id
               WHERE i.discord_id = ?1",
             params![discord_id],
@@ -334,11 +340,40 @@ pub fn saida_do_discord(banco: &Banco, discord_id: &str) -> anyhow::Result<Optio
                     pedido_id: l.get(4)?,
                     conteudo: l.get::<_, Option<String>>(5)?.unwrap_or_default(),
                     tentativas: l.get(6)?,
+                    anexo: l.get(7)?,
                 })
             },
         )
         .optional()?;
     Ok(s)
+}
+
+/// Entradas destes tipos desde `desde` (para os tetos por minuto).
+pub fn entradas_desde(banco: &Banco, tipos: &[&str], desde: i64) -> anyhow::Result<usize> {
+    let marcas = (0..tipos.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT COUNT(*) FROM gateway_mensagens
+          WHERE direcao = 'entrada' AND momento_ms >= ?1 AND tipo IN ({marcas})"
+    );
+    let mut valores: Vec<&dyn rusqlite::ToSql> = vec![&desde];
+    valores.extend(tipos.iter().map(|t| t as &dyn rusqlite::ToSql));
+    let n: i64 = banco
+        .conexao()
+        .query_row(&sql, valores.as_slice(), |l| l.get(0))?;
+    Ok(n as usize)
+}
+
+/// Saídas mandadas ao adaptador desde `desde` (teto por minuto).
+pub fn entregas_desde(banco: &Banco, desde: i64) -> anyhow::Result<usize> {
+    let n: i64 = banco.conexao().query_row(
+        "SELECT COUNT(*) FROM gateway_mensagens WHERE direcao = 'saida' AND tentativa_ms >= ?1",
+        params![desde],
+        |l| l.get(0),
+    )?;
+    Ok(n as usize)
 }
 
 /// Maior ID do Discord já recebido do dono fora do canal permitido (a DM)
@@ -435,6 +470,7 @@ mod testes {
             responde_a: Some("100"),
             pedido_id: Some(3),
             conteudo: "olá",
+            anexo: None,
         };
         let id = nova_saida(&banco, &nova, 1_000_000).unwrap();
         let agora = 2_000_000;

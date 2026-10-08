@@ -117,6 +117,7 @@ pub fn agendar_pedidos(banco: &Banco, config: &ConfigGateway, agora: i64) -> any
                 responde_a: None,
                 pedido_id: Some(p.id),
                 conteudo: &texto,
+                anexo: None,
             },
             agora,
         )?;
@@ -204,6 +205,7 @@ pub fn agendar_resumo(banco: &Banco, config: &ConfigGateway) -> anyhow::Result<b
             responde_a: None,
             pedido_id: None,
             conteudo: &texto,
+            anexo: None,
         },
         agora_ms(),
     )?;

@@ -8,12 +8,13 @@
 //! - `falhou {ref, erro}`: não deu para entregar (o kernel tenta de novo).
 //!
 //! Kernel → adaptador:
-//! - `ola {versao, dono_id, canal_id, ultimo_dm, ultimo_canal}`: quem é o
-//!   dono, qual canal ouvir e de onde buscar o que chegou com o adaptador
-//!   fora do ar;
+//! - `ola {versao, dono_id, canal_id, ultimo_dm, ultimo_canal, workspace}`:
+//!   quem é o dono, qual canal ouvir, de onde buscar o que chegou com o
+//!   adaptador fora do ar e a única pasta de onde sai arquivo;
 //! - `recebido {id, estado}`: a mensagem foi gravada (ou ignorada);
-//! - `enviar {ref, canal_id, responder_a, texto}`: entregar uma mensagem
-//!   (`canal_id` nulo = DM do dono). Confirmar com `enviado`;
+//! - `enviar {ref, canal_id, responder_a, texto, anexo?}`: entregar uma
+//!   mensagem (`canal_id` nulo = DM do dono; `anexo` = arquivo do
+//!   workspace). Confirmar com `enviado`;
 //! - `resposta_inicio {ref, canal_id, responder_a}`, `resposta_parcial
 //!   {ref, texto}` e `resposta_fim {ref, texto}`: a resposta da conversa
 //!   chegando aos poucos. `texto` é sempre o texto INTEIRO até ali (vazio =
@@ -64,6 +65,8 @@ pub enum ParaAdaptador {
         canal_id: Option<String>,
         ultimo_dm: Option<String>,
         ultimo_canal: Option<String>,
+        /// Pasta real do workspace: o adaptador só manda arquivo de dentro dela.
+        workspace: String,
     },
     Recebido {
         id: String,
@@ -75,6 +78,9 @@ pub enum ParaAdaptador {
         canal_id: Option<String>,
         responder_a: Option<String>,
         texto: String,
+        /// Caminho real de um arquivo do workspace para anexar.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        anexo: Option<String>,
     },
     RespostaInicio {
         #[serde(rename = "ref")]
@@ -135,6 +141,7 @@ mod testes {
             canal_id: None,
             responder_a: Some("5".into()),
             texto: "olá".into(),
+            anexo: None,
         }
         .linha();
         let v: serde_json::Value = serde_json::from_str(&linha).unwrap();

@@ -425,6 +425,15 @@ resumo_manha = false
 resumo_manha_hora = "08:00"
 # De quanto em quanto tempo o gateway olha os pedidos e o resumo.
 verificacao_segundos = 30
+# Segurança. Todo texto que sai passa pelo filtro de segredos (os mesmos
+# padrões do servidor ambiente + chaves soltas + os valores das variáveis
+# de ambiente com nome de segredo). Tetos:
+max_caracteres_entrada = 4000      # mensagem maior que chega é cortada
+max_entrada_por_minuto = 20        # do dono; acima disso, sem resposta (com aviso)
+max_externas_por_minuto = 10       # do canal permitido que viram evento
+max_caracteres_saida = 12000       # resposta maior é cortada (inteira no histórico)
+max_saida_por_minuto = 20          # mensagens entregues; o resto espera
+max_bytes_anexo = 8388608          # /arquivo: só de dentro do workspace
 
 # ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).

@@ -17,14 +17,21 @@ lógica, que os testes exercitam com um Discord de mentira:
 Destino: ``canal_id`` nulo é a DM do dono; qualquer outro canal só se for
 o canal permitido que o kernel informou no ``ola`` (defesa em dobro: o
 kernel já só manda para lá).
+
+Arquivo: só de dentro do workspace que o kernel informou no ``ola``,
+conferido de novo aqui (``anexo_seguro``): caminho real, sem link
+simbólico, arquivo comum, até ``MAX_BYTES_ANEXO``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import stat
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from partes import dividir
@@ -32,6 +39,9 @@ from partes import dividir
 log = logging.getLogger("abiyss.gateway.saida")
 
 INTERVALO_PADRAO = 1.2
+# Teto do adaptador para anexos (o do kernel, [gateway] max_bytes_anexo,
+# costuma ser menor; o Discord recusa acima de ~10 MB sem impulso).
+MAX_BYTES_ANEXO = 10 * 1024 * 1024
 PENSANDO = (".", "..", "...")
 
 
@@ -44,7 +54,7 @@ class MensagemSaida(Protocol):
 
 
 class CanalSaida(Protocol):
-    async def enviar(self, texto: str, responder_a: str | None) -> MensagemSaida: ...
+    async def enviar(self, texto: str, responder_a: str | None, arquivo: Path | None = None) -> MensagemSaida: ...
 
 
 class Mensageiro(Protocol):
@@ -55,6 +65,34 @@ class Mensageiro(Protocol):
 
 class ErroDestino(Exception):
     pass
+
+
+class ErroAnexo(Exception):
+    pass
+
+
+def anexo_seguro(caminho: str, workspace: str | None, max_bytes: int = MAX_BYTES_ANEXO) -> Path:
+    """O arquivo, se ele estiver mesmo dentro do workspace. O kernel manda
+    o caminho REAL: qualquer diferença depois de resolver (link simbólico,
+    ``..``) é recusa."""
+    if not workspace:
+        raise ErroAnexo("o kernel não informou o workspace")
+    raiz = Path(workspace).resolve(strict=True)
+    pedido = Path(caminho)
+    if not pedido.is_absolute():
+        raise ErroAnexo("caminho de anexo precisa ser absoluto")
+    try:
+        real = pedido.resolve(strict=True)
+    except OSError:
+        raise ErroAnexo(f"anexo não existe: {caminho}") from None
+    if real != pedido or not real.is_relative_to(raiz):
+        raise ErroAnexo(f"anexo fora do workspace: {caminho}")
+    info = os.stat(real, follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode):
+        raise ErroAnexo(f"anexo não é um arquivo comum: {caminho}")
+    if info.st_size > max_bytes:
+        raise ErroAnexo(f"anexo grande demais ({info.st_size} bytes)")
+    return real
 
 
 class Ritmo:
@@ -218,7 +256,9 @@ class Entregador:
         tipo = pedido.get("tipo")
         ref = pedido.get("ref")
         if tipo == "enviar":
-            return await self.enviar(pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""))
+            return await self.enviar(
+                pedido.get("canal_id"), pedido.get("responder_a"), pedido.get("texto", ""), pedido.get("anexo")
+            )
         if tipo == "resposta_inicio":
             canal = await self._canal(pedido.get("canal_id"))
             t = Transmissao(canal, pedido.get("responder_a"), self.ritmo, self.ritmo.relogio)
@@ -238,13 +278,19 @@ class Entregador:
         log.warning("pedido desconhecido do kernel: %s", tipo)
         return None
 
-    async def enviar(self, canal_id: str | None, responder_a: str | None, texto: str) -> list[str]:
+    async def enviar(
+        self, canal_id: str | None, responder_a: str | None, texto: str, anexo: str | None = None
+    ) -> list[str]:
         """Manda ``texto`` (em quantas mensagens precisar). A primeira
-        responde a ``responder_a``."""
+        responde a ``responder_a`` e leva o anexo, se houver."""
         canal = await self._canal(canal_id)
+        arquivo = anexo_seguro(anexo, (self._ola() or {}).get("workspace")) if anexo else None
         ids: list[str] = []
         for i, parte in enumerate(dividir(texto or "(vazio)")):
             await self.ritmo.vez()
-            m = await canal.enviar(parte, responder_a if i == 0 else None)
+            if i == 0 and arquivo is not None:
+                m = await canal.enviar(parte, responder_a, arquivo)
+            else:
+                m = await canal.enviar(parte, responder_a if i == 0 else None)
             ids.append(str(m.id))
         return ids

@@ -12,7 +12,9 @@ O bot nunca menciona ninguém (``AllowedMentions.none()``): um texto com
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 import discord
@@ -72,7 +74,7 @@ class CanalReal:
     def __init__(self, canal: discord.abc.Messageable) -> None:
         self._canal = canal
 
-    async def enviar(self, texto: str, responder_a: str | None) -> MensagemReal:
+    async def enviar(self, texto: str, responder_a: str | None, arquivo: Path | None = None) -> MensagemReal:
         referencia = None
         if responder_a:
             referencia = discord.MessageReference(
@@ -80,7 +82,19 @@ class CanalReal:
                 channel_id=self._canal.id,
                 fail_if_not_exists=False,
             )
-        m = await self._canal.send(texto, reference=referencia, allowed_mentions=SEM_MENCOES)
+        if arquivo is None:
+            m = await self._canal.send(texto, reference=referencia, allowed_mentions=SEM_MENCOES)
+            return MensagemReal(m)
+        # O caminho já foi conferido (saida.anexo_seguro); O_NOFOLLOW
+        # recusa um link trocado no lugar depois da conferência.
+        fd = os.open(arquivo, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as f:
+            m = await self._canal.send(
+                texto,
+                file=discord.File(f, filename=arquivo.name),
+                reference=referencia,
+                allowed_mentions=SEM_MENCOES,
+            )
         return MensagemReal(m)
 
 

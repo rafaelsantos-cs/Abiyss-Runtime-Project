@@ -367,6 +367,12 @@ const MIGRACOES: &[&str] = &[
         PRIMARY KEY (dia, direcao, tipo, estado)
     );
     "#,
+    // 16 (v0.2, gateway) — anexo de uma saída: caminho REAL de um arquivo
+    // dentro do workspace (o kernel confere ao pôr na fila; o adaptador
+    // confere de novo ao mandar). Nada de fora do workspace sai.
+    r#"
+    ALTER TABLE gateway_mensagens ADD COLUMN anexo TEXT;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é
