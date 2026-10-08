@@ -76,6 +76,10 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
 
 O Abiyss conversar fora do terminal.
 
+> **Discord: feito** (gateway, `docs/GATEWAY.md`): socket Unix no daemon +
+> adaptador em `recursos/gateway/`, pedidos por DM, streaming. Falta o
+> WhatsApp (o mesmo protocolo do socket serve para um segundo adaptador).
+
 - Um processo de canal por plataforma (ou um servidor MCP de canal), falando
   com o kernel pela mesma `SessaoChat` (uma conversa por contato/canal).
 - Identificar o remetente: o usuário (dono) × outras pessoas. Mensagens de
@@ -224,5 +228,5 @@ chat). Hoje tudo é CLI (e, depois de B, os canais).
   diferentes não é detectada; `aguardar` nunca conta.
 - O disjuntor só olha o heartbeat; o chat e os sub-agentes têm só as
   retentativas do orquestrador.
-- Pedidos ao usuário só chegam pela CLI e pelo chat; a entrega ativa
-  (WhatsApp, Discord) fica para a sessão B.
+- Pedidos ao usuário chegam pela CLI, pelo chat e, com o gateway ligado,
+  por DM no Discord; o WhatsApp fica para a sessão B.
