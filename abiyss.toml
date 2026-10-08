@@ -391,6 +391,24 @@ max_pendentes = 10
 expira_apos_horas = 72
 
 # ---------------------------------------------------------------------------
+# Gateway do Discord: o dono conversa com o Abiyss por DM (e, se quiser, num
+# canal), e recebe os pedidos por DM. O daemon abre um socket Unix local
+# (sem porta de rede); quem fala com o Discord é o adaptador em
+# recursos/gateway/ (processo separado, token só por variável de ambiente).
+# Passo a passo em docs/GATEWAY.md.
+# ---------------------------------------------------------------------------
+
+[gateway]
+ativo = false
+# ID de USUÁRIO do dono no Discord (só ele conta como o dono falando).
+dono_discord_id = ""
+# Um canal de servidor onde o Abiyss também escuta (vazio = só DMs). Lá, as
+# mensagens de outras pessoas e de bots são conteúdo EXTERNO.
+canal_id = ""
+# No canal, a mensagem do dono só conta se mencionar o bot ou responder a ele.
+canal_exige_mencao = true
+
+# ---------------------------------------------------------------------------
 # Backup (feito no início de cada sono; `abiyss backup` faz na hora).
 # Vai para <dados>/backups/AAAA-MM-DD/: banco (VACUUM INTO, consistente
 # mesmo com o daemon rodando), cofre, memória central e núcleo. Links
