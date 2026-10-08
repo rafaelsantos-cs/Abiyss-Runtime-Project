@@ -1,9 +1,14 @@
 """Configuração do navegador: prazos, memória e tamanhos que cabem no kernel."""
 
+import shutil
+import tomllib
+
 import pytest
+from mcp import Client
 
 import config
-from conftest import escrever_projeto
+import servidor
+from conftest import PASTA_SERVIDOR, RAIZ_DO_REPOSITORIO, escrever_projeto
 
 
 def test_padroes_cabem_no_kernel(fazer_config, tmp_path):
@@ -86,3 +91,72 @@ def test_excecoes_de_rede_sao_avisadas(fazer_config):
     cfg = fazer_config(NAVEGADOR_EXCECOES_REDE_LOCAL="127.0.0.1:8080, [::1]:9000")
     assert cfg.excecoes_rede == {("127.0.0.1", 8080), ("::1", 9000)}
     assert any("só para testes" in a for a in cfg.avisos)
+
+
+# -- o abiyss.toml versionado ------------------------------------------------------
+
+
+def _servidores() -> list[dict]:
+    return tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())["mcp"]["servidores"]
+
+
+def test_abiyss_toml_do_repositorio_tem_o_navegador(tmp_path):
+    """Registrado, desligado (512 MiB não cabem) e só leitura. Com o limite
+    de memória do kernel aumentado como o README manda, sobe."""
+    (tmp_path / "projeto").mkdir()
+    copia = tmp_path / "projeto" / "abiyss.toml"
+    shutil.copy(RAIZ_DO_REPOSITORIO / "abiyss.toml", copia)
+    dados = tomllib.loads(copia.read_text())
+    item = next(s for s in dados["mcp"]["servidores"] if s["nome"] == "navegador")
+    assert item["diretorio"] == "recursos/mcp/navegador" and "--no-dev" in item["args"]
+    assert item["ativo"] is False
+    assert dados["navegador"]["interagir"] is False
+    assert "NAVEGADOR_EXCECOES_REDE_LOCAL" not in item["env"]
+    env = {"ABIYSS_CONFIG": str(copia), "ABIYSS_MCP_NOME": "navegador"}
+    with pytest.raises(config.ErroConfig, match=r"max_memoria_mb \(512\)"):
+        config.carregar(env)
+    copia.write_text(copia.read_text().replace("max_memoria_mb = 512", "max_memoria_mb = 1024"))
+    cfg = config.carregar(env)
+    assert cfg.interagir is False and cfg.excecoes_rede == frozenset() and cfg.ao_vivo_porta == 0
+    assert cfg.prazo_segundos + config.FOLGA_PRAZO_SEGUNDOS <= cfg.kernel.timeout_segundos
+    assert cfg.workspace == tmp_path / "projeto" / "workspace"
+
+
+def permitida(lista: list[str], nome: str) -> bool:
+    """A regra do kernel (CaixaDeFerramentas::permitida): nome exato, ou
+    prefixo quando o item termina em *."""
+    return any(nome.startswith(p[:-1]) if p.endswith("*") else nome == p for p in lista)
+
+
+def alcanca(lista: list[str], servidor: str) -> bool:
+    """Algum item da lista deixa passar ALGUMA ferramenta do servidor? Um
+    nome com o prefixo dele, ou um curinga que cobre o prefixo ("*", "nav*")."""
+    prefixo = servidor + "__"
+    return any(
+        (p[:-1].startswith(prefixo) or prefixo.startswith(p[:-1])) if p.endswith("*") else p.startswith(prefixo)
+        for p in lista
+    )
+
+
+def test_alcanca_ve_nome_exato_e_curinga_largo():
+    assert alcanca(["terminal__*"], "terminal") and alcanca(["terminal__executar"], "terminal")
+    assert alcanca(["*"], "terminal") and alcanca(["term*"], "terminal")
+    assert not alcanca(["navegador__*", "ler_arquivo"], "terminal")
+
+
+@pytest.mark.anyio
+async def test_navegador_so_no_ultra_e_nunca_com_o_terminal(fazer_config, anyio_backend):
+    """Só o ultra dirige o Chromium. Nenhum nível tem o navegador e o
+    terminal juntos: uma página mandaria rodar um programa sobre o workspace
+    e levaria o resultado para fora (docs/LIMITES.md)."""
+    dados = tomllib.loads((RAIZ_DO_REPOSITORIO / "abiyss.toml").read_text())
+    meu = next(s["nome"] for s in _servidores() if s.get("diretorio") == "recursos/mcp/" + PASTA_SERVIDOR.name)
+    terminal = next(s["nome"] for s in _servidores() if s.get("diretorio") == "recursos/mcp/terminal")
+    async with Client(servidor.criar_servidor(fazer_config())[0]) as cliente:
+        nomes = [meu + "__" + f.name for f in (await cliente.list_tools()).tools]
+    assert len(nomes) == 9
+    for nivel, lista in ((n, dados["subagentes"][n]["ferramentas"]) for n in ("ultra", "medium", "low")):
+        for nome in nomes:
+            assert permitida(lista, nome) is (nivel == "ultra"), (nivel, nome)
+        if alcanca(lista, meu):
+            assert not alcanca(lista, terminal), f"{nivel}: {meu} e {terminal} no mesmo nível"
