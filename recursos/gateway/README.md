@@ -3,8 +3,10 @@
 Adaptador do Discord do Abiyss: um processo separado do daemon. Ele leva as
 mensagens do Discord ao daemon e entrega o que o daemon manda. **Não decide
 nada sobre confiança**: só relata fatos (IDs, DM ou canal, bot ou não,
-menção, reply). Quem decide se é o dono falando é o kernel
-(`kernel/src/gateway/confianca.rs`).
+menção, reply). Quem decide o nível de quem fala (dono, pessoa conhecida ou
+canal, resto) é o kernel (`kernel/src/gateway/confianca.rs`). O adaptador
+só ouve DMs e os canais que o kernel lista no `ola`, e só manda DM ao dono,
+a pessoas conhecidas ou a quem mandou DM ao bot na última hora.
 
 ```
 Discord ⇄ adaptador.py (discord.py) ⇄ socket Unix local ⇄ daemon (kernel)

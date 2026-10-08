@@ -421,14 +421,15 @@ Com `[gateway] ativo = true`, o daemon abre um socket Unix local
 `recursos/gateway/` (outro serviço do systemd, com o token do bot só no
 ambiente dele) liga esse socket ao Discord:
 
-- o dono conversa por DM (ou num canal permitido) pelo mesmo caminho do
-  `abiyss chat`, com a resposta aparecendo aos poucos numa mensagem editada;
-- só o ID de usuário do dono fala como dono; outras pessoas e bots no canal
-  permitido são conteúdo externo; o resto é ignorado;
-- pedidos (E9) chegam por DM e um "Responder" no Discord responde àquele
-  pedido; comandos `/status`, `/pedidos`, `/nova`, `/arquivo`;
-- o loop principal nunca espera o gateway; adaptador fora do ar = mensagens
-  esperando na fila do banco.
+- três níveis: o **dono** (conversa completa, comandos, pedidos); **pessoas
+  conhecidas** e quem fala nos **canais permitidos** (só conversa, contexto
+  mínimo sem nada privado do dono, ferramentas restritas, menor prioridade
+  do cérebro, limites por pessoa); **o resto**, ignorado;
+- a resposta aparece aos poucos numa mensagem editada;
+- pedidos (E9) chegam ao dono por DM e um "Responder" no Discord responde
+  àquele pedido; comandos `/status`, `/pedidos`, `/nova`, `/arquivo`;
+- o loop principal nunca espera o gateway, e o dono nunca espera atrás das
+  conversas de outras pessoas.
 
 Desenho, passo a passo (bot, intents, token, IDs), a unit do adaptador e o
 que conferir na VM: [`docs/GATEWAY.md`](docs/GATEWAY.md).
@@ -569,7 +570,9 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
   para uma URL. O raciocínio e o que continua possível estão em
   [`docs/LIMITES.md`](docs/LIMITES.md).
 - **Gateway do Discord**: só o ID do dono fala como dono (o kernel decide,
-  não o adaptador); todo texto que sai passa pelo filtro de segredos (os
+  não o adaptador); outras pessoas só conversam, sem a memória do dono e
+  sem ferramentas que escrevem, rodam comandos, delegam ou respondem por
+  ele, e o que dizem de si fica marcado como externo; todo texto que sai passa pelo filtro de segredos (os
   padrões do servidor `ambiente` + chaves soltas + valores das variáveis
   secretas do ambiente) e pelos tetos de tamanho e por minuto; o token do
   bot só existe no ambiente do adaptador; arquivo só sai de dentro do
