@@ -18,6 +18,7 @@ pub mod esforco;
 pub mod eventos;
 pub mod ferramentas;
 pub mod frontmatter;
+pub mod gateway;
 pub mod goals;
 pub mod heartbeat;
 pub mod hermes;

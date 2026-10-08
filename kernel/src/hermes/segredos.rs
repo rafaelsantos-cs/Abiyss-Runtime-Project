@@ -69,7 +69,7 @@ pub fn caminho_parece_segredo(caminho_relativo: &str) -> bool {
 }
 
 /// Começos conhecidos de chaves de API (o resto precisa ser longo).
-const PREFIXOS_DE_CHAVE: &[&str] = &[
+pub(crate) const PREFIXOS_DE_CHAVE: &[&str] = &[
     "nvapi-",
     "sk-",
     "sk_live_",
@@ -86,7 +86,7 @@ const PREFIXOS_DE_CHAVE: &[&str] = &[
     "AIza",
 ];
 /// Quantos caracteres, no mínimo, depois do prefixo.
-const MIN_CARACTERES_DEPOIS_DO_PREFIXO: usize = 16;
+pub(crate) const MIN_CARACTERES_DEPOIS_DO_PREFIXO: usize = 16;
 
 /// O texto parece conter um segredo? Devolve o TIPO (nunca o valor).
 pub fn parece_conter_segredo(texto: &str) -> Option<&'static str> {

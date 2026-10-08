@@ -22,6 +22,7 @@ comando (`abiyss ...`); não há painel web.
 3. [Configuração](#configuração)
 4. [Comandos da CLI](#comandos-da-cli)
 5. [Daemon com systemd](#daemon-com-systemd)
+   — inclui o [gateway do Discord](#gateway-do-discord)
 6. [Testar sem gastar cota (mock do NIM)](#testar-sem-gastar-cota-mock-do-nim)
    — inclui o [teste de resistência](#teste-de-resistência-soak)
 7. [Desenvolvimento](#desenvolvimento)
@@ -52,6 +53,7 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/memoria/               ← cofre (Obsidian), propostas, sleep, busca (qmd/texto), memória central
   src/hermes/                ← importador do Hermes (simulação, idempotente, sem segredos)
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
+recursos/gateway/            ← adaptador do Discord (discord.py), processo próprio ligado ao daemon por socket Unix
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
 cofre/                       ← memória de longo prazo (fora do git; criada sozinha)
   01_internal/               ← pessoas, preferências, auto-modelo, diário, procedimentos
@@ -412,6 +414,26 @@ journalctl -u abiyss -f
 - Fora do systemd (rodando `abiyss daemon` à mão), os avisos `sd_notify`
   simplesmente não acontecem.
 
+### Gateway do Discord
+
+Com `[gateway] ativo = true`, o daemon abre um socket Unix local
+(`data/gateway/abiyss.sock`, sem porta de rede) e o adaptador em
+`recursos/gateway/` (outro serviço do systemd, com o token do bot só no
+ambiente dele) liga esse socket ao Discord:
+
+- três níveis: o **dono** (conversa completa, comandos, pedidos); **pessoas
+  conhecidas** e quem fala nos **canais permitidos** (só conversa, contexto
+  mínimo sem nada privado do dono, ferramentas restritas, menor prioridade
+  do cérebro, limites por pessoa); **o resto**, ignorado;
+- a resposta aparece aos poucos numa mensagem editada;
+- pedidos (E9) chegam ao dono por DM e um "Responder" no Discord responde
+  àquele pedido; comandos `/status`, `/pedidos`, `/nova`, `/arquivo`;
+- o loop principal nunca espera o gateway, e o dono nunca espera atrás das
+  conversas de outras pessoas.
+
+Desenho, passo a passo (bot, intents, token, IDs), a unit do adaptador e o
+que conferir na VM: [`docs/GATEWAY.md`](docs/GATEWAY.md).
+
 ### Um dia do Abiyss
 
 O daemon cuida sozinho do ciclo de 24 h. Tudo é decidido por código (sem
@@ -547,6 +569,14 @@ poucos genéricos e comentários em português explicando o que não é óbvio.
   consegue mandar o mesmo sub-agente rodar um programa e enviar o resultado
   para uma URL. O raciocínio e o que continua possível estão em
   [`docs/LIMITES.md`](docs/LIMITES.md).
+- **Gateway do Discord**: só o ID do dono fala como dono (o kernel decide,
+  não o adaptador); outras pessoas só conversam, sem a memória do dono e
+  sem ferramentas que escrevem, rodam comandos, delegam ou respondem por
+  ele, e o que dizem de si fica marcado como externo; todo texto que sai passa pelo filtro de segredos (os
+  padrões do servidor `ambiente` + chaves soltas + valores das variáveis
+  secretas do ambiente) e pelos tetos de tamanho e por minuto; o token do
+  bot só existe no ambiente do adaptador; arquivo só sai de dentro do
+  workspace. Detalhes em [`docs/GATEWAY.md`](docs/GATEWAY.md).
 - **Identidade**: as regras do kernel (nome Abiyss, nunca Hermes nem humano)
   ficam no código e vêm antes do núcleo editável.
 

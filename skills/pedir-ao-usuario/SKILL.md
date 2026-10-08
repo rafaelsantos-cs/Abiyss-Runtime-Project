@@ -42,7 +42,9 @@ outro jeito.
 
 ## Quando ele responde
 
-- Pela CLI, a resposta chega como evento no ciclo autônomo.
+- Pela CLI, ou com "Responder" na DM do pedido no Discord (o gateway manda
+  cada pedido por DM, com lembretes limitados), a resposta chega como
+  evento no ciclo autônomo.
 - Na conversa, se ele responder a um pedido pendente (listados no
   contexto), registre com `responder_pedido`, nas palavras dele. Depois
   siga a conversa normalmente.

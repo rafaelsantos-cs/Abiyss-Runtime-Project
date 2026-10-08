@@ -261,6 +261,10 @@ pub fn relatorio(config: &Config, banco: &Banco) -> anyhow::Result<String> {
         writeln!(t, "  #{} [{}] {}", p.id, p.urgencia, p.pergunta)?;
     }
 
+    if config.gateway.ativo {
+        writeln!(t, "{}", crate::gateway::resumo_status(banco)?)?;
+    }
+
     // Goals
     let contagem = goals::contar_por_estado(banco)?;
     let partes: Vec<String> = contagem

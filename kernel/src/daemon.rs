@@ -17,7 +17,10 @@
 //! - A cada `retencao.checkpoint_minutos`: checkpoint do WAL.
 //! - A cada `retencao.manutencao_minutos`: retenção (detalhe antigo vira
 //!   agregado diário) e vacuum incremental.
-//! - Em paralelo: o executor de sub-agentes.
+//! - Em paralelo: o executor de sub-agentes e, com `[gateway] ativo`, o
+//!   gateway do Discord (socket local; ver `gateway`). Os dois são tarefas
+//!   próprias: o loop principal só as cria ao subir e as aborta ao parar,
+//!   nunca espera por elas.
 //! - SIGTERM (systemd) ou Ctrl+C: para com educação, mesmo no meio de um ciclo.
 //! - Sob o systemd (`Type=notify`): avisa READY=1 ao subir, STOPPING=1 ao
 //!   parar e, com `WatchdogSec=`, manda WATCHDOG=1 enquanto o loop principal
@@ -350,6 +353,9 @@ pub struct Daemon {
     pub sono: Sono,
     /// O último ciclo pediu continuação (ex.: consultou uma skill).
     continuacao_pedida: AtomicBool,
+    /// Gateway do Discord (só com `[gateway] ativo`).
+    #[cfg(unix)]
+    gateway: Option<Arc<crate::gateway::Gateway>>,
 }
 
 impl Daemon {
@@ -377,7 +383,16 @@ impl Daemon {
             executor,
             sono,
             continuacao_pedida: AtomicBool::new(false),
+            #[cfg(unix)]
+            gateway: None,
         }
+    }
+
+    /// Liga o gateway do Discord (roda numa tarefa própria; ver `gateway`).
+    #[cfg(unix)]
+    pub fn com_gateway(mut self, gateway: Arc<crate::gateway::Gateway>) -> Daemon {
+        self.gateway = Some(gateway);
+        self
     }
 
     /// Tarefa barata e determinística: crons + sinal de vida.
@@ -610,6 +625,12 @@ impl Daemon {
 
         // O executor de sub-agentes roda numa tarefa separada.
         let executor = tokio::spawn(Arc::clone(&self.executor).rodar());
+        // O gateway também: o loop nunca espera por ele (nem o vê).
+        #[cfg(unix)]
+        let gateway = self
+            .gateway
+            .as_ref()
+            .map(|g| tokio::spawn(Arc::clone(g).rodar()));
 
         tokio::pin!(parar);
         let mut tique_cron = tokio::time::interval(Duration::from_secs(
@@ -741,6 +762,12 @@ impl Daemon {
         avisar_systemd("STOPPING=1\nSTATUS=parando");
         if let Some(vigia) = vigia {
             vigia.abort();
+        }
+        #[cfg(unix)]
+        if let Some(gateway) = gateway {
+            // Um turno no meio fica `processando` e vira aviso ao subir.
+            gateway.abort();
+            let _ = gateway.await;
         }
         // Para o executor (e os sub-agentes dele) e registra quem ficou no meio.
         executor.abort();

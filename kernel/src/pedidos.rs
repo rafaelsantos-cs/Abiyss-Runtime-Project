@@ -5,14 +5,16 @@
 //!
 //! - o heartbeat pede com a ação `pedir_ao_usuario`; as perguntas do sono
 //!   também viram pedidos;
-//! - o dono responde pela CLI (`abiyss pedidos responder <id> "texto"`) ou
-//!   na conversa (o modelo registra com a ferramenta `responder_pedido`);
+//! - o dono responde pela CLI (`abiyss pedidos responder <id> "texto"`),
+//!   na conversa (o modelo registra com a ferramenta `responder_pedido`) ou
+//!   pelo Discord: com o gateway ligado, cada pedido vai por DM e um
+//!   "Responder" naquela mensagem é a resposta (ver `gateway::agenda`);
 //! - a resposta vira um evento `usuario`/`pedido:<id>` para o heartbeat;
 //! - sem resposta em `[pedidos] expira_apos_horas`, o pedido expira (e
 //!   também vira evento).
 //!
 //! A mesma pergunta pendente não duplica (chave normalizada) e há um teto
-//! de pendentes. A entrega por WhatsApp/Discord fica para outra sessão.
+//! de pendentes.
 
 use anyhow::{Context, bail};
 use rusqlite::{OptionalExtension, params};

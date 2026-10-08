@@ -1,0 +1,22 @@
+[project]
+name = "abiyss-gateway"
+version = "0.1.0"
+description = "Adaptador do Discord do Abiyss: leva as mensagens do dono ao daemon (socket Unix local) e entrega as respostas e os pedidos"
+requires-python = ">=3.11"
+dependencies = [
+    "discord.py>=2.4,<3",
+]
+
+[dependency-groups]
+# Só para os testes (`uv run pytest`). O serviço sobe com `--no-dev`.
+dev = [
+    "pytest>=8",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só um script com dependências.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

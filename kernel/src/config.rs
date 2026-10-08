@@ -54,6 +54,8 @@ pub struct Config {
     pub vigilancia: crate::vigilancia::ConfigVigilancia,
     #[serde(default)]
     pub pedidos: crate::pedidos::ConfigPedidos,
+    #[serde(default)]
+    pub gateway: crate::gateway::ConfigGateway,
 
     /// Diretório onde está o `abiyss.toml`. Todos os caminhos relativos
     /// da configuração são resolvidos a partir daqui.
@@ -86,6 +88,10 @@ pub struct ConfigNim {
 
 fn padrao_max_bytes_resposta() -> usize {
     16 * 1024 * 1024
+}
+
+fn padrao_terceiros_por_minuto() -> u32 {
+    6
 }
 
 fn padrao_max_conexoes_ociosas() -> usize {
@@ -177,6 +183,11 @@ pub struct ConfigPoolCerebro {
     /// autônomas (daemon) só podem usar `requisicoes_por_minuto - reserva`.
     #[serde(default = "padrao_reserva_conversa")]
     pub reserva_conversa_por_minuto: u32,
+    /// Teto por minuto das conversas com OUTRAS pessoas (gateway). Sai da
+    /// fatia autônoma (nunca da reserva da conversa com o dono) e tem a
+    /// menor prioridade da fila: dono e heartbeat passam na frente.
+    #[serde(default = "padrao_terceiros_por_minuto")]
+    pub terceiros_por_minuto: u32,
     /// Máximo de chamadas esperando a vez neste pool; acima disso, erro.
     #[serde(default = "padrao_max_na_fila")]
     pub max_na_fila: usize,
@@ -650,6 +661,14 @@ impl Config {
         if self.nim.max_bytes_resposta < 64 * 1024 {
             bail!("nim.max_bytes_resposta precisa ser pelo menos 65536");
         }
+        let autonomo = cerebro.requisicoes_por_minuto - cerebro.reserva_conversa_por_minuto;
+        if cerebro.terceiros_por_minuto == 0 || cerebro.terceiros_por_minuto > autonomo {
+            bail!(
+                "pools.cerebro.terceiros_por_minuto ({}) precisa estar entre 1 e a fatia autônoma \
+                 (requisicoes_por_minuto - reserva_conversa_por_minuto = {autonomo})",
+                cerebro.terceiros_por_minuto
+            );
+        }
         if cerebro.max_na_fila == 0 || self.pools.subagentes.max_na_fila == 0 {
             bail!("pools.*.max_na_fila precisa ser maior que zero");
         }
@@ -664,6 +683,7 @@ impl Config {
         self.sono.validar()?;
         self.vigilancia.validar()?;
         self.pedidos.validar()?;
+        self.gateway.validar()?;
         let c = &self.pools.subagentes.concorrencia;
         if c.ultra == 0 || c.medium == 0 || c.low == 0 {
             bail!("pools.subagentes.concorrencia: cada nível precisa de pelo menos 1");

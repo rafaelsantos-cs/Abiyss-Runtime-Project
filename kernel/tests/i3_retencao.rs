@@ -237,3 +237,107 @@ fn banco_antigo_e_convertido_para_vacuum_incremental() {
     assert!(resumo.contains("convertido"), "{resumo}");
     assert!(manutencao::vacuum_incremental_ativo(&banco).unwrap());
 }
+
+/// Mensagens do gateway (Discord): o que terminou vira agregado diário; o
+/// que ainda está na fila e o que liga a um pedido pendente ficam.
+#[test]
+fn mensagens_do_gateway_entram_na_retencao() {
+    let banco = Banco::em_memoria().unwrap();
+    let velho = AGORA - 40 * DIA_MS;
+    let pedido = |estado: &str| -> i64 {
+        let c = banco.conexao();
+        c.execute(
+            "INSERT INTO pedidos_usuario (criado_ms, origem, pergunta, urgencia, estado, chave)
+             VALUES (?1, 'heartbeat', 'p?', 'normal', ?2, ?3)",
+            params![velho, estado, format!("{estado}-{}", sequencia())],
+        )
+        .unwrap();
+        c.last_insert_rowid()
+    };
+    let pendente = pedido("pendente");
+    let respondido = pedido("respondido");
+    let inserir = |momento: i64,
+                   direcao: &str,
+                   tipo: &str,
+                   estado: &str,
+                   pedido: Option<i64>,
+                   discord: &str|
+     -> i64 {
+        let c = banco.conexao();
+        c.execute(
+            "INSERT INTO gateway_mensagens (momento_ms, direcao, tipo, estado, pedido_id, discord_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![momento, direcao, tipo, estado, pedido, discord],
+        )
+        .unwrap();
+        let id = c.last_insert_rowid();
+        c.execute(
+            "INSERT INTO gateway_ids_discord (discord_id, mensagem_id) VALUES (?1, ?2)",
+            params![discord, id],
+        )
+        .unwrap();
+        id
+    };
+    // Velhas e terminadas: vão embora.
+    inserir(velho, "entrada", "dono", "respondida", None, "1");
+    inserir(velho + 1, "saida", "resposta", "entregue", None, "2");
+    inserir(
+        velho + 2,
+        "saida",
+        "pedido",
+        "entregue",
+        Some(respondido),
+        "3",
+    );
+    // Velhas, mas ainda servem: ficam.
+    let fila = inserir(velho + 3, "entrada", "dono", "pendente", None, "4");
+    let saida = inserir(velho + 4, "saida", "resposta", "pendente", None, "5");
+    let do_pedido = inserir(
+        velho + 5,
+        "saida",
+        "pedido",
+        "entregue",
+        Some(pendente),
+        "6",
+    );
+    // Novas: ficam.
+    let nova = inserir(AGORA - DIA_MS, "entrada", "dono", "respondida", None, "7");
+
+    let r = manutencao::aplicar_retencao(&banco, &ConfigRetencao::default(), AGORA).unwrap();
+    assert_eq!(r.gateway_apagadas, 3, "{r:?}");
+    assert!(r.como_texto().contains("3 mensagem(ns) do gateway"));
+    let restantes: Vec<i64> = {
+        let c = banco.conexao();
+        let mut q = c
+            .prepare("SELECT id FROM gateway_mensagens ORDER BY id")
+            .unwrap();
+        q.query_map([], |l| l.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(restantes, vec![fila, saida, do_pedido, nova]);
+    // Os ids do Discord das apagadas saíram junto (o "responder" não acha
+    // mais nada); os das que ficaram continuam.
+    assert_eq!(
+        contar(&banco, "SELECT COUNT(*) FROM gateway_ids_discord"),
+        4
+    );
+    assert_eq!(
+        contar(
+            &banco,
+            "SELECT SUM(mensagens) FROM gateway_mensagens_diarias"
+        ),
+        3
+    );
+    // De novo: nada muda.
+    let de_novo = manutencao::aplicar_retencao(&banco, &ConfigRetencao::default(), AGORA).unwrap();
+    assert_eq!(de_novo.gateway_apagadas, 0);
+}
+
+/// Chave única por pedido de teste (a chave pendente é única no banco).
+fn sequencia() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    N.fetch_add(1, Ordering::Relaxed)
+}

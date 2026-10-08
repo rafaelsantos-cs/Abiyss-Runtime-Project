@@ -36,6 +36,7 @@ impl Ambiente {
         // Limites altos: estes testes não são sobre rate limit.
         config.pools.cerebro.requisicoes_por_minuto = 60_000;
         config.pools.cerebro.rajada = 100;
+        config.pools.cerebro.terceiros_por_minuto = 30_000;
         config.pools.subagentes.requisicoes_por_minuto = 60_000;
         config.pools.subagentes.rajada = 100;
         for r in [
