@@ -118,7 +118,8 @@ pub fn gerar(metricas: &[MetricaFase]) -> String {
     }
     s.push_str(
         "Medianas sobre as execuções (eficiência = ótimo ÷ jogadas, só nas fases concluídas; as \
-         outras colunas, nas fases jogadas). n = execuções que chegaram à fase.\n",
+         outras colunas, nas fases jogadas). n = execuções; no modo campanha, a fase que a execução \
+         não alcançou conta como não concluída.\n",
     );
     let bracos: BTreeSet<&str> = metricas.iter().map(|m| m.braco.as_str()).collect();
     for braco in bracos {
