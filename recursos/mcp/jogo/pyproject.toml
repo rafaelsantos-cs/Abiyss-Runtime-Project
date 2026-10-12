@@ -1,0 +1,22 @@
+[project]
+name = "abiyss-mcp-jogo"
+version = "0.1.0"
+description = "Travessia: o jogo do benchmark do Abiyss (servidor MCP, gerador de fases e solucionador)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.3,<3",
+]
+
+[dependency-groups]
+# Só para os testes (`uv run pytest`). O kernel sobe com `--no-dev`.
+dev = [
+    "pytest>=8",
+]
+
+[tool.uv]
+# Não é um pacote instalável: só scripts com dependências.
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
