@@ -36,6 +36,7 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
 | E7 | Estagnação (impressão digital das decisões; aviso + `sair-de-loops` + revisão espaçada) e disjuntor do heartbeat (abre após falhas seguidas, espera exponencial com sorteio, meio-aberto) |
 | E8 | Despertar: aviso `kernel/reinicio` depois de ausência longa (queda × parada limpa), `planejar-o-dia` no primeiro ciclo, interocepção com tempo no ar, último sono e pedidos |
 | E9 | Pedidos ao usuário: ação `pedir_ao_usuario`, `abiyss pedidos`, `responder_pedido` no chat, deduplicação, teto, expiração com aviso; perguntas do sono viram pedidos; skill `pedir-ao-usuario` |
+| Travessia | Benchmark: o jogo como servidor MCP (`recursos/mcp/jogo`, 7 ferramentas, névoa, versão do estado, replay JSONL + validador), gerador com os 12 moldes e testes de aceite conferidos por um solucionador A* admissível (catálogo e gabarito separados, determinístico por hash), harness `abiyss travessia` (instância isolada, braços A/B/C/T, modos avaliação e campanha, sub-agentes em paralelo com `aguardar`, métricas por fase, linha do tempo e relatório com medianas), espera na fila por chamada (migração 16). Ver [`TRAVESSIA.md`](TRAVESSIA.md) |
 | v0.2 ajustes | Tabela de esforço ligada ao runtime: chat (`[chat] esforco_padrao` + ferramenta `aprofundar` até `esforco_maximo` numa resposta), heartbeat (`[daemon.esforco]`: raso na rotina, profundo na revisão do goal, na estagnação e no despertar), delegação (`esforco` opcional limitado ao teto do nível); níveis `a_confirmar` vão sem os campos e geram um aviso por modelo ao subir; nível gravado em cada chamada (migração 14) e latência por nível no `status` |
 
 ## Antes das próximas fases: validar na VM
@@ -69,6 +70,17 @@ das seções "Próximas sessões" e "Fases posteriores" está implementado.
    systemd ou num healthcheck.
 10. **Skills**: rodar os cenários de `skills/*/evals.json` com o GLM e os
     sub-agentes e ajustar o texto das skills.
+
+## Travessia: próximos passos
+
+- Rodar na VM com o NIM de verdade (o agente da nuvem só testou contra o
+  mock), começando por uma seed e uma execução de cada braço.
+- Visualizador em Unity a partir do replay e da linha do tempo
+  ([`REPLAY.md`](REPLAY.md)).
+- Braço P (ferramenta `perguntar` dos sub-agentes), o segundo mundo (manual
+  de regras escondido) e o modo infinito (fases além da 12, subindo um botão
+  por vez a partir do molde 12).
+- Recalibrar as faixas de ótimo com as primeiras execuções reais.
 
 ## Próximas sessões
 

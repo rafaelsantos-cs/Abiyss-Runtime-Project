@@ -698,6 +698,39 @@ AMBIENTE_TIMEOUT_COMANDO = "10"        # systemctl/journalctl; + 5 s ≤ timeout
 AMBIENTE_MAX_BYTES = "30000"           # por resposta (o diário guarda as linhas mais novas)
 
 # ---------------------------------------------------------------------------
+# Travessia: o jogo do benchmark (`abiyss travessia`, docs/TRAVESSIA.md).
+# Cada execução roda numa instância ISOLADA (banco, workspace e cofre
+# próprios, em <pasta>/execucoes/), derivada desta config: mesmos modelos,
+# pools e núcleo; o servidor do jogo (recursos/mcp/jogo, que NÃO entra em
+# [[mcp.servidores]] daqui) e o terminal. O catálogo, o gabarito (o ótimo
+# de cada fase) e os logs ficam em <pasta>, fora do workspace e da caixa do
+# terminal.
+# ---------------------------------------------------------------------------
+
+[travessia]
+pasta = "data/travessia"
+jogo = "recursos/mcp/jogo"
+seeds = ["travessia-1", "travessia-2", "travessia-3", "travessia-4", "travessia-5"]
+execucoes_por_seed = 5
+fases = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+max_reinicios = 5
+# Orçamento de tempo por fase no braço com relógio (--relogio).
+relogio_minutos = 10
+# Ferramentas do jogo que os sub-agentes recebem (além das do nível deles).
+# Quem pode chamar cada ferramenta é decidido aqui, não pelo jogo.
+ferramentas_jogo_subagentes = ["jogo__regras", "jogo__ver", "jogo__simular"]
+historico_max_mensagens = 80
+# Travas contra laço (não são parte da dificuldade).
+max_chamadas_por_fase = 300
+max_minutos_por_execucao = 360
+max_cutucadas = 3
+aguardar_max_segundos = 300
+# Orçamento do solucionador na geração (testes de aceite). A rejeição usa só
+# o de estados (determinístico); estourar o de tempo é erro de geração.
+gerador_max_estados = 5000000
+gerador_max_segundos = 60
+
+# ---------------------------------------------------------------------------
 # Banco (SQLite).
 # ---------------------------------------------------------------------------
 

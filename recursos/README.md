@@ -50,3 +50,11 @@ expor = false          # só o kernel usa (memoria_buscar)
 `recursos/gateway/` não é um servidor MCP: é o adaptador do Discord, um
 processo próprio (com o seu `uv`) que fala com o daemon por um socket Unix
 local. Veja `recursos/gateway/README.md` e `docs/GATEWAY.md`.
+
+## Travessia (o jogo do benchmark)
+
+`recursos/mcp/jogo/` é o servidor MCP do benchmark Travessia, com o gerador
+de fases e o solucionador. Ele **não** fica no `abiyss.toml` principal: só a
+instância isolada do benchmark (`abiyss travessia rodar`) o sobe, com o
+arquivo da execução em `JOGO_EXECUCAO`. Veja `recursos/mcp/jogo/README.md` e
+`docs/TRAVESSIA.md`.

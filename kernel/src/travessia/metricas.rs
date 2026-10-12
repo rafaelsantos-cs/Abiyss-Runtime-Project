@@ -23,7 +23,7 @@ use crate::db::Banco;
 pub struct UsoPool {
     /// Tentativas registradas (inclui 429 e erros).
     pub chamadas: u32,
-    /// Chamadas por minuto, na média da fase.
+    /// Chamadas por minuto, na média da fase (sobre pelo menos um minuto).
     pub media_por_minuto: f64,
     /// Maior número de chamadas em qualquer janela de 60 s.
     pub pico_por_minuto: u32,
@@ -84,7 +84,9 @@ pub fn percentil(ordenados: &[i64], p: f64) -> Option<i64> {
 pub fn uso_do_pool(mut instantes: Vec<i64>, inicio: i64, fim: i64, limite: u32) -> UsoPool {
     instantes.sort_unstable();
     let chamadas = instantes.len() as u32;
-    let minutos = ((fim - inicio).max(1) as f64 / 60_000.0).max(1.0 / 60.0);
+    // Média sobre pelo menos um minuto: numa fase curta, "chamadas por
+    // minuto" é quantas chamadas couberam naquele minuto.
+    let minutos = ((fim - inicio).max(1) as f64 / 60_000.0).max(1.0);
     let mut pico = 0u32;
     let mut j = 0;
     for i in 0..instantes.len() {

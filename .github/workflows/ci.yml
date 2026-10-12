@@ -39,6 +39,12 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
+      # O jogo do benchmark (Travessia): regras, solucionador, gerador
+      # (determinismo por hash), servidor MCP e replay.
+      - name: testes do jogo (Python)
+        working-directory: recursos/mcp/jogo
+        run: uv run --frozen pytest -q
+
   build-aarch64:
     name: compilação para aarch64-unknown-linux-gnu
     runs-on: ubuntu-latest

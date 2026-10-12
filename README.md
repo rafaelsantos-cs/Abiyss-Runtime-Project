@@ -24,7 +24,8 @@ comando (`abiyss ...`); não há painel web.
 5. [Daemon com systemd](#daemon-com-systemd)
    — inclui o [gateway do Discord](#gateway-do-discord)
 6. [Testar sem gastar cota (mock do NIM)](#testar-sem-gastar-cota-mock-do-nim)
-   — inclui o [teste de resistência](#teste-de-resistência-soak)
+   — inclui o [teste de resistência](#teste-de-resistência-soak) e o
+   [benchmark Travessia](#benchmark-travessia)
 7. [Desenvolvimento](#desenvolvimento)
 8. [Regras de segurança](#regras-de-segurança)
 9. [Itens a confirmar](#itens-a-confirmar)
@@ -53,6 +54,8 @@ kernel/                      ← Rust: a parte que o Abiyss NÃO pode modificar
   src/memoria/               ← cofre (Obsidian), propostas, sleep, busca (qmd/texto), memória central
   src/hermes/                ← importador do Hermes (simulação, idempotente, sem segredos)
 recursos/mcp/exemplo/        ← Python (uv + SDK oficial `mcp`): a parte que o Abiyss poderá editar no futuro
+recursos/mcp/jogo/           ← Travessia, o jogo do benchmark (servidor MCP, gerador, solucionador); só a instância do benchmark o sobe
+kernel/src/travessia/        ← harness do benchmark (`abiyss travessia`)
 recursos/gateway/            ← adaptador do Discord (discord.py), processo próprio ligado ao daemon por socket Unix
 workspace/                   ← única pasta onde as tools de arquivo leem/escrevem (criada sozinha)
 cofre/                       ← memória de longo prazo (fora do git; criada sozinha)
@@ -274,7 +277,10 @@ sudo timedatectl set-timezone America/Sao_Paulo
 | `abiyss importar-hermes --origem ~/.hermes [--aplicar]` | Importa a memória do Hermes (simulação sem `--aplicar`); veja [`docs/IMPORTAR_HERMES.md`](docs/IMPORTAR_HERMES.md) |
 | `abiyss memoria registro [--limite N]` | Registro de operações: criada, atualizada, rejeitada, esquecida |
 | `abiyss testar-nim [--modelo cerebro\|ultra\|medium\|low] [--sem-stream] [MSG]` | Uma chamada de diagnóstico |
-| `abiyss mock-nim [--porta 8089] [--roteiro eco\|resistencia] [--atraso-ms 200]` | NIM de mentira local (veja abaixo) |
+| `abiyss mock-nim [--porta 8089] [--roteiro eco\|resistencia\|travessia] [--atraso-ms 200]` | NIM de mentira local (veja abaixo) |
+| `abiyss travessia gerar [--seed S]` | Gera o catálogo do benchmark (fases + gabarito) com o gerador do jogo |
+| `abiyss travessia rodar [--braco A\|B\|C] [--relogio] [--modo avaliacao\|campanha] [--seed S] [--execucoes N]` | Roda o benchmark Travessia numa instância isolada; veja [`docs/TRAVESSIA.md`](docs/TRAVESSIA.md) |
+| `abiyss travessia relatorio` | Taxa de sucesso e medianas por braço e por fase, de todas as execuções |
 
 No chat, o Abiyss tem as ferramentas `ler_arquivo`, `listar_arquivos`,
 `escrever_arquivo` (só em `workspace/`), `ler_skill`, `memoria_buscar` /
@@ -525,6 +531,25 @@ tools/resistencia.sh --duracao 600          # 10 min
 
 Resultados, como ler o CSV e como rodar 24–48 h na VM:
 [`docs/RESISTENCIA.md`](docs/RESISTENCIA.md).
+
+### Benchmark Travessia
+
+Um quebra-cabeça em grade, em texto, em que o Abiyss controla três avatares
+com habilidades diferentes (Vau, Rocha e Coruja). Mede se ele delega quando
+vale a pena, se usa a folga do pool dos sub-agentes para planejar em paralelo
+sem atrasar o cérebro, e a eficiência (jogadas contra o mínimo, calculado por
+um solucionador). Cada execução roda numa **instância isolada** (banco,
+workspace e cofre próprios): o jogo nunca entra na memória do Abiyss de verdade.
+
+```bash
+abiyss travessia gerar                       # catálogo das seeds (data/travessia/)
+abiyss travessia rodar --braco A             # A completo, B sem delegação, C sem memória entre fases
+abiyss travessia rodar --braco B --relogio   # + T: 10 min por fase
+abiyss travessia relatorio
+```
+
+Desenho, métricas e implementação: [`docs/TRAVESSIA.md`](docs/TRAVESSIA.md);
+replay para o visualizador: [`docs/REPLAY.md`](docs/REPLAY.md).
 
 ---
 

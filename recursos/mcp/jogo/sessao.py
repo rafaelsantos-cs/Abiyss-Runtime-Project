@@ -322,9 +322,10 @@ class Sessao:
 
     def regras(self) -> str:
         self._entrada("regras")
-        return regras.texto(
+        texto_regras = regras.texto(
             self.cfg.max_reinicios, self.cfg.max_passos_executar, self.cfg.relogio_segundos, self.cfg.modo
         )
+        return f"{texto_regras}\nAgora: fase {self.numero}, versão {self.versao}."
 
     def ver(self, avatar: str | None = None) -> str:
         self._entrada("ver")
@@ -494,7 +495,7 @@ class Sessao:
         self._exigir_jogando()
         self.versao += 1
         self._terminar(DESISTENCIA, "desistencia")
-        return f"Você desistiu da fase {self.numero} (conta como falha). Chame proxima_fase."
+        return f"Você desistiu da fase {self.numero} (conta como falha; versão {self.versao}). Chame proxima_fase."
 
     def proxima_fase(self) -> str:
         self._entrada("proxima_fase")
@@ -507,11 +508,11 @@ class Sessao:
             self._encerrar("falha_na_campanha")
             return (
                 f"Execução encerrada: no modo campanha, a primeira falha encerra o jogo "
-                f"(fase {self.numero})."
+                f"(fase {self.numero}; versão {self.versao})."
             )
         if self.indice + 1 >= len(self.cfg.fases):
             self._encerrar("campanha_completa")
-            return "Não há mais fases: a execução terminou."
+            return f"Não há mais fases: a execução terminou (versão {self.versao})."
         self.versao += 1
         self._carregar(self.indice + 1)
         self.inicio = self.relogio()
