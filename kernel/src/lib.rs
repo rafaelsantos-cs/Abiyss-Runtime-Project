@@ -43,4 +43,5 @@ pub mod subagentes;
 #[cfg(unix)]
 pub mod systemd;
 pub mod tempo;
+pub mod travessia;
 pub mod vigilancia;

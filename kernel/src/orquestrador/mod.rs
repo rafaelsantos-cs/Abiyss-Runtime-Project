@@ -125,6 +125,8 @@ pub fn reemprestar<'b>(ao_receber: &'b mut AoReceber<'_>) -> AoReceber<'b> {
 
 /// Tempos medidos numa tentativa de chamada (vão para `chamadas_modelo`).
 struct Latencia {
+    /// Tempo na fila do pool (vez + ficha do token bucket) antes da chamada.
+    espera: Duration,
     stream: bool,
     /// `None` quando a chamada falhou antes de qualquer token.
     primeiro_token: Option<Duration>,
@@ -187,7 +189,9 @@ impl NucleoPool {
         let mut tentativa = 0;
         loop {
             tentativa += 1;
+            let entrada_na_fila = Instant::now();
             self.esperar_ficha(prioridade, baldes).await?;
+            let espera = entrada_na_fila.elapsed();
 
             let inicio = Instant::now();
             // Tempo até o primeiro token: no streaming, o primeiro pedaço
@@ -211,6 +215,7 @@ impl NucleoPool {
             };
             let duracao = inicio.elapsed();
             let latencia = Latencia {
+                espera,
                 stream,
                 // Resposta sem nenhum pedaço (ex.: só `usage`) ou sem
                 // streaming: o primeiro token chegou com o fim da resposta.
@@ -271,8 +276,8 @@ impl NucleoPool {
             "INSERT INTO chamadas_modelo
                (momento_ms, pool, origem, modelo, tentativa, status, http_status,
                 tokens_entrada, tokens_saida, duracao_ms, primeiro_token_ms, stream,
-                nivel_esforco, esforco_confirmado)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                nivel_esforco, esforco_confirmado, espera_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 agora_ms(),
                 self.nome,
@@ -287,7 +292,8 @@ impl NucleoPool {
                 latencia.primeiro_token.map(|d| d.as_millis() as i64),
                 latencia.stream,
                 pedido.esforco.map(|e| e.nivel.como_texto()),
-                pedido.esforco.map(|e| e.confirmado)
+                pedido.esforco.map(|e| e.confirmado),
+                latencia.espera.as_millis() as i64
             ],
         );
         if let Err(e) = gravou {

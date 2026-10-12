@@ -456,6 +456,10 @@ enum Desfecho {
     Cancelado,
 }
 
+/// Quem quer saber de cada ferramenta que um sub-agente chamou (o harness
+/// do benchmark): id do sub-agente, nome da ferramenta, se deu erro.
+pub type ObservadorFerramentas = Arc<dyn Fn(i64, &str, bool) + Send + Sync>;
+
 /// Executa os sub-agentes. Vive dentro do daemon.
 pub struct ExecutorSubagentes {
     config: Config,
@@ -464,6 +468,7 @@ pub struct ExecutorSubagentes {
     ferramentas: Arc<CaixaDeFerramentas>,
     aviso: Arc<Notify>,
     vagas: Arc<Semaphore>,
+    observador: Option<ObservadorFerramentas>,
 }
 
 impl ExecutorSubagentes {
@@ -473,6 +478,17 @@ impl ExecutorSubagentes {
         orquestrador: Orquestrador,
         ferramentas: Arc<CaixaDeFerramentas>,
     ) -> Arc<ExecutorSubagentes> {
+        ExecutorSubagentes::com_observador(config, banco, orquestrador, ferramentas, None)
+    }
+
+    /// Como `novo`, avisando `observador` de cada ferramenta chamada.
+    pub fn com_observador(
+        config: Config,
+        banco: Banco,
+        orquestrador: Orquestrador,
+        ferramentas: Arc<CaixaDeFerramentas>,
+        observador: Option<ObservadorFerramentas>,
+    ) -> Arc<ExecutorSubagentes> {
         let vagas = Arc::new(Semaphore::new(config.subagentes.max_simultaneos.max(1)));
         Arc::new(ExecutorSubagentes {
             config,
@@ -481,6 +497,7 @@ impl ExecutorSubagentes {
             ferramentas,
             aviso: Arc::new(Notify::new()),
             vagas,
+            observador,
         })
     }
 
@@ -736,6 +753,9 @@ impl ExecutorSubagentes {
             }
             for chamada in &chamadas {
                 let resultado = caixa.executar(chamada).await;
+                if let Some(observador) = &self.observador {
+                    observador(info.id, &chamada.function.name, resultado.erro);
+                }
                 mensagens.push(Mensagem::resultado_ferramenta(
                     &chamada.id,
                     &chamada.function.name,

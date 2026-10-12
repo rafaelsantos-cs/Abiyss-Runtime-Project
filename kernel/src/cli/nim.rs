@@ -37,14 +37,22 @@ pub fn esforco(config: &Config) -> anyhow::Result<()> {
 pub enum RoteiroMock {
     Eco,
     Resistencia,
+    /// Joga o benchmark mecanicamente (ver `travessia::mock`).
+    Travessia,
 }
 
 pub async fn rodar_mock(porta: u16, roteiro: RoteiroMock, atraso_ms: u64) -> anyhow::Result<()> {
     let mock = MockNim::iniciar_em(&format!("127.0.0.1:{porta}"))
         .await
         .with_context(|| format!("não consegui abrir a porta {porta}"))?;
-    if let RoteiroMock::Resistencia = roteiro {
-        mock.definir_roteiro(roteiro_resistencia(Duration::from_millis(atraso_ms)));
+    match roteiro {
+        RoteiroMock::Eco => {}
+        RoteiroMock::Resistencia => {
+            mock.definir_roteiro(roteiro_resistencia(Duration::from_millis(atraso_ms)))
+        }
+        RoteiroMock::Travessia => mock.definir_roteiro(abiyss::travessia::mock::roteiro_travessia(
+            Duration::from_millis(atraso_ms),
+        )),
     }
     println!("Mock do NIM ouvindo em {}", mock.base_url());
     println!("Use esse valor em nim.base_url (num abiyss.toml separado) e qualquer chave.");

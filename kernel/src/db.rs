@@ -379,6 +379,12 @@ const MIGRACOES: &[&str] = &[
     r#"
     ALTER TABLE gateway_mensagens ADD COLUMN chamadas INTEGER;
     "#,
+    // 16 (Travessia) — quanto cada tentativa esperou na fila do orquestrador
+    // (vez na fila + ficha do token bucket) antes de ir ao NIM. É a "espera
+    // do cérebro" do benchmark. NULL nas linhas antigas.
+    r#"
+    ALTER TABLE chamadas_modelo ADD COLUMN espera_ms INTEGER;
+    "#,
 ];
 
 /// Cache de páginas do SQLite por conexão, em KiB (o padrão do SQLite é

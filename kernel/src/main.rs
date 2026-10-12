@@ -131,18 +131,53 @@ enum Comando {
     /// Mostra a tabela de esforço (minimal..ultra) de cada modelo, como
     /// resolvida a partir do abiyss.toml (não chama o modelo).
     Esforco,
+    /// Travessia, o jogo do benchmark: gerar catálogo, rodar e relatório.
+    #[command(subcommand)]
+    Travessia(ComandoTravessia),
     /// Sobe um NIM de mentira em 127.0.0.1 (para testar sem gastar cota).
     MockNim {
         #[arg(long, default_value_t = 8089)]
         porta: u16,
         /// "eco" repete a mensagem; "resistencia" responde como heartbeat e
-        /// sub-agentes de verdade (usado por tools/resistencia.sh).
+        /// sub-agentes de verdade (usado por tools/resistencia.sh);
+        /// "travessia" joga o benchmark mecanicamente.
         #[arg(long, value_enum, default_value_t = RoteiroMock::Eco)]
         roteiro: RoteiroMock,
-        /// Latência de mentira de cada resposta (só no roteiro "resistencia").
+        /// Latência de mentira de cada resposta (roteiros "resistencia" e "travessia").
         #[arg(long, default_value_t = 200)]
         atraso_ms: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum ComandoTravessia {
+    /// Gera o catálogo (e o gabarito) das seeds, com o gerador do jogo.
+    Gerar {
+        /// Seed da campanha (repita para várias; padrão: [travessia] seeds).
+        #[arg(long)]
+        seed: Vec<String>,
+    },
+    /// Roda o benchmark: para cada seed, N execuções num braço.
+    Rodar {
+        /// A (completo), B (sem delegação) ou C (memória apagada entre fases).
+        #[arg(long, default_value = "A")]
+        braco: String,
+        /// Braço com relógio (T): orçamento de tempo por fase.
+        #[arg(long)]
+        relogio: bool,
+        /// avaliacao (uma falha passa para a próxima fase) ou campanha (a
+        /// primeira falha encerra a execução).
+        #[arg(long, default_value = "avaliacao")]
+        modo: String,
+        /// Seed (repita para várias; padrão: [travessia] seeds).
+        #[arg(long)]
+        seed: Vec<String>,
+        /// Execuções por seed (padrão: [travessia] execucoes_por_seed).
+        #[arg(long)]
+        execucoes: Option<u32>,
+    },
+    /// Relatório de todas as execuções (taxa de sucesso e medianas).
+    Relatorio,
 }
 
 #[derive(Subcommand)]
@@ -342,6 +377,31 @@ async fn main() -> anyhow::Result<()> {
                 }
                 ComandoMemoria::Central => cli::memoria::central(&config),
                 ComandoMemoria::Registro { limite } => cli::memoria::registro(&config, limite),
+            }
+        }
+        Comando::Travessia(sub) => {
+            let config = Config::carregar(&caminho_config)?;
+            match sub {
+                ComandoTravessia::Gerar { seed } => cli::travessia::gerar(&config, seed).await,
+                ComandoTravessia::Rodar {
+                    braco,
+                    relogio,
+                    modo,
+                    seed,
+                    execucoes,
+                } => {
+                    cli::travessia::rodar(
+                        &config,
+                        &caminho_config,
+                        &braco,
+                        relogio,
+                        &modo,
+                        seed,
+                        execucoes,
+                    )
+                    .await
+                }
+                ComandoTravessia::Relatorio => cli::travessia::relatorio(&config),
             }
         }
         Comando::Chat {

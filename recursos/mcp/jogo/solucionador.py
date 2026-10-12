@@ -511,17 +511,29 @@ class Problema:
             self._cache_item[chave] = tabela
         return tabela
 
-    def dist_bloco(self, alvo: int) -> list[int]:
-        tabela = self._dist_bloco.get(alvo)
+    def dist_bloco(self, alvo: int, nb: int | None = None, pontes: int = 0) -> list[int]:
+        """Empurrões que um bloco precisa para chegar a `alvo` (relaxado:
+        sem olhar quem empurra). Um bloco que entra em água sem ponte
+        afunda; para passar por ela, OUTRO bloco tem de virar ponte antes:
+        cada célula de água no caminho gasta um dos outros `nb - 1` blocos."""
+        if nb is None:
+            nb = self.total_blocos
+        outros = max(0, nb - 1)
+        chave = (alvo, outros, pontes)
+        tabela = self._dist_bloco.get(chave)
         if tabela is None:
             tipo = self.tipo
 
-            def passa(v):
+            def custo(v):
                 t = tipo[v]
-                return t in (CHAO, PLACA, PONTE, AGUA) or (t == TRANCADA and self.trancada_chave.get(v, -1) >= 0)
+                if t == AGUA:
+                    return 0 if (pontes >> v) & 1 else 1
+                if t in (CHAO, PLACA, PONTE) or (t == TRANCADA and self.trancada_chave.get(v, -1) >= 0):
+                    return 0
+                return -1
 
-            tabela = self._bfs(alvo, passa)
-            self._dist_bloco[alvo] = tabela
+            tabela = self._tabela(alvo, custo, outros, ate=True)
+            self._dist_bloco[chave] = tabela
         return tabela
 
     def _alcance(self, a: int, bloqueadas=frozenset()) -> set[int]:
@@ -567,6 +579,7 @@ class Problema:
         self._cache_item: dict = {}
         self._dist_bloco: dict = {}
         self._agua_do_bloco: dict = {}
+        self._memo_portas: dict = {}
         self.agua = [i for i in range(self.N) if tipo[i] == AGUA]
         self.exclusivas = self._portas_exclusivas()
         self.exclusiva_todos = frozenset.intersection(*self.exclusivas) if self.exclusivas else frozenset()
@@ -679,6 +692,19 @@ class Problema:
         return total
 
     def _h_portas(self, s: tuple, nb: int, pontes: int, af: int) -> int:
+        """Só depende das posições, da Chave Dourada, dos blocos, das pontes e
+        das portas: guardado por isso (muitos estados só diferem nos outros
+        itens)."""
+        chave_memo = (s[: self.k + 1], s[-3], s[-2], s[-1])
+        valor = self._memo_portas.get(chave_memo)
+        if valor is None:
+            valor = self._h_portas_calcular(s, nb, pontes, af)
+            if len(self._memo_portas) > 500_000:
+                self._memo_portas.clear()
+            self._memo_portas[chave_memo] = valor
+        return valor
+
+    def _h_portas_calcular(self, s: tuple, nb: int, pontes: int, af: int) -> int:
         k, N = self.k, self.N
         chave = s[k]
         pos = s[:k]
@@ -726,6 +752,8 @@ class Problema:
         melhor = INF
         destinos0 = [-1] * k
         destinos0[passa] = porta
+        # Por placa: só os blocos que conseguem chegar nela.
+        candidatos = {pl: [b for b in blocos if self.dist_bloco(pl, nb, pontes)[b] < INF] for pl in placas}
 
         def fechar(destinos: list[int], empurrar: list[tuple[int, int]]) -> int:
             total = 0
@@ -735,7 +763,7 @@ class Problema:
                 if a == rocha and empurrar:
                     for b, pl in empurrar:
                         ida = self.dist_av(a, b, nb, pontes, af)[pos[a]]
-                        custo = max(ida - 1, 0) + self.dist_bloco(pl)[b]
+                        custo = max(ida - 1, 0) + self.dist_bloco(pl, nb, pontes)[b]
                         if alvo >= 0:
                             custo += max(self.dist_av(a, alvo, nb, pontes, af)[pl] - 1, 0)
                         if custo > base:
@@ -760,9 +788,9 @@ class Problema:
                     destinos[a] = pl
                     atribuir(i + 1, destinos, livres_blocos, empurrar)
                     destinos[a] = -1
-            for j, b in enumerate(livres_blocos):
-                if self.dist_bloco(pl)[b] < INF:
-                    atribuir(i + 1, destinos, livres_blocos[:j] + livres_blocos[j + 1 :], empurrar + [(b, pl)])
+            for b in candidatos[pl]:
+                if b in livres_blocos:
+                    atribuir(i + 1, destinos, [x for x in livres_blocos if x != b], empurrar + [(b, pl)])
 
         atribuir(0, destinos0, blocos, [])
         return melhor
